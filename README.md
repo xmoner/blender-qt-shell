@@ -4,7 +4,7 @@ Addon pro Blender 4.2+ (Windows, Linux, macOS), který nahradí rozhraní Blende
 
 ## Instalace
 
-0. Stáhni `qt_shell.zip` z [Releases](https://github.com/xmoner/blender-qt-shell/releases/latest).
+0. Stáhni `qt_shell.zip` z [Releases](https://github.com/xmoner/blender-qt-shell/releases).
    (Zip z tlačítka *Code → Download ZIP* Blender nenainstaluje, obsahuje celé repo.)
 
 1. Blender → Edit → Preferences → Add-ons → ▾ → **Install from Disk…** → `qt_shell.zip`.
