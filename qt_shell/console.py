@@ -9,6 +9,8 @@ import bpy
 import mathutils
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import theme
+
 
 class Console(QtWidgets.QWidget):
     def __init__(self, hub):
@@ -26,6 +28,8 @@ class Console(QtWidgets.QWidget):
         self.out = QtWidgets.QPlainTextEdit()
         self.out.setReadOnly(True)
         font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        if font.pointSizeF() > 0:
+            font.setPointSizeF(font.pointSizeF() * theme.ui_scale * theme.font_scale)
         self.out.setFont(font)
         self.out.setMaximumBlockCount(5000)
         lay.addWidget(self.out)

@@ -400,6 +400,7 @@ class InterfaceSizeDialog(QtWidgets.QDialog):
     def _preview(self):
         if hasattr(self, "font"):
             shell_app.preview_interface_size(*self.values())
+            QtCore.QTimer.singleShot(0, self.adjustSize)
 
     def reject(self):
         shell_app.preview_interface_size(*self._orig)
@@ -501,8 +502,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.restoreGeometry(geo)
             if st is not None:
                 self.restoreState(st)
+            old = float(self._settings.value("size_factor", 1.0) or 1.0)
         except Exception:
-            pass
+            old = 1.0
+        # dock sizes are stored in pixels → follow a change of the interface size
+        self._size_factor = theme.ui_scale * theme.font_scale ** 0.5
+        ratio = self._size_factor / old if old > 0 else 1.0
+        if abs(ratio - 1.0) > 0.01:
+            QtCore.QTimer.singleShot(0, lambda r=ratio: self._scale_docks(r))
         self._update_title()
         self._update_status()
         self._on_mode(bpy.context.mode)
@@ -937,6 +944,23 @@ class MainWindow(QtWidgets.QMainWindow):
             for d in getattr(self, "_hidden_docks", []):
                 d.show()
 
+    def _scale_docks(self, ratio):
+        horiz, hw, vert, vh = [], [], [], []
+        for d in self.docks.values():
+            if d.isFloating() or not d.isVisible():
+                continue
+            area = self.dockWidgetArea(d)
+            if area in (QtCore.Qt.LeftDockWidgetArea, QtCore.Qt.RightDockWidgetArea):
+                horiz.append(d)
+                hw.append(int(d.width() * ratio))
+            elif area in (QtCore.Qt.TopDockWidgetArea, QtCore.Qt.BottomDockWidgetArea):
+                vert.append(d)
+                vh.append(int(d.height() * ratio))
+        if horiz:
+            self.resizeDocks(horiz, hw, QtCore.Qt.Horizontal)
+        if vert:
+            self.resizeDocks(vert, vh, QtCore.Qt.Vertical)
+
     def _interface_size(self):
         InterfaceSizeDialog(self).exec()
 
@@ -1012,6 +1036,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._settings.setValue("geometry", self.saveGeometry())
             self._settings.setValue("state", self.saveState())
+            self._settings.setValue("size_factor", self._size_factor)
         except Exception:
             pass
         self.viewport.shutdown()
