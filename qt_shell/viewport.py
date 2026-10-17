@@ -264,11 +264,14 @@ class Viewport(QtWidgets.QWidget):
                 arr = np.frombuffer(buf, dtype=np.uint8)
             except TypeError:
                 arr = np.asarray(buf.to_list(), dtype=np.uint8)
-            arr = np.ascontiguousarray(arr.reshape(h, w, 4)[::-1])   # GPU rows are bottom-up
             fmt = QtGui.QImage.Format_RGBA8888_Premultiplied if transparent else QtGui.QImage.Format_RGBX8888
-            img = QtGui.QImage(arr.data, w, h, w * 4, fmt)   # no extra copy: keep arr alive instead
+            # Qt owns the image memory; numpy flips the rows (GPU rows are bottom-up) while copying
+            # straight into it – one copy per frame, and no Qt image pointing at freed numpy memory.
+            img = QtGui.QImage(w, h, fmt)
+            dst = np.frombuffer(img.bits(), dtype=np.uint8, count=h * img.bytesPerLine())
+            dst = dst.reshape(h, img.bytesPerLine())[:, :w * 4].reshape(h, w, 4)
+            dst[:] = arr.reshape(h, w, 4)[::-1]
             img.setDevicePixelRatio(dpr)
-            self._image_arr = arr
             self._image = img
             if getattr(self.hub, "playing", False):
                 f = ctx.scene.frame_current

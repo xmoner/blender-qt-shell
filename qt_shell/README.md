@@ -27,6 +27,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | UV editor | UV map over the texture, UV point selection (click / box), G/R/S with axes, Unwrap / Smart UV / Cube / Reset, test UV grid texture |
 | Number fields | Drag left/right to change the value like in Blender (the cursor is hidden and never hits the screen edge; Shift = fine, Ctrl = snap, Esc = cancel), click to type a value; also the Frame / Start / End fields in the timeline |
 | Interface size | **Window → Interface Size…**: *Interface scale* (50–300 %, buttons, fields, icons, spacing and text) and *Text size* (50–250 %, text only), presets 80–200 %, live preview; OK rebuilds the window and widens/narrows the side panels to match. Also in the add-on preferences. |
+| Playback | Space / ▶ in the timeline: frames are timed precisely and follow the scene *Sync* mode (Play Every Frame / Frame Dropping); the viewport shows the real `fps:` like Blender (red when below the scene rate). About 120 fps for a simple scene on Windows. |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
 The Blender window is hidden (Windows: WinAPI, macOS: Cocoa via ctypes, Linux: `xdotool` on X11).
@@ -42,6 +43,13 @@ moving, Geometry Nodes), numpad view rotation.
 
 Number shortcuts (1/2/3 in edit mode, 1/3/7/0 views) follow the physical key, so they also work on
 national keyboard layouts (e.g. Czech) without Shift.
+
+## Troubleshooting
+
+- Errors and warnings are also written to `qtshell.log` in the system temp folder
+  (Windows: `%TEMP%\qtshell.log`), because Blender's console is hidden.
+- If the Qt window can't be created, the normal Blender window comes back automatically.
+- A hard crash writes the Python stack to `%TEMP%\qtshell_crash.log`.
 
 ## Limitations
 

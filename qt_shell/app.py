@@ -155,12 +155,12 @@ def _pump():
             _hub.tick()
             playing = _hub.playing
             if playing:
-                tl = _win.timeline
-                tl.playback_tick()
-                # next frame due soon → don't let Blender's loop sleep its idle 5 ms
-                if getattr(tl, "_next", 0.0) - time.perf_counter() < 0.0055:
-                    native.wake_event_loop()
+                _win.timeline.playback_tick()
             _app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 4 if playing else 15)
+            # Next frame due soon → keep Blender's loop from sleeping its idle 5 ms. Posted *after*
+            # processEvents, otherwise Qt's dispatcher takes the message off the queue first.
+            if playing and getattr(_win.timeline, "_next", 0.0) - time.perf_counter() < 0.0055:
+                native.wake_event_loop()
     except Exception:
         traceback.print_exc()
     # while playing, run again on the next pass of Blender's event loop
@@ -168,12 +168,18 @@ def _pump():
 
 
 def qt_window_ids():
+    """Native ids of our own Qt windows (only needed on X11 to tell them apart from Blender's).
+
+    Deliberately does not use QApplication.topLevelWidgets(): that also returns Qt's internal windows
+    (combo box popups, …) which have no Python wrapper yet, and creating one from a Blender timer
+    re-enters our notify() with a half-built object – a crash in Python."""
     ids = []
-    if _app is None:
+    if _win is None or not sys.platform.startswith("linux"):
         return ids
-    for w in _app.topLevelWidgets():
+    wins = [_win] + [d for d in getattr(_win, "docks", {}).values() if d.isFloating()]
+    for w in wins:
         try:
-            if w.isWindow() and w.testAttribute(QtCore.Qt.WA_WState_Created):
+            if w.testAttribute(QtCore.Qt.WA_WState_Created):
                 ids.append(int(w.winId()))
         except Exception:
             pass
@@ -187,8 +193,26 @@ def set_blender_visible(visible):
     return ok
 
 
+_fault_file = None
+
+
+def _enable_faulthandler():
+    """On a hard crash, write the Python stack to <temp>/qtshell_crash.log (Blender's console is hidden)."""
+    global _fault_file
+    try:
+        import faulthandler
+        import tempfile
+        import os
+        if _fault_file is None or _fault_file.closed:
+            _fault_file = open(os.path.join(tempfile.gettempdir(), "qtshell_crash.log"), "a", encoding="utf-8")
+        faulthandler.enable(file=_fault_file, all_threads=True)
+    except Exception:
+        pass
+
+
 def start(addon_prefs=None):
     global _app, _win, _hub, _pump_on, _prefs
+    _enable_faulthandler()
     _prefs = addon_prefs
     if _win is not None:
         _win.show()
@@ -198,10 +222,10 @@ def start(addon_prefs=None):
     QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
         QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     _app = QtWidgets.QApplication.instance() or ShellApp(["blender"])
-    if type(_app).__name__ == "ShellApp" and type(_app) is not ShellApp:
-        # The add-on was reloaded: the running QApplication still has the old class, whose notify()
-        # looks at the old module (window None → no Blender context for keys). Point it at the new code.
-        type(_app).notify = ShellApp.notify
+    # NOTE: never reassign notify on the running QApplication's class after a reload. Shiboken caches
+    # the Python override; replacing it frees the old function and the next event crashes Blender.
+    # ShellApp.notify calls the module-level _notify_with_context by name, so the old class picks up
+    # the reloaded code by itself.
     if type(_app).__name__ != "ShellApp":
         bridge.log("QApplication was created before Qt Shell – event context is not guaranteed "
                    "(restart Blender).", "WARNING")
