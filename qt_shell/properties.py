@@ -419,6 +419,8 @@ class PropertiesEditor(QtWidgets.QWidget):
         self._throttle.setInterval(150)
         self._throttle.timeout.connect(lambda: self.refresh())
         hub.data_changed.connect(self._schedule)
+        # operators can change what panels show without touching scene data (e.g. a "Custom" preset)
+        hub.op_done.connect(lambda *_a: self._schedule())
         hub.selection_changed.connect(lambda: self.refresh(force=True))
         hub.file_loaded.connect(lambda: self.refresh(force=True))
         hub.undo_done.connect(lambda: self.refresh(force=True))
