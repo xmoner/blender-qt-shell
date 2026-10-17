@@ -227,6 +227,8 @@ class Viewport(QtWidgets.QWidget):
     def _tick(self):
         if not self.isVisible() or bridge.is_rendering():
             return
+        if getattr(self.hub, "playing", False):
+            return   # during playback every frame is drawn by render_now()
         if self._dirty or self._extra_frames > 0:
             sh = self.shading()
             self._dirty = False
@@ -262,10 +264,11 @@ class Viewport(QtWidgets.QWidget):
                 arr = np.frombuffer(buf, dtype=np.uint8)
             except TypeError:
                 arr = np.asarray(buf.to_list(), dtype=np.uint8)
-            arr = np.ascontiguousarray(arr.reshape(h, w, 4)[::-1])
+            arr = np.ascontiguousarray(arr.reshape(h, w, 4)[::-1])   # GPU rows are bottom-up
             fmt = QtGui.QImage.Format_RGBA8888_Premultiplied if transparent else QtGui.QImage.Format_RGBX8888
-            img = QtGui.QImage(arr.data, w, h, w * 4, fmt).copy()
+            img = QtGui.QImage(arr.data, w, h, w * 4, fmt)   # no extra copy: keep arr alive instead
             img.setDevicePixelRatio(dpr)
+            self._image_arr = arr
             self._image = img
             if getattr(self.hub, "playing", False):
                 f = ctx.scene.frame_current
@@ -421,7 +424,18 @@ class Viewport(QtWidgets.QWidget):
     def playback_changed(self, playing):
         self._fps_samples.clear()
         self._fps_last_frame = None
+        if not playing:
+            self.request_redraw()   # full quality (progressive refinement) again after playback
         self.update()
+
+    def render_now(self):
+        """Draws the current frame immediately (used by playback)."""
+        if not self.isVisible() or bridge.is_rendering():
+            return
+        self._dirty = False
+        self._extra_frames = 0
+        self.render_frame()
+        self.repaint()
 
     def playback_fps(self):
         """Frames actually shown per second over the last second of playback, or None."""

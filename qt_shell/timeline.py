@@ -1,4 +1,6 @@
 """Timeline: playback, frame range, keyframes of the active object."""
+import time
+
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -130,8 +132,6 @@ class Timeline(QtWidgets.QWidget):
         self.bar = TimeBar(self)
         lay.addWidget(self.bar)
 
-        self._play = QtCore.QTimer(self)
-        self._play.timeout.connect(self._step)
         hub.frame_changed.connect(lambda _f: self.sync())
         hub.selection_changed.connect(self.sync)
         hub.data_changed.connect(self.sync)
@@ -192,25 +192,60 @@ class Timeline(QtWidgets.QWidget):
         if vp is not None:
             vp.playback_changed(on)
 
-    def toggle_play(self):
-        if self._play.isActive():
-            self._play.stop()
-            self.play_btn.setText("▶")
-            self._set_playing(False)
-        else:
-            r = bpy.context.scene.render
-            fps = r.fps / (r.fps_base or 1.0)
-            self._play.setTimerType(QtCore.Qt.PreciseTimer)
-            self._play.start(max(5, int(1000 / max(fps, 1))))
-            self.play_btn.setText("⏸")
-            self._set_playing(True)
+    def is_playing(self):
+        return bool(getattr(self.hub, "playing", False))
 
-    def _step(self):
+    def toggle_play(self):
+        if self.is_playing():
+            self._set_playing(False)
+            self.play_btn.setText("▶")
+            self.sync()
+        else:
+            sc = bpy.context.scene
+            self._t0 = time.perf_counter()
+            self._f0 = sc.frame_current
+            self._next = self._t0
+            self._set_playing(True)
+            self.play_btn.setText("⏸")
+
+    def _fps(self):
+        r = bpy.context.scene.render
+        return max(r.fps / (r.fps_base or 1.0), 0.1)
+
+    def playback_tick(self):
+        """Called from the event pump while playing: advances the frame when it is due and
+        redraws the viewport right away. Follows the scene's Sync mode like Blender:
+        'Play Every Frame' never skips frames, 'Frame Dropping' / 'Sync to Audio' keep real time."""
         sc = bpy.context.scene
-        f = sc.frame_current + 1
-        if f > sc.frame_end:
-            f = sc.frame_start
+        fps = self._fps()
+        period = 1.0 / fps
+        now = time.perf_counter()
+        wait = self._next - now
+        if wait > 0.006:
+            return                       # not due yet – let Blender and Qt handle events meanwhile
+        if wait > 0:
+            time.sleep(wait)             # short precise wait for smooth frame pacing
+            now = time.perf_counter()
+        start, end = sc.frame_start, sc.frame_end
+        length = max(end - start + 1, 1)
+        if getattr(sc, "sync_mode", "NONE") == "NONE":
+            f = sc.frame_current + 1
+            if f > end or f < start:
+                f = start
+            self._next += period
+            if self._next < now - 4 * period:      # far behind → don't try to catch up in a burst
+                self._next = now + period
+        else:
+            n = int((now - self._t0) * fps)
+            f = start + (self._f0 - start + n) % length
+            if f == sc.frame_current:
+                self._next = self._t0 + (n + 1) / fps
+                return
+            self._next = self._t0 + (n + 1) / fps
         sc.frame_set(f)
+        vp = getattr(self.hub, "viewport", None)
+        if vp is not None:
+            vp.render_now()
         self.cur.blockSignals(True)
         self.cur.setValue(f)
         self.cur.blockSignals(False)
@@ -243,5 +278,4 @@ class Timeline(QtWidgets.QWidget):
         self.sync()
 
     def stop(self):
-        self._play.stop()
         self._set_playing(False)

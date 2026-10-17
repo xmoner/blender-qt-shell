@@ -56,7 +56,10 @@ class Hub(QtCore.QObject):
         self._was_rendering = rendering
         if rendering:
             return  # don't touch the scene while rendering
-        if F.depsgraph and now - self._last_data > 0.06:
+        # during playback the viewport is redrawn by the playback itself; the rest of the UI
+        # (properties, outliner…) only needs an occasional refresh
+        data_interval = 0.5 if self.playing else 0.06
+        if F.depsgraph and now - self._last_data > data_interval:
             F.depsgraph = False
             self._last_data = now
             self.data_changed.emit()
@@ -133,13 +136,18 @@ def _pump():
     if _win is None:
         _pump_on = False
         return None
+    playing = False
     try:
         with bridge.blender_context():
             _hub.tick()
-            _app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 15)
+            playing = _hub.playing
+            if playing:
+                _win.timeline.playback_tick()
+            _app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 4 if playing else 15)
     except Exception:
         traceback.print_exc()
-    return 0.01
+    # while playing, run again on the next pass of Blender's event loop
+    return 0.0 if playing else 0.01
 
 
 def qt_window_ids():
