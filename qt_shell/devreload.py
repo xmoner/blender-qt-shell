@@ -26,6 +26,8 @@ def go(delay=0.3):
     def _run():
         pkg = sys.modules[__package__]
         app = sys.modules.get(__package__ + ".app")
+        if app is not None and getattr(app, "_hub", None) is not None:
+            app._hub.playing = False      # stop playback before tearing the window down
         if app is not None:
             app.stop(show_blender=False)
             import bpy

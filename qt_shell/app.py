@@ -1,4 +1,5 @@
 """Runs Qt inside the Blender process and 'pumps' Qt events from a Blender timer."""
+import sys
 import time
 import traceback
 
@@ -100,6 +101,36 @@ def prefs():
     return _prefs
 
 
+def _notify_with_context(app, obj, ev):
+    """Delivers a Qt event inside a Blender context when Blender's own loop dispatched it.
+
+    Module-level on purpose: after an add-on reload the running QApplication is still an instance of the
+    *old* ShellApp class, so this must not rely on super() or on the class – it looks up the current
+    module state through sys.modules every time."""
+    base = QtWidgets.QApplication.notify
+    mod = sys.modules.get(__name__)
+    win = getattr(mod, "_win", None) if mod is not None else None
+    if win is not None:
+        try:
+            need = bpy.context.area is None
+        except Exception:
+            need = False
+        if need:
+            try:
+                cm = mod.bridge.blender_context()
+                cm.__enter__()
+            except Exception:
+                return base(app, obj, ev)
+            try:
+                return base(app, obj, ev)
+            finally:
+                try:
+                    cm.__exit__(None, None, None)
+                except Exception:
+                    pass
+    return base(app, obj, ev)
+
+
 class ShellApp(QtWidgets.QApplication):
     """QApplication that gives every event a Blender context.
 
@@ -110,25 +141,7 @@ class ShellApp(QtWidgets.QApplication):
     """
 
     def notify(self, obj, ev):
-        if _win is not None:
-            try:
-                need = bpy.context.area is None
-            except Exception:
-                need = False
-            if need:
-                try:
-                    cm = bridge.blender_context()
-                    cm.__enter__()
-                except Exception:
-                    return super().notify(obj, ev)
-                try:
-                    return super().notify(obj, ev)
-                finally:
-                    try:
-                        cm.__exit__(None, None, None)
-                    except Exception:
-                        pass
-        return super().notify(obj, ev)
+        return _notify_with_context(self, obj, ev)
 
 
 def _pump():
