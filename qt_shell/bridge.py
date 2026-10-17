@@ -166,6 +166,9 @@ def op_poll(idname, ctx=None):
 def run_op(idname, props=None, ctx=None, invoke=False):
     """Runs a Blender operator from Qt. Returns the result set (or {'CANCELLED'})."""
     props = dict(props or {})
+    if "_OT_" in idname:   # C-style id from some menus ("WM_OT_search_single_menu" → "wm.search_single_menu")
+        mod, name = idname.split("_OT_", 1)
+        idname = f"{mod.lower()}.{name}"
     if special_op_hook is not None:
         try:
             if special_op_hook(idname, props):

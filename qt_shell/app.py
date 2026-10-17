@@ -172,7 +172,11 @@ def start(addon_prefs=None):
     QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
         QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     _app = QtWidgets.QApplication.instance() or ShellApp(["blender"])
-    if type(_app).__name__ != "ShellApp":   # after a module reload this is a different class with the same name
+    if type(_app).__name__ == "ShellApp" and type(_app) is not ShellApp:
+        # The add-on was reloaded: the running QApplication still has the old class, whose notify()
+        # looks at the old module (window None → no Blender context for keys). Point it at the new code.
+        type(_app).notify = ShellApp.notify
+    if type(_app).__name__ != "ShellApp":
         bridge.log("QApplication was created before Qt Shell – event context is not guaranteed "
                    "(restart Blender).", "WARNING")
     _app.setQuitOnLastWindowClosed(False)
