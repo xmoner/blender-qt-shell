@@ -294,6 +294,8 @@ class Shim:
         d["is_popover"] = False
         d["text"] = getattr(cls, "bl_label", "")
         d["bl_label"] = getattr(cls, "bl_label", "")
+        # Blender uses the class name when bl_idname is not set (e.g. preset menus read self.bl_idname)
+        d["bl_idname"] = getattr(cls, "bl_idname", None) or cls.__name__
 
     def __getattr__(self, name):
         cls = self.__dict__["_cls"]
