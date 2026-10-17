@@ -142,7 +142,11 @@ def _pump():
             _hub.tick()
             playing = _hub.playing
             if playing:
-                _win.timeline.playback_tick()
+                tl = _win.timeline
+                tl.playback_tick()
+                # next frame due soon → don't let Blender's loop sleep its idle 5 ms
+                if getattr(tl, "_next", 0.0) - time.perf_counter() < 0.0055:
+                    native.wake_event_loop()
             _app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 4 if playing else 15)
     except Exception:
         traceback.print_exc()

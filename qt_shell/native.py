@@ -31,6 +31,7 @@ def _windows(visible):
     user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
     user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.IsIconic.argtypes = [wintypes.HWND]
 
     pid = os.getpid()
     found = []
@@ -49,10 +50,35 @@ def _windows(visible):
     cb = proc_type(callback)  # the reference must stay alive during EnumWindows
     user32.EnumWindows(cb, 0)
     for hwnd in found:
-        user32.ShowWindow(hwnd, 5 if visible else 0)  # SW_SHOW / SW_HIDE
         if visible:
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)   # SW_RESTORE (back to normal / maximized)
+            user32.ShowWindow(hwnd, 5)       # SW_SHOW
             user32.SetForegroundWindow(hwnd)
+        else:
+            # Minimize before hiding: Blender skips drawing minimized windows. A window that is only
+            # hidden is still redrawn on every change and waits for VSync – that capped playback at 60 fps.
+            user32.ShowWindow(hwnd, 6)       # SW_MINIMIZE
+            user32.ShowWindow(hwnd, 0)       # SW_HIDE
+    global _ghost_hwnds
+    _ghost_hwnds = list(found)
     return bool(found), f"Blender windows: {len(found)}"
+
+
+_ghost_hwnds = []
+
+
+def wake_event_loop():
+    """Makes Blender's event loop skip its idle sleep (~5 ms) on the next pass (Windows).
+
+    Blender sleeps when its window got no message; during fast playback that sleep is longer than
+    the time left until the next frame. Posting an empty message (WM_NULL) wakes it up."""
+    if sys.platform != "win32" or not _ghost_hwnds:
+        return
+    try:
+        ctypes.windll.user32.PostMessageW(ctypes.c_void_p(_ghost_hwnds[0]), 0, 0, 0)
+    except Exception:
+        pass
 
 
 # --------------------------------------------------------------------------- macOS
