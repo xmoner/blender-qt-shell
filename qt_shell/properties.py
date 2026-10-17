@@ -6,7 +6,7 @@ via fake_ui → qt_ui. Modifiers and constraints (drawn in C in Blender) have th
 import bpy
 from PySide6 import QtCore, QtWidgets
 
-from . import bridge, fake_ui, qt_ui, rna_widgets as rw
+from . import bridge, fake_ui, qt_ui, rna_widgets as rw, theme
 from .bridge import tr
 
 TABS = [
@@ -224,7 +224,7 @@ class StackPage(QtWidgets.QScrollArea):
                 b = rw.BoolBinding(item, prop, txt, 1, False, self.on_change)
                 b.widget.setStyleSheet("padding:2px;")
                 b.widget.setToolTip(tr(tip))
-                b.widget.setMaximumWidth(30)
+                b.widget.setMaximumWidth(theme.px(30))
                 self.bindings.append(b)
                 hl.addWidget(b.widget)
         for txt, tip, fn, en in (("▲", "Move Up", lambda: self._move(ob, index, -1), index > 0),
@@ -359,9 +359,10 @@ class TabColumn(QtWidgets.QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         self.nav = QtWidgets.QListWidget()
-        self.nav.setFixedWidth(96)
+        self.nav.setFixedWidth(theme.px(96))
         self.nav.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.nav.setStyleSheet("QListWidget{background:#232323;} QListWidget::item{padding:5px 4px;}")
+        self.nav.setStyleSheet("QListWidget{background:#232323;} "
+                               f"QListWidget::item{{padding:{theme.px(5)}px {theme.px(4)}px;}}")
         self.stack = QtWidgets.QStackedWidget()
         lay.addWidget(self.nav)
         lay.addWidget(self.stack, 1)

@@ -9,6 +9,7 @@ import re
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import theme
 from .bridge import log, tr
 
 AXES = "XYZW"
@@ -370,7 +371,7 @@ class NumberBinding(Binding):
         if prefix:
             w.setPrefix(prefix + ": ")
         w.valueChanged.connect(self._set)
-        w.setMinimumWidth(60)
+        w.setMinimumWidth(theme.px(60))
         self.widget = w
         self.refresh()
 
@@ -403,7 +404,7 @@ class ColorBinding(Binding):
         self.size = rp.array_length
         self.linear = rp.subtype == "COLOR"
         w = QtWidgets.QPushButton()
-        w.setMinimumHeight(20)
+        w.setMinimumHeight(theme.px(20))
         w.clicked.connect(self._pick)
         self.widget = w
         self.refresh()
@@ -451,13 +452,13 @@ class VectorBinding(Binding):
         for i in range(rp.array_length):
             if rp.type == "BOOLEAN":
                 b = BoolBinding(data, prop_id, labels[i] if i < 4 else str(i), 1, False, on_change, index=i)
-                b.widget.setMaximumWidth(28)
+                b.widget.setMaximumWidth(theme.px(28))
             else:
                 b = NumberBinding(data, prop_id, rp, labels[i] if i < 4 else str(i), on_change, index=i)
             self.parts.append(b)
             lay.addWidget(b.widget)
         if rp.type == "BOOLEAN":
-            w.setMaximumWidth(30 * rp.array_length)
+            w.setMaximumWidth(theme.px(30) * rp.array_length)
         self.widget = w
 
     def refresh(self):

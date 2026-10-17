@@ -7,35 +7,73 @@ C = {
     "border": "#151515", "header": "#303030", "viewport": "#3d3d3d",
 }
 
-QSS = f"""
-QMainWindow::separator {{ background: {C['border']}; width: 3px; height: 3px; }}
-QDockWidget::title {{ background: {C['header']}; padding: 4px 6px; }}
+# Interface size (set from the add-on preferences / Window → Interface Size…)
+ui_scale = 1.0      # buttons, fields, spacing, icons and text
+font_scale = 1.0    # extra multiplier for text only
+_base_pt = None     # system default font size in points (captured once)
+
+
+def px(n):
+    """Scales a size in pixels by the interface scale."""
+    return max(1, int(round(n * ui_scale)))
+
+
+def fs(n):
+    """Scales a font pixel size by the interface and text scale."""
+    return max(6, int(round(n * ui_scale * font_scale)))
+
+
+def set_scale(ui=None, font=None):
+    global ui_scale, font_scale
+    if ui is not None:
+        ui_scale = min(max(float(ui), 0.5), 3.0)
+    if font is not None:
+        font_scale = min(max(float(font), 0.5), 2.5)
+
+
+def qss():
+    p = px
+    icon = p(16)
+    return f"""
+QMainWindow::separator {{ background: {C['border']}; width: {p(3)}px; height: {p(3)}px; }}
+QDockWidget::title {{ background: {C['header']}; padding: {p(4)}px {p(6)}px; }}
 QToolButton, QPushButton {{ background: {C['button']}; border: 1px solid {C['border']};
-    border-radius: 4px; padding: 3px 8px; }}
+    border-radius: {p(4)}px; padding: {p(3)}px {p(8)}px; }}
 QToolButton:hover, QPushButton:hover {{ background: #474747; }}
 QToolButton:checked, QPushButton:checked {{ background: {C['highlight']}; }}
+QAbstractButton {{ qproperty-iconSize: {icon}px {icon}px; }}
 QAbstractSpinBox, QLineEdit, QComboBox {{ background: #545454; border: 1px solid {C['border']};
-    border-radius: 4px; padding: 2px 4px; min-height: 18px; }}
+    border-radius: {p(4)}px; padding: {p(2)}px {p(4)}px; min-height: {p(18)}px; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0px; border: none; }}
 QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {{ width: 0px; height: 0px; }}
 QAbstractSpinBox:focus, QLineEdit:focus {{ background: #222; }}
 QComboBox QAbstractItemView {{ background: {C['alt']}; selection-background-color: {C['highlight']}; }}
-QGroupBox {{ border: 1px solid {C['border']}; border-radius: 5px; margin-top: 6px; }}
-QFrame#qtshell_panel {{ background: #303030; border: 1px solid {C['border']}; border-radius: 5px; }}
-QFrame#qtshell_box {{ background: #2a2a2a; border: 1px solid #202020; border-radius: 4px; }}
+QCheckBox::indicator {{ width: {p(13)}px; height: {p(13)}px; }}
+QGroupBox {{ border: 1px solid {C['border']}; border-radius: {p(5)}px; margin-top: {p(6)}px; }}
+QFrame#qtshell_panel {{ background: #303030; border: 1px solid {C['border']}; border-radius: {p(5)}px; }}
+QFrame#qtshell_box {{ background: #2a2a2a; border: 1px solid #202020; border-radius: {p(4)}px; }}
 QToolButton#qtshell_panel_header {{ background: transparent; border: none; font-weight: bold;
-    text-align: left; padding: 3px; }}
+    text-align: left; padding: {p(3)}px; }}
 QTabWidget::pane {{ border: none; }}
-QTabBar::tab {{ background: {C['alt']}; padding: 6px; border: none; }}
+QTabBar::tab {{ background: {C['alt']}; padding: {p(6)}px; border: none; }}
 QTabBar::tab:selected {{ background: {C['highlight']}; }}
 QTreeWidget, QListWidget, QPlainTextEdit {{ background: {C['alt']}; border: none; }}
+QTreeWidget, QListWidget {{ qproperty-iconSize: {icon}px {icon}px; }}
+QTreeWidget::item, QListWidget::item {{ min-height: {p(18)}px; }}
 QTreeWidget::item:selected, QListWidget::item:selected {{ background: {C['highlight']}; }}
+QMenu::item {{ padding: {p(4)}px {p(20)}px {p(4)}px {p(10)}px; }}
+QMenu::separator {{ height: 1px; margin: {p(3)}px {p(6)}px; background: {C['border']}; }}
+QScrollBar:vertical {{ width: {p(12)}px; }}
+QScrollBar:horizontal {{ height: {p(12)}px; }}
 QStatusBar {{ background: {C['header']}; color: {C['dim']}; }}
 QLabel[dim="true"] {{ color: {C['dim']}; }}
 """
 
 
 def apply(app):
+    global _base_pt
+    if _base_pt is None:
+        _base_pt = app.font().pointSizeF() if app.font().pointSizeF() > 0 else 9.0
     app.setStyle(QtWidgets.QStyleFactory.create("Fusion"))
     pal = QtGui.QPalette()
     col = QtGui.QColor
@@ -54,7 +92,10 @@ def apply(app):
     for role in (QtGui.QPalette.WindowText, QtGui.QPalette.Text, QtGui.QPalette.ButtonText):
         pal.setColor(QtGui.QPalette.Disabled, role, col("#6a6a6a"))
     app.setPalette(pal)
-    app.setStyleSheet(QSS)
+    font = app.font()
+    font.setPointSizeF(_base_pt * ui_scale * font_scale)
+    app.setFont(font)
+    app.setStyleSheet(qss())
 
 
 _icon_cache = {}

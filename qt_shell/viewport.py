@@ -11,7 +11,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh
+from . import bridge, editmesh, theme
 
 DEG = math.pi / 180.0
 
@@ -413,7 +413,7 @@ class Viewport(QtWidgets.QWidget):
         p.setPen(QtGui.QColor("#e0e0e0"))
         f = p.font()
         f.setBold(False)
-        f.setPixelSize(12)
+        f.setPixelSize(theme.fs(12))
         p.setFont(f)
         name = self.view_name
         if self.camera_view:

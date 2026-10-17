@@ -7,7 +7,7 @@ values of unconnected inputs and node properties in the sidebar.
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, rna_widgets as rw
+from . import bridge, rna_widgets as rw, theme
 from .bridge import tr
 
 ROW_H = 22
@@ -660,7 +660,7 @@ class NodeEditor(QtWidgets.QWidget):
         split.addWidget(self.view)
         self.side = QtWidgets.QScrollArea()
         self.side.setWidgetResizable(True)
-        self.side.setMinimumWidth(220)
+        self.side.setMinimumWidth(theme.px(220))
         split.addWidget(self.side)
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 1)

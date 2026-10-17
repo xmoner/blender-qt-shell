@@ -7,7 +7,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import app as shell_app
-from . import bridge, rna_widgets as rw
+from . import bridge, rna_widgets as rw, theme
 from .bridge import run_op, tr
 from .console import Console
 from .node_editor import NodeEditor
@@ -330,6 +330,100 @@ class OperatorSearch(QtWidgets.QDialog):
             run_op(it.data(QtCore.Qt.UserRole))
 
 
+# ---------------------------------------------------------------- interface size
+class InterfaceSizeDialog(QtWidgets.QDialog):
+    """Window → Interface Size…: scale of the whole Qt UI and of the text.
+
+    Moving a slider previews the change right away (text, buttons, fields, spacing);
+    OK saves it to the add-on preferences and rebuilds the window so every fixed size follows.
+    """
+    PRESETS = (0.8, 1.0, 1.25, 1.5, 2.0)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Interface Size")
+        self._orig = (theme.ui_scale, theme.font_scale)
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+        self.ui = self._slider(50, 300, theme.ui_scale)
+        self.font = self._slider(50, 250, theme.font_scale)
+        form.addRow("Interface scale", self.ui[0])
+        form.addRow("Text size", self.font[0])
+        lay.addLayout(form)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Presets:"))
+        for v in self.PRESETS:
+            b = QtWidgets.QPushButton(f"{int(v * 100)} %")
+            b.clicked.connect(lambda _=False, v=v: (self.ui[2].setValue(int(v * 100)),
+                                                    self.font[2].setValue(100)))
+            row.addWidget(b)
+        row.addStretch(1)
+        lay.addLayout(row)
+        hint = QtWidgets.QLabel("Interface scale changes buttons, fields, icons, spacing and text. "
+                                "Text size changes only the text. OK rebuilds the window.")
+        hint.setWordWrap(True)
+        hint.setProperty("dim", True)
+        lay.addWidget(hint)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+                                        | QtWidgets.QDialogButtonBox.Reset)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        bb.button(QtWidgets.QDialogButtonBox.Reset).clicked.connect(
+            lambda: (self.ui[2].setValue(100), self.font[2].setValue(100)))
+        lay.addWidget(bb)
+        self.setMinimumWidth(theme.px(440))
+
+    def _slider(self, lo, hi, value):
+        w = QtWidgets.QWidget()
+        h = QtWidgets.QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        sl = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        sl.setRange(lo, hi)
+        sl.setSingleStep(5)
+        sl.setPageStep(25)
+        sp = QtWidgets.QSpinBox()
+        sp.setRange(lo, hi)
+        sp.setSingleStep(5)
+        sp.setSuffix(" %")
+        sp.setMinimumWidth(theme.px(70))
+        sl.valueChanged.connect(sp.setValue)
+        sp.valueChanged.connect(sl.setValue)
+        sp.valueChanged.connect(lambda _v: self._preview())
+        sp.setValue(int(round(value * 100)))
+        h.addWidget(sl, 1)
+        h.addWidget(sp)
+        return w, sl, sp
+
+    def values(self):
+        return self.ui[2].value() / 100.0, self.font[2].value() / 100.0
+
+    def _preview(self):
+        if hasattr(self, "font"):
+            shell_app.preview_interface_size(*self.values())
+
+    def reject(self):
+        shell_app.preview_interface_size(*self._orig)
+        super().reject()
+
+    def accept(self):
+        ui, font = self.values()
+        super().accept()
+        p = shell_app.prefs()
+        if p is None:
+            shell_app.preview_interface_size(ui, font)
+            return
+        if abs(p.ui_scale - ui) < 1e-4 and abs(p.font_scale - font) < 1e-4:
+            shell_app.apply_interface_size()   # values unchanged in prefs – still rebuild after preview
+        else:
+            p.ui_scale = ui          # the update callback rebuilds the window
+            p.font_scale = font
+        try:
+            if not bpy.context.preferences.use_preferences_save:
+                bpy.ops.wm.save_userpref()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------- main window
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, hub):
@@ -535,6 +629,7 @@ class MainWindow(QtWidgets.QMainWindow):
         win.addAction("Return to the Blender UI (close Qt Shell)",
                       lambda: QtCore.QTimer.singleShot(0, shell_app.stop))
         win.addAction("Reset Window Layout", self._reset_layout)
+        win.addAction("Interface Size…", self._interface_size)
         blender_menu("Help", "TOPBAR_MT_help")
 
     def _build_shortcuts(self):
@@ -841,6 +936,9 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             for d in getattr(self, "_hidden_docks", []):
                 d.show()
+
+    def _interface_size(self):
+        InterfaceSizeDialog(self).exec()
 
     def _reset_layout(self):
         for key, area in (("outliner", QtCore.Qt.RightDockWidgetArea), ("properties", QtCore.Qt.RightDockWidgetArea),

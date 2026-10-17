@@ -2,7 +2,7 @@
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import fake_ui, rna_widgets as rw
+from . import fake_ui, rna_widgets as rw, theme
 from .bridge import op_label, op_poll, op_rna_props, run_op, tr
 from .bridge import undo_push as bridge_undo
 
@@ -65,8 +65,8 @@ class TemplateListBinding(rw.Binding):
         self.active_data = active_data
         self.active_prop = active_prop
         w = QtWidgets.QListWidget()
-        w.setMinimumHeight(max(3, min(rows, 8)) * 22)
-        w.setMaximumHeight(max(3, min(rows, 8)) * 22 + 6)
+        w.setMinimumHeight(max(3, min(rows, 8)) * theme.px(22))
+        w.setMaximumHeight(max(3, min(rows, 8)) * theme.px(22) + 6)
         w.currentRowChanged.connect(self._select)
         w.itemChanged.connect(self._renamed)
         self.widget = w
@@ -499,7 +499,7 @@ class Builder:
         btn.setEnabled(op_poll(idname, ctx))
         btn.clicked.connect(lambda: (run_op(idname, dict(props), ctx), self.on_change and self.on_change(None, idname)))
         if text == "" or (text is None and a.get("icon") in ICON_GLYPHS and len(label) > 18):
-            btn.setMaximumWidth(34)
+            btn.setMaximumWidth(theme.px(34))
         return btn
 
     # --- node view (materials, world)
@@ -716,7 +716,7 @@ class PopoverMenu(QtWidgets.QMenu):
         w = builder.build(body)
         if w is None:
             return
-        w.setMinimumWidth(260)
+        w.setMinimumWidth(theme.px(260))
         wa = QtWidgets.QWidgetAction(self)
         wa.setDefaultWidget(w)
         self.addAction(wa)

@@ -11,7 +11,7 @@ import numpy as np
 from mathutils import Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge
+from . import bridge, theme
 
 PICK = 10.0
 
@@ -194,7 +194,7 @@ class UVCanvas(QtWidgets.QWidget):
             p.drawRect(QtCore.QRectF(self._box[0], self._box[1]).normalized())
         p.setPen(QtGui.QColor("#cfcfcf"))
         f = p.font()
-        f.setPixelSize(11)
+        f.setPixelSize(theme.fs(11))
         p.setFont(f)
         info = (img.name if img is not None else "no texture") + ("" if editable else "  ·  preview only (Tab = Edit mode)")
         if self._modal:

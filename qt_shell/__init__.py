@@ -29,6 +29,17 @@ def _pyside_available():
 
 
 # ---------------------------------------------------------------- preferences
+def _size_changed(self, context):
+    """Applies a new interface size to a running Qt Shell."""
+    try:
+        import sys
+        app = sys.modules.get(__package__ + ".app")
+        if app is not None and app._win is not None:
+            app.apply_interface_size()
+    except Exception:
+        traceback.print_exc()
+
+
 class QTSHELL_Preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
@@ -39,6 +50,14 @@ class QTSHELL_Preferences(bpy.types.AddonPreferences):
     viewport_scale: bpy.props.FloatProperty(
         name="Viewport resolution", default=1.0, min=0.25, max=2.0,
         description="Viewport render resolution multiplier (lower = faster)")
+    ui_scale: bpy.props.FloatProperty(
+        name="Interface scale", default=1.0, min=0.5, max=3.0, step=5, subtype="FACTOR",
+        description="Size of buttons, fields, icons, spacing and text in Qt Shell",
+        update=_size_changed)
+    font_scale: bpy.props.FloatProperty(
+        name="Text size", default=1.0, min=0.5, max=2.5, step=5, subtype="FACTOR",
+        description="Extra size multiplier for text only (on top of the interface scale)",
+        update=_size_changed)
 
     def draw(self, context):
         col = self.layout.column()
@@ -52,6 +71,10 @@ class QTSHELL_Preferences(bpy.types.AddonPreferences):
         col.prop(self, "auto_start")
         col.prop(self, "hide_blender")
         col.prop(self, "viewport_scale")
+        col.separator()
+        col.label(text="Interface size (also in Qt Shell: Window → Interface Size…)")
+        col.prop(self, "ui_scale")
+        col.prop(self, "font_scale")
         col.separator()
         col.operator("qtshell.open", icon="WINDOW")
 

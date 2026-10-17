@@ -2,7 +2,7 @@
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge
+from . import bridge, theme
 from .rna_widgets import DragSpin
 
 
@@ -10,7 +10,7 @@ class TimeBar(QtWidgets.QWidget):
     def __init__(self, timeline):
         super().__init__()
         self.tl = timeline
-        self.setMinimumHeight(46)
+        self.setMinimumHeight(theme.px(46))
         self.setMouseTracking(False)
         self.keys = []
 
@@ -43,7 +43,7 @@ class TimeBar(QtWidgets.QWidget):
                 step = s
                 break
         f = p.font()
-        f.setPixelSize(10)
+        f.setPixelSize(theme.fs(10))
         p.setFont(f)
         first = (lo // step) * step
         for fr in range(int(first), int(hi) + 1, step):
@@ -158,7 +158,7 @@ class Timeline(QtWidgets.QWidget):
         s = DragSpin(is_int=True)
         s.setRange(lo, hi)
         s.drag_step = 0.25
-        s.setMinimumWidth(64)
+        s.setMinimumWidth(theme.px(64))
         return s
 
     def _set(self, attr, v):

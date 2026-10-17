@@ -176,6 +176,8 @@ def start(addon_prefs=None):
         bridge.log("QApplication was created before Qt Shell – event context is not guaranteed "
                    "(restart Blender).", "WARNING")
     _app.setQuitOnLastWindowClosed(False)
+    if addon_prefs is not None:
+        theme.set_scale(getattr(addon_prefs, "ui_scale", 1.0), getattr(addon_prefs, "font_scale", 1.0))
     theme.apply(_app)
 
     _hub = Hub()
@@ -191,6 +193,36 @@ def start(addon_prefs=None):
     if addon_prefs is None or addon_prefs.hide_blender:
         # wait a moment until the Qt window really exists (so it is excluded from the X11 search)
         bridge.later(lambda: set_blender_visible(False), 0.5)
+
+
+_rebuild_pending = False
+
+
+def preview_interface_size(ui, font):
+    """Live preview: fonts and style sheet only (fixed widget sizes update on rebuild)."""
+    if _app is None:
+        return
+    theme.set_scale(ui, font)
+    theme.apply(_app)
+
+
+def apply_interface_size():
+    """Applies the size from the add-on preferences and rebuilds the Qt window (once per burst)."""
+    global _rebuild_pending
+    if _rebuild_pending or _win is None:
+        return
+    _rebuild_pending = True
+
+    def run():
+        global _rebuild_pending
+        _rebuild_pending = False
+        p = _prefs
+        if p is not None:
+            theme.set_scale(p.ui_scale, p.font_scale)
+        stop(show_blender=False)
+        start(p)
+
+    bridge.later(run, 0.05)
 
 
 def stop(show_blender=True):
