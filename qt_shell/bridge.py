@@ -35,8 +35,28 @@ def remove_log_listener(fn):
         _log_listeners.remove(fn)
 
 
+def log_path():
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "qtshell.log")
+
+
+def _log_to_file(msg, level):
+    """Warnings and errors also go to <temp>/qtshell.log – Blender's console is hidden on Windows."""
+    try:
+        import time
+        path = log_path()
+        if os.path.exists(path) and os.path.getsize(path) > 512 * 1024:
+            os.replace(path, path + ".old")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {level}: {msg}\n")
+    except Exception:
+        pass
+
+
 def log(msg, level="INFO"):
     print(f"[QtShell] {level}: {msg}")
+    if level in ("WARNING", "ERROR"):
+        _log_to_file(msg, level)
     for fn in list(_log_listeners):
         try:
             fn(str(msg), level)

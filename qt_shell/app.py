@@ -188,10 +188,17 @@ def start(addon_prefs=None):
     _hub = Hub()
     bridge.add_log_listener(lambda m, lvl: _hub.log.emit(m, lvl))
 
-    from .main_window import MainWindow
-    with bridge.blender_context():
-        _win = MainWindow(_hub)
-        _win.show()
+    try:
+        from .main_window import MainWindow
+        with bridge.blender_context():
+            _win = MainWindow(_hub)
+            _win.show()
+    except Exception:
+        # never leave the user without a window: log the error and bring Blender back
+        bridge.log("Qt Shell window could not be created:\n" + traceback.format_exc(), "ERROR")
+        _win = None
+        set_blender_visible(True)
+        return
     if not _pump_on:
         _pump_on = True
         bpy.app.timers.register(_pump, first_interval=0.0, persistent=True)

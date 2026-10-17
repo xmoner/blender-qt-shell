@@ -10,6 +10,20 @@ def go(delay=0.3):
     from . import bridge
 
     def run():
+        try:
+            _run()
+        except Exception:
+            import traceback
+            b = sys.modules.get(__package__ + ".bridge")
+            if b is not None:
+                b.log("Reload failed:\n" + traceback.format_exc(), "ERROR")
+            try:
+                from . import native
+                native.set_blender_windows_visible(True, [])
+            except Exception:
+                pass
+
+    def _run():
         pkg = sys.modules[__package__]
         app = sys.modules.get(__package__ + ".app")
         if app is not None:
