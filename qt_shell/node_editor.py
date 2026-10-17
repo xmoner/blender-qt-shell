@@ -1,8 +1,8 @@
-"""Node editor v Qt (QGraphicsView): shader, svět, Geometry Nodes, compositor.
+"""Node editor in Qt (QGraphicsView): shader, world, Geometry Nodes, compositor.
 
-Uzly, sockety a spoje se kreslí z dat Blenderu (node_tree.nodes / links). Úpravy se zapisují
-zpět přímo do RNA: posun (node.location), spojení (links.new / remove), přidání a mazání uzlů,
-hodnoty nepřipojených vstupů a vlastnosti uzlu v postranním panelu.
+Nodes, sockets and links are drawn from Blender's data (node_tree.nodes / links). Edits are written
+straight back to RNA: moving (node.location), linking (links.new / remove), adding and deleting nodes,
+values of unconnected inputs and node properties in the sidebar.
 """
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -112,7 +112,7 @@ def base_node_props():
 
 
 def node_buttons(node):
-    """Editovatelné vlastnosti uzlu zobrazené přímo v uzlu (enumy, ID ukazatele)."""
+    """Editable node properties shown directly in the node (enums, ID pointers)."""
     out = []
     for p in node.bl_rna.properties:
         if p.identifier in base_node_props() or p.is_readonly:
@@ -122,7 +122,7 @@ def node_buttons(node):
     return out
 
 
-# ---------------------------------------------------------------- grafické položky
+# ---------------------------------------------------------------- graphics items
 class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
         super().__init__()
@@ -379,7 +379,7 @@ class NodeView(QtWidgets.QGraphicsView):
         if not (isinstance(fw, QtWidgets.QLineEdit) and fw.text()):
             self.setFocus()
             win = self.window()
-            if not win.isActiveWindow():   # plovoucí dock = samostatné okno
+            if not win.isActiveWindow():   # floating dock = separate window
                 win.activateWindow()
         super().enterEvent(ev)
 
@@ -415,7 +415,7 @@ class NodeView(QtWidgets.QGraphicsView):
     def _start_link(self, item, is_out, sock, sp):
         ntree = self.editor.tree
         if not is_out and sock.is_linked:
-            # vytáhnout existující spoj ze vstupu
+            # drag an existing link out of an input
             link = sock.links[0]
             src = link.from_socket
             src_item = self.editor.items.get(link.from_node.name)
@@ -518,7 +518,7 @@ class NodeView(QtWidgets.QGraphicsView):
         return False
 
 
-# ---------------------------------------------------------------- hledání typů uzlů
+# ---------------------------------------------------------------- node type search
 _TYPE_CACHE = {}
 _ABSTRACT = {"Node", "NodeInternal", "ShaderNode", "GeometryNode", "CompositorNode", "TextureNode",
              "FunctionNode", "NodeCustomGroup", "ShaderNodeCustomGroup", "GeometryNodeCustomGroup",
@@ -569,7 +569,7 @@ class AddNodePopup(QtWidgets.QDialog):
         self.on_pick = on_pick
         lay = QtWidgets.QVBoxLayout(self)
         self.edit = QtWidgets.QLineEdit()
-        self.edit.setPlaceholderText("Hledat uzel…")
+        self.edit.setPlaceholderText("Search node…")
         self.edit.textChanged.connect(self._filter)
         self.edit.returnPressed.connect(self._accept)
         lay.addWidget(self.edit)
@@ -606,7 +606,7 @@ class AddNodePopup(QtWidgets.QDialog):
 
 
 # ---------------------------------------------------------------- editor
-SOURCES = [("SHADER", "Shader (materiál)"), ("WORLD", "Svět"), ("GEOMETRY", "Geometry Nodes"),
+SOURCES = [("SHADER", "Shader (material)"), ("WORLD", "World"), ("GEOMETRY", "Geometry Nodes"),
            ("COMPOSITOR", "Compositor")]
 
 
@@ -634,21 +634,21 @@ class NodeEditor(QtWidgets.QWidget):
         self.path_label.setProperty("dim", True)
         bar.addWidget(self.path_label, 1)
         self.up_btn = QtWidgets.QToolButton()
-        self.up_btn.setText("↑ Ze skupiny")
+        self.up_btn.setText("↑ Exit Group")
         self.up_btn.clicked.connect(self.exit_group)
         bar.addWidget(self.up_btn)
         self.new_btn = QtWidgets.QToolButton()
-        self.new_btn.setText("+ Nový strom")
+        self.new_btn.setText("+ New Tree")
         self.new_btn.clicked.connect(self.new_tree)
         bar.addWidget(self.new_btn)
         add = QtWidgets.QToolButton()
-        add.setText("+ Přidat uzel (Shift+A)")
+        add.setText("+ Add Node (Shift+A)")
         add.clicked.connect(lambda: self.add_node_popup(QtGui.QCursor.pos(), self.view.mapToScene(
             self.view.viewport().rect().center())))
         bar.addWidget(add)
         fit = QtWidgets.QToolButton()
         fit.setText("⤢")
-        fit.setToolTip("Zobrazit vše (Home)")
+        fit.setToolTip("Frame All (Home)")
         fit.clicked.connect(self.frame_all)
         bar.addWidget(fit)
         lay.addLayout(bar)
@@ -677,7 +677,7 @@ class NodeEditor(QtWidgets.QWidget):
         self._first_frame = True
         self._reset()
 
-    # --- strom
+    # --- tree
     def base_tree(self):
         mode = self.source.currentData()
         ctx = bpy.context
@@ -769,7 +769,7 @@ class NodeEditor(QtWidgets.QWidget):
         self.up_btn.setVisible(bool(self.group_stack))
         self.new_btn.setVisible(tree is None and not self.group_stack)
         if tree is None:
-            t = self.scene.addText("Žádný strom uzlů – vyber zdroj nahoře nebo klikni na „+ Nový strom“.")
+            t = self.scene.addText("No node tree – pick a source above or click “+ New Tree”.")
             t.setDefaultTextColor(QtGui.QColor("#9a9a9a"))
             self._build_side()
             return
@@ -801,7 +801,7 @@ class NodeEditor(QtWidgets.QWidget):
     def dirty_structure(self):
         self._sig = None
 
-    # --- operace
+    # --- operations
     def set_active(self, item):
         try:
             self.tree.nodes.active = item.node
@@ -957,7 +957,7 @@ class NodeEditor(QtWidgets.QWidget):
         bridge.undo_push("New Node Tree")
         self._reset()
 
-    # --- postranní panel
+    # --- sidebar
     def _build_side(self):
         self.side_bindings = []
         host = QtWidgets.QWidget()
@@ -968,7 +968,7 @@ class NodeEditor(QtWidgets.QWidget):
         if self.tree is not None and self.active_name:
             node = self.tree.nodes.get(self.active_name)
         if node is None:
-            lay.addWidget(QtWidgets.QLabel("Vyber uzel."))
+            lay.addWidget(QtWidgets.QLabel("Select a node."))
             lay.addStretch(1)
             self.side.setWidget(host)
             return
@@ -1002,7 +1002,7 @@ class NodeEditor(QtWidgets.QWidget):
         ins = [s for s in node.inputs if getattr(s, "enabled", True) and not s.hide
                and not s.is_linked and hasattr(s, "default_value") and not getattr(s, "hide_value", False)]
         if ins:
-            lab = QtWidgets.QLabel("Vstupy")
+            lab = QtWidgets.QLabel("Inputs")
             lab.setStyleSheet("font-weight:bold; margin-top:6px;")
             lay.addWidget(lab)
             for s in ins:

@@ -1,4 +1,4 @@
-"""Outliner: kolekce a objekty scény, výběr, viditelnost, přejmenování."""
+"""Outliner: scene collections and objects, selection, visibility, renaming."""
 import bpy
 from PySide6 import QtCore, QtWidgets
 
@@ -15,11 +15,11 @@ class Outliner(QtWidgets.QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         self.filter = QtWidgets.QLineEdit()
-        self.filter.setPlaceholderText("Hledat…")
+        self.filter.setPlaceholderText("Search…")
         self.filter.textChanged.connect(self._apply_filter)
         lay.addWidget(self.filter)
         self.tree = QtWidgets.QTreeWidget()
-        self.tree.setHeaderLabels(["Název", "👁", "📷"])
+        self.tree.setHeaderLabels(["Name", "👁", "📷"])
         self.tree.setColumnCount(3)
         hdr = self.tree.header()
         hdr.setStretchLastSection(False)
@@ -46,7 +46,7 @@ class Outliner(QtWidgets.QWidget):
         hub.undo_done.connect(lambda: self.refresh(force=True))
         self.refresh(force=True)
 
-    # ------------------------------------------------------------ struktura
+    # ------------------------------------------------------------ structure
     def _signature(self):
         scene = bpy.context.scene
 
@@ -144,7 +144,7 @@ class Outliner(QtWidgets.QWidget):
             if kind == "OBJECT":
                 it.setHidden(bool(text) and text not in name.lower())
 
-    # ------------------------------------------------------------ výběr
+    # ------------------------------------------------------------ selection
     def sync_selection(self):
         if self._updating:
             return
@@ -239,25 +239,25 @@ class Outliner(QtWidgets.QWidget):
         bridge.undo_push("Rename")
         self.refresh(force=True)
 
-    # ------------------------------------------------------------ kontextové menu
+    # ------------------------------------------------------------ context menu
     def _context_menu(self, pos):
         it = self.tree.itemAt(pos)
         m = QtWidgets.QMenu(self)
-        m.addAction("Nová kolekce", self._new_collection)
+        m.addAction("New Collection", self._new_collection)
         if it is not None:
             kind, name, root = it.data(0, ROLE)
             if kind == "OBJECT":
-                m.addAction("Duplikovat", lambda: bridge.run_op("object.duplicate"))
-                m.addAction("Smazat", lambda: bridge.run_op("object.delete"))
-                m.addAction("Zaměřit ve viewportu", self._frame)
-                move = m.addMenu("Přesunout do kolekce")
+                m.addAction("Duplicate", lambda: bridge.run_op("object.duplicate"))
+                m.addAction("Delete", lambda: bridge.run_op("object.delete"))
+                m.addAction("Frame in Viewport", self._frame)
+                move = m.addMenu("Move to Collection")
                 scene = bpy.context.scene
                 targets = [scene.collection] + list(scene.collection.children_recursive)
                 for c in targets:
                     label = scene.name if c == scene.collection else c.name
                     move.addAction(label, lambda c=c: self._move_selected(c))
             elif kind == "COLLECTION" and not root:
-                m.addAction("Smazat kolekci", lambda: self._delete_collection(name))
+                m.addAction("Delete Collection", lambda: self._delete_collection(name))
         m.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _frame(self):

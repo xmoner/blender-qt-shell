@@ -1,6 +1,6 @@
-"""Qt widgety pro RNA vlastnosti Blenderu (bool, int, float, vektory, barvy, enumy, ID, texty).
+"""Qt widgets for Blender RNA properties (bool, int, float, vectors, colors, enums, IDs, strings).
 
-Každý widget umí `refresh()` – načte hodnotu z Blenderu bez vyvolání signálů.
+Every widget has `refresh()` – it reads the value from Blender without emitting signals.
 """
 import math
 import os
@@ -15,7 +15,7 @@ AXES = "XYZW"
 RGBA = "RGBA"
 
 
-# ---------------------------------------------------------------- pomocné funkce
+# ---------------------------------------------------------------- helpers
 def rna_prop(data, prop_id):
     try:
         return data.bl_rna.properties[prop_id]
@@ -27,7 +27,7 @@ _ID_COLLECTIONS = None
 
 
 def id_collection_for(fixed_type_id):
-    """'Material' → bpy.data.materials (podle typu RNA)."""
+    """'Material' → bpy.data.materials (by RNA type)."""
     global _ID_COLLECTIONS
     if _ID_COLLECTIONS is None:
         _ID_COLLECTIONS = {}
@@ -36,7 +36,7 @@ def id_collection_for(fixed_type_id):
                 _ID_COLLECTIONS.setdefault(p.fixed_type.identifier, p.identifier)
     attr = _ID_COLLECTIONS.get(fixed_type_id)
     if attr is None:
-        # podtypy (např. ShaderNodeTree → node_groups)
+        # subtypes (e.g. ShaderNodeTree → node_groups)
         try:
             base = getattr(bpy.types, fixed_type_id)
             for ident, a in _ID_COLLECTIONS.items():
@@ -60,14 +60,14 @@ _ENUM_ERR = re.compile(r"not found in \((.*)\)")
 
 
 def enum_items(data, prop_id):
-    """[(identifier, name, description)] – i pro dynamické enumy."""
+    """[(identifier, name, description)] – also for dynamic enums."""
     p = rna_prop(data, prop_id)
     if p is None:
         return []
     items = [(e.identifier, tr(e.name), e.description) for e in p.enum_items]
     if items:
         return items
-    # dynamický enum: platné hodnoty vyčteme z chybové hlášky
+    # dynamic enum: read the valid values from the error message
     try:
         setattr(data, prop_id, "__qtshell_invalid__")
     except TypeError as ex:
@@ -108,9 +108,9 @@ def _safe_set(data, prop_id, value, index=-1):
         return False
 
 
-# ---------------------------------------------------------------- tažitelný spinbox
+# ---------------------------------------------------------------- draggable spinbox
 class DragSpin(QtWidgets.QDoubleSpinBox):
-    """Číselné pole jako v Blenderu: tažení myší mění hodnotu, klik = editace textu."""
+    """Number field like in Blender: dragging changes the value, click = edit as text."""
 
     def __init__(self, is_int=False, parent=None):
         super().__init__(parent)
@@ -131,7 +131,7 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         if self.hasFocus():
             super().wheelEvent(ev)
         else:
-            ev.ignore()  # ať se rolování dostane do scroll area
+            ev.ignore()  # let the scroll area receive the wheel event
 
     def _fix_edit(self):
         le = self.lineEdit()
@@ -179,7 +179,7 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
 
 
 class NoWheelCombo(QtWidgets.QComboBox):
-    """Combo, které při rolování panelem nemění hodnotu."""
+    """Combo box that does not change its value when the panel is scrolled."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -194,9 +194,9 @@ class NoWheelCombo(QtWidgets.QComboBox):
             ev.ignore()
 
 
-# ---------------------------------------------------------------- základ vazby
+# ---------------------------------------------------------------- binding base
 class Binding:
-    """Spojuje jeden widget s RNA vlastností."""
+    """Connects one widget to an RNA property."""
 
     def __init__(self, data, prop_id, on_change=None):
         self.data = data
@@ -213,7 +213,7 @@ class Binding:
 
     def alive(self):
         try:
-            self.data.bl_rna  # ReferenceError, pokud byla data smazána
+            self.data.bl_rna  # ReferenceError if the data was deleted
             return self.widget is not None
         except Exception:
             return False
@@ -483,7 +483,7 @@ class EnumBinding(Binding):
         else:
             w = self.widget
             idx = w.findData(val)
-            if idx < 0:  # dynamický enum se změnil
+            if idx < 0:  # the dynamic enum changed
                 w.blockSignals(True)
                 w.clear()
                 self.items = enum_items(self.data, self.prop_id)
@@ -564,10 +564,10 @@ class ReadOnlyBinding(Binding):
             self.widget.setText("?")
 
 
-# ---------------------------------------------------------------- továrna
+# ---------------------------------------------------------------- factory
 def make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, invert=False,
                  on_change=None, search=None):
-    """Vrátí (binding, label_text). label_text je None, pokud widget nese popisek sám."""
+    """Returns (binding, label_text). label_text is None if the widget carries its own label."""
     rp = rna_prop(data, prop_id)
     if rp is None:
         return None, None
@@ -579,7 +579,7 @@ def make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, in
         return ReadOnlyBinding(data, prop_id), name
     arr = getattr(rp, "array_length", 0) if t in ("BOOLEAN", "INT", "FLOAT") else 0
     if arr and getattr(rp, "array_dimensions", (arr, 0, 0))[1] not in (0,):
-        return ReadOnlyBinding(data, prop_id), name  # matice
+        return ReadOnlyBinding(data, prop_id), name  # matrix
     if t == "BOOLEAN":
         if arr and index < 0:
             return VectorBinding(data, prop_id, rp, on_change, align_row=True), name
@@ -602,7 +602,7 @@ def make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, in
 
 
 def labeled_row(label, widget, split=True):
-    """Řádek 'popisek | widget' jako v Blenderu s use_property_split."""
+    """A 'label | widget' row like in Blender with use_property_split."""
     w = QtWidgets.QWidget()
     lay = QtWidgets.QHBoxLayout(w)
     lay.setContentsMargins(0, 0, 0, 0)
@@ -615,7 +615,7 @@ def labeled_row(label, widget, split=True):
     return w
 
 
-# vlastnosti, které v obecném formuláři nezobrazujeme
+# properties we don't show in the generic form
 _SKIP = {"rna_type", "name", "type", "is_override_data", "is_active", "persistent_uid",
          "execution_time", "is_valid", "show_expanded", "show_in_editmode", "show_on_cage",
          "show_viewport", "show_render", "use_apply_on_spline", "is_override_data_editable",
@@ -624,7 +624,7 @@ _SKIP = {"rna_type", "name", "type", "is_override_data", "is_active", "persisten
 
 
 def rna_form(data, on_change=None, skip=(), only=None):
-    """Obecný formulář pro libovolnou RNA strukturu (pro modifikátory, omezení, operátory…)."""
+    """Generic form for any RNA struct (for modifiers, constraints, operators…)."""
     w = QtWidgets.QWidget()
     lay = QtWidgets.QVBoxLayout(w)
     lay.setContentsMargins(4, 4, 4, 4)

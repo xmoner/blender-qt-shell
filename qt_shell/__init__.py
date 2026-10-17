@@ -1,11 +1,11 @@
 bl_info = {
-    "name": "Qt Shell – rozhraní Blenderu v PySide6",
+    "name": "Qt Shell – Blender UI in PySide6",
     "author": "Lukas Bilek",
     "version": (0, 3, 0),
     "blender": (4, 2, 0),
     "location": "F3 → Open Qt Shell / Preferences → Add-ons → Qt Shell",
-    "description": "Nahradí rozhraní Blenderu oknem v Qt (PySide6): viewport, outliner, "
-                   "vlastnosti, menu, timeline, konzole",
+    "description": "Replaces the Blender UI with a Qt (PySide6) window: viewport, outliner, "
+                   "properties, menus, timeline, console",
     "category": "Interface",
     "doc_url": "https://github.com/xmoner/blender-qt-shell",
 }
@@ -33,20 +33,20 @@ class QTSHELL_Preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     auto_start: bpy.props.BoolProperty(
-        name="Spouštět Qt Shell při startu Blenderu", default=False)
+        name="Start Qt Shell when Blender starts", default=False)
     hide_blender: bpy.props.BoolProperty(
-        name="Skrýt okno Blenderu, když běží Qt Shell", default=True)
+        name="Hide the Blender window while Qt Shell is running", default=True)
     viewport_scale: bpy.props.FloatProperty(
-        name="Rozlišení viewportu", default=1.0, min=0.25, max=2.0,
-        description="Násobek rozlišení renderu viewportu (nižší = rychlejší)")
+        name="Viewport resolution", default=1.0, min=0.25, max=2.0,
+        description="Viewport render resolution multiplier (lower = faster)")
 
     def draw(self, context):
         col = self.layout.column()
         if _pyside_available():
             import PySide6
-            col.label(text=f"PySide6 {PySide6.__version__} je nainstalované.", icon="CHECKMARK")
+            col.label(text=f"PySide6 {PySide6.__version__} is installed.", icon="CHECKMARK")
         else:
-            col.label(text="PySide6 není nainstalované.", icon="ERROR")
+            col.label(text="PySide6 is not installed.", icon="ERROR")
             col.operator("qtshell.install_pyside", icon="IMPORT")
         col.separator()
         col.prop(self, "auto_start")
@@ -63,12 +63,12 @@ def prefs():
         return None
 
 
-# ---------------------------------------------------------------- operátory
+# ---------------------------------------------------------------- operators
 class QTSHELL_OT_install_pyside(bpy.types.Operator):
     bl_idname = "qtshell.install_pyside"
-    bl_label = "Nainstalovat PySide6"
-    bl_description = ("Stáhne PySide6 přes pip do uživatelské složky skriptů Blenderu "
-                      "(~150–250 MB, chvíli to trvá a Blender mezitím nereaguje)")
+    bl_label = "Install PySide6"
+    bl_description = ("Downloads PySide6 with pip into Blender's user scripts folder "
+                      "(~150–250 MB; it takes a while and Blender does not respond meanwhile)")
 
     def execute(self, context):
         target = bridge.user_modules_dir()
@@ -81,32 +81,32 @@ class QTSHELL_OT_install_pyside(bpy.types.Operator):
             print(res.stdout)
             print(res.stderr)
             if res.returncode != 0:
-                self.report({"ERROR"}, "pip selhal – podrobnosti v systémové konzoli.")
+                self.report({"ERROR"}, "pip failed – see the system console for details.")
                 return {"CANCELLED"}
         except Exception as ex:
             self.report({"ERROR"}, str(ex))
             return {"CANCELLED"}
         if target not in sys.path:
             sys.path.append(target)
-        self.report({"INFO"}, f"PySide6 nainstalováno do {target}")
+        self.report({"INFO"}, f"PySide6 installed to {target}")
         return {"FINISHED"}
 
 
 class QTSHELL_OT_open(bpy.types.Operator):
     bl_idname = "qtshell.open"
     bl_label = "Open Qt Shell"
-    bl_description = "Otevře rozhraní Blenderu v Qt (PySide6)"
+    bl_description = "Opens the Blender UI in Qt (PySide6)"
 
     def execute(self, context):
         if not _pyside_available():
-            self.report({"ERROR"}, "Chybí PySide6 – nainstaluj ho v Preferences → Add-ons → Qt Shell.")
+            self.report({"ERROR"}, "PySide6 is missing – install it in Preferences → Add-ons → Qt Shell.")
             return {"CANCELLED"}
         try:
             from . import app
             app.start(prefs())
         except Exception:
             traceback.print_exc()
-            self.report({"ERROR"}, "Qt Shell se nepodařilo spustit – viz systémová konzole.")
+            self.report({"ERROR"}, "Qt Shell failed to start – see the system console.")
             return {"CANCELLED"}
         return {"FINISHED"}
 
@@ -114,7 +114,7 @@ class QTSHELL_OT_open(bpy.types.Operator):
 class QTSHELL_OT_close(bpy.types.Operator):
     bl_idname = "qtshell.close"
     bl_label = "Close Qt Shell"
-    bl_description = "Zavře Qt okno a vrátí původní rozhraní Blenderu"
+    bl_description = "Closes the Qt window and restores the original Blender UI"
 
     def execute(self, context):
         try:

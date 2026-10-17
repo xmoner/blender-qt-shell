@@ -1,4 +1,4 @@
-"""Pythonová konzole (jako Python Console v Blenderu) + výpis hlášení."""
+"""Python console (like the Python Console in Blender) + report log."""
 import code
 import contextlib
 import io
@@ -31,11 +31,11 @@ class Console(QtWidgets.QWidget):
         lay.addWidget(self.out)
         self.inp = QtWidgets.QLineEdit()
         self.inp.setFont(font)
-        self.inp.setPlaceholderText(">>> Python (bpy, C, D) – Tab doplní, ↑↓ historie")
+        self.inp.setPlaceholderText(">>> Python (bpy, C, D) – Tab completes, ↑↓ history")
         self.inp.returnPressed.connect(self._run)
         self.inp.installEventFilter(self)
         lay.addWidget(self.inp)
-        self.write("Qt Shell – Python konzole. Proměnné: bpy, C (context), D (data).\n", "#8fb3ff")
+        self.write("Qt Shell – Python console. Variables: bpy, C (context), D (data).\n", "#8fb3ff")
         hub.log.connect(self._on_log)
 
     def write(self, text, color=None):
@@ -70,7 +70,7 @@ class Console(QtWidgets.QWidget):
             self.write(traceback.format_exc(limit=0), "#ff7070")
             return
         if compiled is None and line.strip():
-            return  # víceřádkový blok pokračuje
+            return  # multi-line block continues
         self.buffer = []
         if compiled is None:
             return

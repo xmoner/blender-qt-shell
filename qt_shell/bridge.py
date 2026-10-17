@@ -1,8 +1,8 @@
-"""Most mezi Qt a Blenderem bez závislosti na Qt.
+"""Bridge between Qt and Blender with no dependency on Qt.
 
-- kontext pro operátory (window/area/region z 3D view, i když je okno Blenderu skryté)
-- spouštění operátorů (EXEC), odkládání načítání souborů mimo zásobník volání Qt
-- persistentní handlery, které nastavují příznaky; Qt strana je čte v pumpě
+- context for operators (window/area/region of a 3D view, even when the Blender window is hidden)
+- running operators (EXEC), deferring file loading outside the Qt call stack
+- persistent handlers that set flags; the Qt side reads them in the pump
 """
 import os
 import traceback
@@ -10,7 +10,7 @@ from contextlib import contextmanager
 
 import bpy
 
-# ---------------------------------------------------------------- stav sdílený s Qt
+# ---------------------------------------------------------------- state shared with Qt
 class Flags:
     depsgraph = False
     file_loaded = False
@@ -20,9 +20,9 @@ class Flags:
 
 
 _log_listeners = []
-# háčky, které nastaví Qt vrstva
+# hooks set by the Qt layer
 file_dialog_hook = None      # fn(idname, rna_props, props) -> bool
-special_op_hook = None       # fn(idname, props) -> bool (True = obslouženo v Qt)
+special_op_hook = None       # fn(idname, props) -> bool (True = handled in Qt)
 after_op_hook = None         # fn(idname, props, result)
 
 
@@ -45,7 +45,7 @@ def log(msg, level="INFO"):
 
 
 def tr(text):
-    """Přeloží text rozhraní stejně jako Blender (respektuje jazyk v Preferences)."""
+    """Translates UI text the same way Blender does (respects the language in Preferences)."""
     if not text:
         return text
     try:
@@ -54,7 +54,7 @@ def tr(text):
         return text
 
 
-# ---------------------------------------------------------------- kontext
+# ---------------------------------------------------------------- context
 def find_view3d():
     wm = bpy.context.window_manager
     if wm is None:
@@ -88,7 +88,7 @@ def ensure_view3d():
 
 @contextmanager
 def blender_context(**extra):
-    """temp_override na 3D view – bpy.context i bpy.ops se pak chovají jako v editoru."""
+    """temp_override onto a 3D view – bpy.context and bpy.ops then behave as in the editor."""
     found = ensure_view3d()
     kw = {}
     if found:
@@ -100,7 +100,7 @@ def blender_context(**extra):
 
 
 def later(fn, delay=0.0):
-    """Spustí fn v samostatném časovači Blenderu – mimo zásobník volání Qt."""
+    """Runs fn in a separate Blender timer – outside the Qt call stack."""
     def _run():
         try:
             fn()
@@ -110,13 +110,13 @@ def later(fn, delay=0.0):
     bpy.app.timers.register(_run, first_interval=delay, persistent=True)
 
 
-# ---------------------------------------------------------------- operátory
-# operátory, které vymění celý soubor (a tím i okna/oblasti) → nesmí běžet uvnitř temp_override Qt pumpy
+# ---------------------------------------------------------------- operators
+# operators that replace the whole file (and with it windows/areas) → must not run inside the Qt pump temp_override
 DEFER_OPS = {
     "wm.open_mainfile", "wm.read_homefile", "wm.read_factory_settings", "wm.revert_mainfile",
     "wm.recover_last_session", "wm.recover_auto_save", "wm.read_userpref",
 }
-# operátory s 'filepath', u kterých se dialog neotevírá
+# operators with 'filepath' that don't open a file dialog
 NO_FILE_DIALOG = {"wm.read_homefile", "wm.read_factory_settings", "wm.revert_mainfile",
                   "wm.recover_last_session", "wm.url_open", "wm.path_open", "render.render",
                   "wm.save_homefile", "wm.read_userpref", "wm.save_userpref"}
@@ -125,7 +125,7 @@ NO_FILE_DIALOG = {"wm.read_homefile", "wm.read_factory_settings", "wm.revert_mai
 def get_op(idname):
     mod, name = idname.split(".", 1)
     op = getattr(getattr(bpy.ops, mod), name)
-    op.get_rna_type()  # KeyError, pokud neexistuje
+    op.get_rna_type()  # KeyError if it doesn't exist
     return op
 
 
@@ -164,7 +164,7 @@ def op_poll(idname, ctx=None):
 
 
 def run_op(idname, props=None, ctx=None, invoke=False):
-    """Spustí operátor Blenderu z Qt. Vrací množinu výsledků (nebo {'CANCELLED'})."""
+    """Runs a Blender operator from Qt. Returns the result set (or {'CANCELLED'})."""
     props = dict(props or {})
     if special_op_hook is not None:
         try:
@@ -175,7 +175,7 @@ def run_op(idname, props=None, ctx=None, invoke=False):
     try:
         op = get_op(idname)
     except Exception:
-        log(f"Operátor '{idname}' neexistuje.", "WARNING")
+        log(f"Operator '{idname}' does not exist.", "WARNING")
         return {"CANCELLED"}
 
     rna_props = op_rna_props(idname)
@@ -195,7 +195,7 @@ def run_op(idname, props=None, ctx=None, invoke=False):
         except Exception as ex:
             log(f"{idname}: {ex}".strip(), "ERROR")
             res = {"CANCELLED"}
-        # Operátory volané z Pythonu si samy krok undo neukládají → uložíme ho za ně.
+        # Operators called from Python don't push an undo step themselves → push it for them.
         if "FINISHED" in res and not idname.startswith("ed."):
             try:
                 if "UNDO" in (op.bl_options or set()):
@@ -226,7 +226,7 @@ def undo_push(message="Qt Shell"):
         log(f"undo_push: {ex}", "WARNING")
 
 
-# ---------------------------------------------------------------- handlery
+# ---------------------------------------------------------------- handlers
 @bpy.app.handlers.persistent
 def _on_depsgraph(*_args):
     Flags.depsgraph = True
@@ -262,9 +262,9 @@ _HANDLERS = (
     ("load_post", _on_load),
     ("undo_post", _on_undo),
     ("redo_post", _on_undo),
-    # Render handlery (render_stats/complete/cancel) se volají z renderovacího vlákna;
-    # render_stats s prázdným řetězcem shodí Blender 5.x → konec renderu se zjišťuje
-    # dotazem bpy.app.is_job_running("RENDER") v pumpě.
+    # Render handlers (render_stats/complete/cancel) are called from the render thread;
+    # render_stats with an empty string crashes Blender 5.x → the end of a render is detected
+    # by polling bpy.app.is_job_running("RENDER") in the pump.
 )
 _OLD_HANDLERS = (("render_complete", "_on_render_done"), ("render_cancel", "_on_render_done"),
                  ("render_stats", "_on_render_stats"))
@@ -278,7 +278,7 @@ def is_rendering():
 
 
 def register_handlers():
-    # odstraň případné handlery ze starší verze addonu
+    # remove handlers left over from an older version of the add-on
     for name, fname in _OLD_HANDLERS:
         lst = getattr(bpy.app.handlers, name, None)
         if lst is not None:
@@ -298,7 +298,7 @@ def unregister_handlers():
             lst.remove(fn)
 
 
-# ---------------------------------------------------------------- drobnosti
+# ---------------------------------------------------------------- misc
 def user_modules_dir():
     return bpy.utils.user_resource("SCRIPTS", path="modules", create=True)
 
@@ -313,7 +313,7 @@ def recent_files():
 
 
 def object_keyframes(ob):
-    """Snímky s klíči aktivního objektu – funguje se starým i 'slotted' Action API (4.4+/5.x)."""
+    """Keyframed frames of the active object – works with both the old and the 'slotted' Action API (4.4+/5.x)."""
     ad = getattr(ob, "animation_data", None)
     act = ad.action if ad else None
     if act is None:

@@ -1,7 +1,7 @@
-"""3D viewport v Qt.
+"""3D viewport in Qt.
 
-Blender vykreslí scénu do GPUOffScreen (draw_view3d) s našimi maticemi kamery, obraz se
-přečte do numpy a zobrazí jako QImage. Navigace, výběr a G/R/S transformace běží v Qt.
+Blender renders the scene into a GPUOffScreen (draw_view3d) with our camera matrices; the image is
+read into numpy and shown as a QImage. Navigation, selection and G/R/S transforms run in Qt.
 """
 import math
 
@@ -15,13 +15,17 @@ from . import bridge, editmesh
 
 DEG = math.pi / 180.0
 
-# horní číselná řada na národních klávesnicích (CZ/SK/DE/FR) píše znaky místo číslic
+# on national keyboards (CZ/SK/DE/FR) the top number row types characters instead of digits
 _LAYOUT_DIGITS = {"+": 1, "ě": 2, "š": 3, "č": 4, "ř": 5, "ž": 6, "ý": 7, "á": 8, "í": 9, "é": 0,
                   "ľ": 2, "ť": 5, "&": 1, "\"": 3, "'": 4, "(": 5, "à": 0, "ç": 9, "è": 7, "_": 8}
 
 
+# names of the axis-aligned views (rotating from them switches to a "User" view)
+_AXIS_VIEWS = ("Front", "Back", "Right", "Left", "Top", "Bottom")
+
+
 def digit_of(ev):
-    """Číslice fyzické klávesy (jako Blender – nezávisle na rozložení klávesnice), jinak None."""
+    """Digit of the physical key (like Blender – independent of the keyboard layout), otherwise None."""
     k = ev.key()
     k0 = int(QtCore.Qt.Key_0)
     if k0 <= int(k) <= k0 + 9:
@@ -36,7 +40,7 @@ def digit_of(ev):
 
 
 def _clip_segment_view(a, b, near):
-    """Ořízne úsečku (ve view space) rovinou z = -near. Vrací (a, b) nebo None."""
+    """Clips a segment (in view space) by the plane z = -near. Returns (a, b) or None."""
     za, zb = -a.z, -b.z
     if za < near and zb < near:
         return None
@@ -61,14 +65,14 @@ class Viewport(QtWidgets.QWidget):
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setMouseTracking(True)
         self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent)
-        # pohled
+        # view
         self.target = Vector((0.0, 0.0, 0.0))
         self.dist = 15.0
         self.yaw = 50 * DEG
         self.pitch = 65 * DEG
         self.ortho = False
         self.camera_view = False
-        self.view_name = "Uživatelská perspektiva"
+        self.view_name = "User Perspective"
         # render
         self._off = None
         self._image = None
@@ -78,7 +82,7 @@ class Viewport(QtWidgets.QWidget):
         self._failed = None
         self.show_boxes = False
         self.show_grid = False
-        # interakce
+        # interaction
         self._nav = None
         self._last = None
         self._press_pos = None
@@ -94,7 +98,7 @@ class Viewport(QtWidgets.QWidget):
         hub.selection_changed.connect(self.update)
         hub.file_loaded.connect(self._on_file_loaded)
 
-    # ------------------------------------------------------------ pomocné
+    # ------------------------------------------------------------ helpers
     def space(self):
         found = bridge.ensure_view3d()
         if not found:
@@ -128,7 +132,7 @@ class Viewport(QtWidgets.QWidget):
         lens = sp.lens if sp else 50.0
         f_large = 2 * math.atan(36.0 / lens)
         if w >= h:
-            return 2 * math.atan(math.tan(f_large / 2) * h / max(w, 1))  # vertikální
+            return 2 * math.atan(math.tan(f_large / 2) * h / max(w, 1))  # vertical
         return f_large
 
     def clip(self):
@@ -138,7 +142,7 @@ class Viewport(QtWidgets.QWidget):
         return 0.01, 1000.0
 
     def matrices(self, w, h):
-        """(view_matrix, projection_matrix) pro velikost w×h."""
+        """(view_matrix, projection_matrix) for size w×h."""
         scene = bpy.context.scene
         if self.camera_view and scene.camera is not None:
             cam = scene.camera
@@ -187,7 +191,7 @@ class Viewport(QtWidgets.QWidget):
         return a, (b - a).normalized()
 
     def view_vectors(self):
-        """(right, up, forward) kamery ve světě."""
+        """(right, up, forward) of the camera in world space."""
         if self.camera_view and bpy.context.scene.camera:
             m = bpy.context.scene.camera.matrix_world.to_3x3().normalized()
         else:
@@ -213,7 +217,7 @@ class Viewport(QtWidgets.QWidget):
                 e = m.to_quaternion().to_euler("XYZ")
                 self.yaw, self.pitch = e.z, min(max(e.x, 0.0001), math.pi - 0.0001)
             self.camera_view = False
-            self.view_name = "Uživatelská perspektiva"
+            self.view_name = "User Perspective"
 
     # ------------------------------------------------------------ render
     def _tick(self):
@@ -225,7 +229,7 @@ class Viewport(QtWidgets.QWidget):
             if self._extra_frames > 0:
                 self._extra_frames -= 1
             elif sh in ("MATERIAL", "RENDERED"):
-                self._extra_frames = 16 if sh == "MATERIAL" else 64  # postupné zjemňování
+                self._extra_frames = 16 if sh == "MATERIAL" else 64  # progressive refinement
             self.render_frame()
             self.update()
 
@@ -236,7 +240,7 @@ class Viewport(QtWidgets.QWidget):
         h = max(2, min(4096, int(self.height() * dpr)))
         space, region = self.space()
         if space is None:
-            self._failed = "Nenalezena žádná 3D oblast v Blenderu."
+            self._failed = "No 3D area found in Blender."
             return
         try:
             if self._off is None or self._off.width != w or self._off.height != h:
@@ -262,7 +266,7 @@ class Viewport(QtWidgets.QWidget):
             self._img_transparent = transparent and self._draw_kwargs.get("draw_background") is False
             self._failed = None
         except Exception as ex:
-            self._failed = f"Render viewportu selhal: {ex}"
+            self._failed = f"Viewport render failed: {ex}"
 
     def _draw(self, scene, view_layer, space, region, vm, pm, transparent):
         attempts = []
@@ -283,7 +287,7 @@ class Viewport(QtWidgets.QWidget):
                 last = ex
         raise last
 
-    # ------------------------------------------------------------ kreslení v Qt
+    # ------------------------------------------------------------ drawing in Qt
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         r = self.rect()
@@ -333,7 +337,7 @@ class Viewport(QtWidgets.QWidget):
             p.setPen(QtGui.QPen(color, width))
             p.drawLine(pts[0], pts[1])
 
-        # v ortho pohledu zepředu/zboku je mřížka 'z hrany' → přeskočíme
+        # in front/side ortho views the grid is seen edge-on → skip it
         if self.ortho and abs(math.cos(self.pitch)) < 0.05:
             return
         minor = QtGui.QColor(255, 255, 255, 22)
@@ -386,7 +390,7 @@ class Viewport(QtWidgets.QWidget):
         for v, name, col in axes:
             sx, sy, depth = v.dot(right), -v.dot(up), v.dot(fwd)
             items.append((depth, sx, sy, name, col))
-        items.sort(key=lambda t: -t[0])  # vzdálenější první
+        items.sort(key=lambda t: -t[0])  # farther first
         p.setBrush(QtGui.QColor(0, 0, 0, 40))
         p.setPen(QtCore.Qt.NoPen)
         p.drawEllipse(c, 42, 42)
@@ -413,9 +417,9 @@ class Viewport(QtWidgets.QWidget):
         p.setFont(f)
         name = self.view_name
         if self.camera_view:
-            name = "Pohled kamery"
-        elif self.ortho and "ortho" not in name:
-            name += " (ortho)"
+            name = "Camera Perspective"
+        elif self.ortho and "ortho" not in name.lower():
+            name = name.replace("Perspective", "Orthographic") if "Perspective" in name else name + " Orthographic"
         p.drawText(12, 20, name)
         try:
             ob = ctx.view_layer.objects.active
@@ -431,7 +435,7 @@ class Viewport(QtWidgets.QWidget):
             p.drawText(QtCore.QRectF(self.rect()).adjusted(20, 50, -20, -20),
                        int(QtCore.Qt.AlignCenter.value) | int(QtCore.Qt.TextWordWrap.value), self._failed)
 
-    # ------------------------------------------------------------ navigace
+    # ------------------------------------------------------------ navigation
     def frame_objects(self, objs):
         pts = []
         for ob in objs:
@@ -459,13 +463,13 @@ class Viewport(QtWidgets.QWidget):
     def set_view(self, name):
         self.leave_camera()
         views = {
-            "FRONT": (0.0, 90 * DEG, "Zepředu"), "BACK": (180 * DEG, 90 * DEG, "Zezadu"),
-            "RIGHT": (90 * DEG, 90 * DEG, "Zprava"), "LEFT": (-90 * DEG, 90 * DEG, "Zleva"),
-            "TOP": (0.0, 0.0001, "Shora"), "BOTTOM": (0.0, 180 * DEG - 0.0001, "Zespodu"),
+            "FRONT": (0.0, 90 * DEG, "Front"), "BACK": (180 * DEG, 90 * DEG, "Back"),
+            "RIGHT": (90 * DEG, 90 * DEG, "Right"), "LEFT": (-90 * DEG, 90 * DEG, "Left"),
+            "TOP": (0.0, 0.0001, "Top"), "BOTTOM": (0.0, 180 * DEG - 0.0001, "Bottom"),
         }
         if name == "CAMERA":
             if bpy.context.scene.camera is None:
-                self.status.emit("Scéna nemá aktivní kameru.")
+                self.status.emit("The scene has no active camera.")
                 return
             self.camera_view = not self.camera_view
             self.request_redraw()
@@ -473,28 +477,28 @@ class Viewport(QtWidgets.QWidget):
         yaw, pitch, label = views[name]
         self.yaw, self.pitch = yaw, pitch
         self.ortho = True
-        self.view_name = f"{label} (ortho)"
+        self.view_name = f"{label} Orthographic"
         self.request_redraw()
 
     def toggle_ortho(self):
         self.leave_camera()
         self.ortho = not self.ortho
-        self.view_name = "Uživatelská ortografie" if self.ortho else "Uživatelská perspektiva"
+        self.view_name = "User Orthographic" if self.ortho else "User Perspective"
         self.request_redraw()
 
     def _orbit(self, dx, dy):
         self.leave_camera()
-        if "ortho" in self.view_name and self.view_name.startswith(("Zep", "Zez", "Zpr", "Zle", "Sho", "Zes")):
-            self.view_name = "Uživatelská ortografie" if self.ortho else "Uživatelská perspektiva"
+        if self.view_name.startswith(_AXIS_VIEWS):
+            self.view_name = "User Orthographic" if self.ortho else "User Perspective"
         self.yaw -= dx * 0.008
         self.pitch = min(max(self.pitch - dy * 0.008, 0.0001), math.pi - 0.0001)
         self.request_redraw()
 
     def orbit_step(self, dyaw, dpitch):
-        """Otočení pohledu o pevný úhel (numerická klávesnice 2/4/6/8/9 jako v Blenderu)."""
+        """Rotates the view by a fixed angle (numpad 2/4/6/8/9 like in Blender)."""
         self.leave_camera()
-        if self.view_name.startswith(("Zep", "Zez", "Zpr", "Zle", "Sho", "Zes")):
-            self.view_name = "Uživatelská ortografie" if self.ortho else "Uživatelská perspektiva"
+        if self.view_name.startswith(_AXIS_VIEWS):
+            self.view_name = "User Orthographic" if self.ortho else "User Perspective"
         self.yaw += dyaw
         self.pitch = min(max(self.pitch + dpitch, 0.0001), math.pi - 0.0001)
         self.request_redraw()
@@ -512,7 +516,7 @@ class Viewport(QtWidgets.QWidget):
         self.dist = min(max(self.dist * factor, 0.01), 1e5)
         self.request_redraw()
 
-    # ------------------------------------------------------------ výběr
+    # ------------------------------------------------------------ selection
     def pick(self, x, y):
         ctx = bpy.context
         best, best_d = None, 14.0
@@ -546,7 +550,7 @@ class Viewport(QtWidgets.QWidget):
                 self.selection_edited.emit()
             return
         if ctx.mode != "OBJECT":
-            self.status.emit("Výběr kliknutím funguje v Object a Edit (mesh) módu.")
+            self.status.emit("Click selection works in Object and Edit (mesh) mode.")
             return
         ob = self.pick(x, y)
         vl = ctx.view_layer
@@ -602,11 +606,11 @@ class Viewport(QtWidgets.QWidget):
         elif ctx.mode == "OBJECT":
             sel = [o for o in ctx.selected_objects if o.parent is None or not o.parent.select_get()]
             if not sel:
-                self.status.emit("Nic není vybráno.")
+                self.status.emit("Nothing is selected.")
                 return
             pivot = sum((o.matrix_world.translation for o in sel), Vector()) / len(sel)
         else:
-            self.status.emit("Interaktivní G/R/S funguje v Object a Edit (mesh) módu.")
+            self.status.emit("Interactive G/R/S works in Object and Edit (mesh) mode.")
             return
         pos = self.mapFromGlobal(QtGui.QCursor.pos())
         self._modal = {
@@ -620,8 +624,8 @@ class Viewport(QtWidgets.QWidget):
 
     def _modal_text(self):
         m = self._modal
-        names = {"G": "Posun", "R": "Rotace", "S": "Měřítko"}
-        axis = f" podél {m['axis']}" if m["axis"] else ""
+        names = {"G": "Move", "R": "Rotate", "S": "Scale"}
+        axis = f" along {m['axis']}" if m["axis"] else ""
         val = m.get("value")
         if isinstance(val, Vector):
             val = f"{val.x:.3f}, {val.y:.3f}, {val.z:.3f}"
@@ -629,7 +633,7 @@ class Viewport(QtWidgets.QWidget):
             val = f"{math.degrees(val):.1f}°" if m["kind"] == "R" else f"{val:.3f}"
         num = f"   [{self._numeric}]" if self._numeric else ""
         return (f"{names[m['kind']]}{axis}: {val or ''}{num}   "
-                "(X/Y/Z osa, číslo + Enter, LMB/Enter potvrdit, RMB/Esc zrušit)")
+                "(X/Y/Z axis, number + Enter, LMB/Enter confirm, RMB/Esc cancel)")
 
     def _modal_update(self, pos):
         m = self._modal
@@ -711,16 +715,16 @@ class Viewport(QtWidgets.QWidget):
         self.request_redraw()
         self.update()
 
-    # ------------------------------------------------------------ události
+    # ------------------------------------------------------------ events
     def enterEvent(self, ev):
-        # jako Blender: klávesy patří editoru pod myší (kromě rozepsané konzole)
+        # like Blender: keys go to the editor under the mouse (except a console being typed in)
         fw = QtWidgets.QApplication.focusWidget()
         typing = isinstance(fw, QtWidgets.QLineEdit) and fw.text() and not isinstance(
             fw.parent(), QtWidgets.QAbstractSpinBox)
         if not typing:
             self.setFocus()
             win = self.window()
-            if not win.isActiveWindow():   # plovoucí dock = samostatné okno
+            if not win.isActiveWindow():   # floating dock = separate window
                 win.activateWindow()
         super().enterEvent(ev)
 
@@ -792,7 +796,7 @@ class Viewport(QtWidgets.QWidget):
     def wheelEvent(self, ev):
         mods = ev.modifiers()
         pd = ev.pixelDelta()
-        trackpad = not pd.isNull()  # pixelDelta posílají jen touchpady
+        trackpad = not pd.isNull()  # only touchpads send pixelDelta
         if trackpad and not (mods & QtCore.Qt.ControlModifier):
             if mods & QtCore.Qt.ShiftModifier:
                 self._pan(-pd.x(), -pd.y())
@@ -838,7 +842,7 @@ class Viewport(QtWidgets.QWidget):
         K = QtCore.Qt
         digit = digit_of(ev)
         if digit is not None:
-            key = int(K.Key_0) + digit   # sjednotit s číselnou řadou
+            key = int(K.Key_0) + digit   # unify with the number row
         edit_mesh = bpy.context.mode == "EDIT_MESH"
         if edit_mesh and not keypad and not ctrl and key in (K.Key_1, K.Key_2, K.Key_3):
             editmesh.set_select_mode(key == K.Key_1, key == K.Key_2, key == K.Key_3)
@@ -873,20 +877,20 @@ class Viewport(QtWidgets.QWidget):
             from .qt_ui import LazyMenu
             LazyMenu("VIEW3D_MT_uv_map", self).exec(QtGui.QCursor.pos())
             return
-        # numerická klávesnice s vypnutým NumLockem posílá šipky
+        # the numpad sends arrow keys when NumLock is off
         if keypad and key in (K.Key_Down, K.Key_Left, K.Key_Right, K.Key_Up):
             key = {K.Key_Down: K.Key_2, K.Key_Left: K.Key_4, K.Key_Right: K.Key_6, K.Key_Up: K.Key_8}[key]
         step = 15 * DEG
         if key in (K.Key_2, K.Key_4, K.Key_6, K.Key_8) and (keypad or not shift):
-            if ctrl:   # Ctrl + 2/4/6/8 = posun pohledu
+            if ctrl:   # Ctrl + 2/4/6/8 = pan the view
                 d = {K.Key_2: (0, -60), K.Key_8: (0, 60), K.Key_4: (60, 0), K.Key_6: (-60, 0)}[key]
                 self._pan(*d)
                 self.update()
-            else:      # 2/8 = nahoru/dolů, 4/6 = doleva/doprava po 15°
+            else:      # 2/8 = up/down, 4/6 = left/right in 15° steps
                 self.orbit_step(*{K.Key_2: (0, step), K.Key_8: (0, -step),
                                   K.Key_4: (-step, 0), K.Key_6: (step, 0)}[key])
             return
-        if key == K.Key_9 and (keypad or not shift):   # pohled z opačné strany
+        if key == K.Key_9 and (keypad or not shift):   # view from the opposite side
             self.orbit_step(math.pi, math.pi - 2 * self.pitch)
             return
         if key == K.Key_1 and (keypad or not shift):
@@ -938,9 +942,9 @@ class Viewport(QtWidgets.QWidget):
         self.update()
 
     def focusNextPrevChild(self, _next):
-        return False  # Tab patří viewportu (edit mód)
+        return False  # Tab belongs to the viewport (edit mode)
 
-    # ------------------------------------------------------------ kontextová menu
+    # ------------------------------------------------------------ context menus
     def _context_menu(self, gpos):
         from .qt_ui import LazyMenu
         mid = "VIEW3D_MT_object_context_menu" if bpy.context.mode == "OBJECT" else "VIEW3D_MT_edit_mesh_context_menu"
@@ -953,8 +957,8 @@ class Viewport(QtWidgets.QWidget):
 
     def _shading_pie(self):
         m = QtWidgets.QMenu(self)
-        for kind, label in (("WIREFRAME", "Drátový model"), ("SOLID", "Solid"),
-                            ("MATERIAL", "Náhled materiálu"), ("RENDERED", "Renderovaný")):
+        for kind, label in (("WIREFRAME", "Wireframe"), ("SOLID", "Solid"),
+                            ("MATERIAL", "Material Preview"), ("RENDERED", "Rendered")):
             a = m.addAction(label)
             a.triggered.connect(lambda _=False, k=kind: self.set_shading(k))
         m.exec(QtGui.QCursor.pos())

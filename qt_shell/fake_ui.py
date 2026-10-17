@@ -1,8 +1,8 @@
-"""Náhrada bpy.types.UILayout, která místo kreslení zaznamenává strom prvků.
+"""Stand-in for bpy.types.UILayout that records a tree of elements instead of drawing.
 
-Díky tomu můžeme spustit originální Pythonové `draw()` metody panelů a menu Blenderu
-(scripts/startup/bl_ui/*.py i panely addonů) a výsledek postavit v Qt.
-Neznámé metody (`template_*` apod.) se zaznamenají jako 'unsupported' a nevadí.
+This lets us run the original Python `draw()` methods of Blender's panels and menus
+(scripts/startup/bl_ui/*.py as well as add-on panels) and build the result in Qt.
+Unknown methods (`template_*` etc.) are recorded as 'unsupported' and do no harm.
 """
 import inspect
 import types
@@ -32,7 +32,7 @@ class Node:
         self.flags = flags or {}
 
     def signature(self):
-        """Struktura stromu pro rozhodnutí, zda přestavět widgety."""
+        """Tree structure used to decide whether to rebuild the widgets."""
         parts = [self.kind]
         for k, v in self.args.items():
             if k == "props":
@@ -52,7 +52,7 @@ class Node:
 
 
 class OpProps:
-    """Návratová hodnota layout.operator(): zaznamená nastavené vlastnosti operátoru."""
+    """Return value of layout.operator(): records the operator properties that get set."""
 
     def __init__(self, store):
         object.__setattr__(self, "_store", store)
@@ -73,7 +73,7 @@ class FakeLayout:
                     flags[k] = parent_flags[k]
         object.__setattr__(self, "node", Node(kind, args, flags))
 
-    # --- atributy jako u UILayout
+    # --- attributes like on UILayout
     def __setattr__(self, k, v):
         self.node.flags[k] = v
 
@@ -83,7 +83,7 @@ class FakeLayout:
             return flags[k]
         if k.startswith("__"):
             raise AttributeError(k)
-        # neznámá metoda → zaznamenat a vrátit vnořený layout, aby řetězení nepadalo
+        # unknown method → record it and return a nested layout so chaining does not fail
         def _unsupported(*a, **kw):
             return self._child("unsupported", name=k)
         return _unsupported
@@ -103,7 +103,7 @@ class FakeLayout:
         self.node.children.append(n)
         return n
 
-    # --- kontejnery
+    # --- containers
     def row(self, align=False, heading="", heading_ctxt="", translate=True):
         return self._child("row", align=align, heading=tr(heading) if translate else heading)
 
@@ -137,7 +137,7 @@ class FakeLayout:
         body = p._child("column")
         return header, body
 
-    # --- položky
+    # --- items
     def label(self, text="", text_ctxt="", translate=True, icon="NONE", icon_value=0):
         self._item("label", text=tr(text) if translate else text, icon=icon)
 
@@ -283,9 +283,9 @@ class FakeLayout:
         return 0
 
 
-# ---------------------------------------------------------------- shim pro self v draw()
+# ---------------------------------------------------------------- shim for self in draw()
 class Shim:
-    """Vystupuje jako `self` uvnitř Panel.draw / Menu.draw."""
+    """Acts as `self` inside Panel.draw / Menu.draw."""
 
     def __init__(self, cls, layout):
         d = self.__dict__
@@ -338,7 +338,7 @@ def safe_poll(cls, context):
         return False
 
 
-# ---------------------------------------------------------------- hledání tříd
+# ---------------------------------------------------------------- class lookup
 def _all_subclasses(base):
     seen = []
     stack = list(base.__subclasses__())
@@ -385,7 +385,7 @@ def find_panel_class(idname):
 
 
 def properties_panels(context_name):
-    """Strom panelů editoru Properties pro daný bl_context: [(cls, [děti…]), …]."""
+    """Panel tree of the Properties editor for a given bl_context: [(cls, [children…]), …]."""
     classes = []
     for c in _all_subclasses(bpy.types.Panel):
         if not _registered(c):
@@ -417,7 +417,7 @@ def properties_panels(context_name):
     return [build(c) for c in order(top)]
 
 
-# ---------------------------------------------------------------- kontext pro Properties
+# ---------------------------------------------------------------- context for Properties
 class FakeSpace:
     type = "PROPERTIES"
     pin_id = None
@@ -504,7 +504,7 @@ def properties_context(tab):
 
 
 def record_panel(cls, context):
-    """Vrátí (header_node|None, body_node) nebo None, pokud poll selže."""
+    """Returns (header_node|None, body_node), or None if poll fails."""
     if not safe_poll(cls, context):
         return None
     header = None

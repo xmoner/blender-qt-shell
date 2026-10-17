@@ -1,4 +1,4 @@
-"""Hlavní okno Qt Shellu: menu, docky, viewport, render, poslední operace, hledání."""
+"""Qt Shell main window: menus, docks, viewport, render, last operation, search."""
 import math
 import os
 import tempfile
@@ -43,14 +43,14 @@ def _mode_menu(kind):
     return resolve
 
 
-# ---------------------------------------------------------------- render okno
+# ---------------------------------------------------------------- render window
 class RenderWindow(QtWidgets.QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Render")
         self.resize(960, 600)
         lay = QtWidgets.QVBoxLayout(self)
-        self.label = QtWidgets.QLabel("Zatím nic nevyrenderováno.")
+        self.label = QtWidgets.QLabel("Nothing rendered yet.")
         self.label.setAlignment(QtCore.Qt.AlignCenter)
         self.label.setMinimumSize(1, 1)
         self.label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Ignored)
@@ -59,7 +59,7 @@ class RenderWindow(QtWidgets.QDialog):
         self.info = QtWidgets.QLabel("")
         self.info.setProperty("dim", True)
         row.addWidget(self.info, 1)
-        save = QtWidgets.QPushButton("Uložit obrázek…")
+        save = QtWidgets.QPushButton("Save Image…")
         save.clicked.connect(self.save)
         row.addWidget(save)
         lay.addLayout(row)
@@ -68,13 +68,13 @@ class RenderWindow(QtWidgets.QDialog):
     def load_result(self):
         img = bpy.data.images.get("Render Result")
         if img is None:
-            self.label.setText("Render Result neexistuje.")
+            self.label.setText("Render Result does not exist.")
             return False
         path = os.path.join(tempfile.gettempdir(), "qtshell_render.png")
         try:
             img.save_render(filepath=path)
         except Exception as ex:
-            self.label.setText(f"Nelze načíst výsledek: {ex}")
+            self.label.setText(f"Cannot load the result: {ex}")
             return False
         self.pixmap = QtGui.QPixmap(path)
         self._fit()
@@ -94,21 +94,21 @@ class RenderWindow(QtWidgets.QDialog):
         if self.pixmap is None:
             return
         start = os.path.join(os.path.dirname(bpy.data.filepath) or os.path.expanduser("~"), "render.png")
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Uložit render", start,
-                                                        "Obrázky (*.png *.jpg *.exr *.tif)")
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Render", start,
+                                                        "Images (*.png *.jpg *.exr *.tif)")
         if not path:
             return
         img = bpy.data.images.get("Render Result")
         try:
             img.save_render(filepath=path)
         except Exception as ex:
-            QtWidgets.QMessageBox.warning(self, "Chyba", str(ex))
+            QtWidgets.QMessageBox.warning(self, "Error", str(ex))
 
 
-# ---------------------------------------------------------------- poslední operace (redo)
+# ---------------------------------------------------------------- last operation (redo)
 class LastOperatorPanel(QtWidgets.QWidget):
-    """Redo panel. Operátory volané z Pythonu Blender neregistruje do wm.operators,
-    proto si parametry držíme sami (dict) a widgety stavíme z RNA definic operátoru."""
+    """Redo panel. Blender does not register operators called from Python in wm.operators,
+    so we keep the parameters ourselves (dict) and build the widgets from the operator's RNA definitions."""
 
     SKIP = {"filepath", "directory", "files", "filter_glob", "filename", "check_existing"}
 
@@ -116,7 +116,7 @@ class LastOperatorPanel(QtWidgets.QWidget):
         super().__init__()
         self.lay = QtWidgets.QVBoxLayout(self)
         self.lay.setContentsMargins(4, 4, 4, 4)
-        self.title = QtWidgets.QLabel("Žádná operace")
+        self.title = QtWidgets.QLabel("No operation")
         self.title.setStyleSheet("font-weight:bold;")
         self.lay.addWidget(self.title)
         self.lay.addStretch(1)
@@ -135,7 +135,7 @@ class LastOperatorPanel(QtWidgets.QWidget):
         if self.form is not None:
             self.form.deleteLater()
             self.form = None
-        self.title.setText("Žádná operace")
+        self.title.setText("No operation")
         self.idname = None
 
     def on_op(self, idname, props, result):
@@ -247,8 +247,8 @@ class LastOperatorPanel(QtWidgets.QWidget):
     def _redo(self):
         if not self.idname:
             return
-        # undo a nové spuštění musí proběhnout v různých krocích smyčky Blenderu,
-        # jinak depsgraph pracuje s daty, která undo právě uvolnilo (pád).
+        # undo and the re-run must happen in different ticks of Blender's loop,
+        # otherwise the depsgraph works with data that undo has just freed (crash).
         self._redoing = True
         idname, values = self.idname, dict(self.values)
         run_op("ed.undo")
@@ -261,7 +261,7 @@ class LastOperatorPanel(QtWidgets.QWidget):
         bridge.later(again, 0.05)
 
 
-# ---------------------------------------------------------------- F3 hledání
+# ---------------------------------------------------------------- F3 search
 class OperatorSearch(QtWidgets.QDialog):
     _cache = None
 
@@ -270,7 +270,7 @@ class OperatorSearch(QtWidgets.QDialog):
         self.resize(520, 420)
         lay = QtWidgets.QVBoxLayout(self)
         self.edit = QtWidgets.QLineEdit()
-        self.edit.setPlaceholderText("Hledat operátor…")
+        self.edit.setPlaceholderText("Search operator…")
         self.edit.textChanged.connect(self._filter)
         self.edit.returnPressed.connect(self._accept)
         lay.addWidget(self.edit)
@@ -330,7 +330,7 @@ class OperatorSearch(QtWidgets.QDialog):
             run_op(it.data(QtCore.Qt.UserRole))
 
 
-# ---------------------------------------------------------------- hlavní okno
+# ---------------------------------------------------------------- main window
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, hub):
         super().__init__()
@@ -340,7 +340,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1500, 920)
         self.setDockOptions(QtWidgets.QMainWindow.AnimatedDocks | QtWidgets.QMainWindow.AllowTabbedDocks)
 
-        # viewport + hlavička
+        # viewport + header
         self.viewport = Viewport(hub, shell_app.prefs())
         hub.viewport = self.viewport
         center = QtWidgets.QWidget()
@@ -351,7 +351,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cl.addWidget(self.viewport, 1)
         self.setCentralWidget(center)
 
-        # docky
+        # docks
         self.outliner = Outliner(hub)
         self.properties = PropertiesEditor(hub)
         self.timeline = Timeline(hub)
@@ -362,10 +362,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.uv_editor.canvas.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self.docks = {}
         self._dock("outliner", "Outliner", self.outliner, QtCore.Qt.RightDockWidgetArea)
-        self._dock("properties", "Vlastnosti", self.properties, QtCore.Qt.RightDockWidgetArea)
+        self._dock("properties", "Properties", self.properties, QtCore.Qt.RightDockWidgetArea)
         self._dock("timeline", "Timeline", self.timeline, QtCore.Qt.BottomDockWidgetArea)
-        self._dock("console", "Konzole", self.console, QtCore.Qt.BottomDockWidgetArea)
-        self._dock("last_op", "Upravit poslední operaci", self.last_op, QtCore.Qt.LeftDockWidgetArea)
+        self._dock("console", "Console", self.console, QtCore.Qt.BottomDockWidgetArea)
+        self._dock("last_op", "Adjust Last Operation", self.last_op, QtCore.Qt.LeftDockWidgetArea)
         self._dock("node_editor", "Node editor", self.node_editor, QtCore.Qt.BottomDockWidgetArea)
         self._dock("uv_editor", "UV editor", self.uv_editor, QtCore.Qt.BottomDockWidgetArea)
         self.tabifyDockWidget(self.docks["timeline"], self.docks["console"])
@@ -382,7 +382,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_right = QtWidgets.QLabel()
         self.statusBar().addPermanentWidget(self.status_right)
 
-        # háčky v bridge
+        # hooks in bridge
         bridge.file_dialog_hook = self.file_dialog
         bridge.special_op_hook = self.special_op
         bridge.after_op_hook = lambda i, p, r: hub.op_done.emit(i, p, r)
@@ -414,7 +414,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._on_mode(bpy.context.mode)
         self.viewport.frame_all()
 
-    # ------------------------------------------------------------ stavba UI
+    # ------------------------------------------------------------ building the UI
     def _dock(self, key, title, widget, area):
         d = QtWidgets.QDockWidget(title, self)
         d.setObjectName(f"dock_{key}")
@@ -442,7 +442,7 @@ class MainWindow(QtWidgets.QMainWindow):
             b.setMenu(self._view_menu(b) if kind is None else LazyMenu(None, b, resolver=_mode_menu(kind)))
             lay.addWidget(b)
         self.selmode_buttons = []
-        for i, (txt, tip) in enumerate((("•", "Vrcholy (1)"), ("╱", "Hrany (2)"), ("■", "Stěny (3)"))):
+        for i, (txt, tip) in enumerate((("•", "Vertices (1)"), ("╱", "Edges (2)"), ("■", "Faces (3)"))):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
@@ -451,7 +451,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lay.addWidget(b)
             self.selmode_buttons.append(b)
         lay.addStretch(1)
-        for txt, tip, kind in (("G", "Posun (G)", "G"), ("R", "Rotace (R)", "R"), ("S", "Měřítko (S)", "S")):
+        for txt, tip, kind in (("G", "Move (G)", "G"), ("R", "Rotate (R)", "R"), ("S", "Scale (S)", "S")):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
@@ -460,8 +460,8 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addSpacing(10)
         self.shading_group = QtWidgets.QButtonGroup(bar)
         self.shading_buttons = {}
-        for kind, txt, tip in (("WIREFRAME", "◇", "Drátový model"), ("SOLID", "●", "Solid"),
-                               ("MATERIAL", "◐", "Náhled materiálu"), ("RENDERED", "☀", "Renderovaný")):
+        for kind, txt, tip in (("WIREFRAME", "◇", "Wireframe"), ("SOLID", "●", "Solid"),
+                               ("MATERIAL", "◐", "Material Preview"), ("RENDERED", "☀", "Rendered")):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
@@ -472,7 +472,7 @@ class MainWindow(QtWidgets.QMainWindow):
             lay.addWidget(b)
         sb = QtWidgets.QToolButton()
         sb.setText("▾")
-        sb.setToolTip("Nastavení stínování")
+        sb.setToolTip("Shading settings")
         sb.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         sb.setMenu(PopoverMenu("VIEW3D_PT_shading", sb))
         lay.addWidget(sb)
@@ -487,20 +487,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _view_menu(self, parent):
         m = QtWidgets.QMenu(parent)
         vp = self.viewport
-        m.addAction("Zaměřit vybrané (Num .)", vp.frame_selected)
-        m.addAction("Zobrazit vše (Home)", vp.frame_all)
+        m.addAction("Frame Selected (Num .)", vp.frame_selected)
+        m.addAction("Frame All (Home)", vp.frame_all)
         m.addSeparator()
-        for key, label in (("FRONT", "Zepředu (1)"), ("BACK", "Zezadu (Ctrl+1)"), ("RIGHT", "Zprava (3)"),
-                           ("LEFT", "Zleva (Ctrl+3)"), ("TOP", "Shora (7)"), ("BOTTOM", "Zespodu (Ctrl+7)"),
-                           ("CAMERA", "Kamera (0)")):
+        for key, label in (("FRONT", "Front (1)"), ("BACK", "Back (Ctrl+1)"), ("RIGHT", "Right (3)"),
+                           ("LEFT", "Left (Ctrl+3)"), ("TOP", "Top (7)"), ("BOTTOM", "Bottom (Ctrl+7)"),
+                           ("CAMERA", "Camera (0)")):
             m.addAction(label, lambda k=key: vp.set_view(k))
-        m.addAction("Perspektiva / ortho (5)", vp.toggle_ortho)
+        m.addAction("Perspective / Orthographic (5)", vp.toggle_ortho)
         m.addSeparator()
-        a = m.addAction("Rámečky výběru v Qt")
+        a = m.addAction("Selection boxes in Qt")
         a.setCheckable(True)
         a.setChecked(False)
         a.toggled.connect(lambda on: (setattr(vp, "show_boxes", on), vp.update()))
-        m.addAction("Kamera na aktuální pohled", self._camera_to_view)
+        m.addAction("Camera to View", self._camera_to_view)
         return m
 
     def _build_menus(self):
@@ -529,12 +529,12 @@ class MainWindow(QtWidgets.QMainWindow):
         for key, d in self.docks.items():
             win.addAction(d.toggleViewAction())
         win.addSeparator()
-        self.blender_visible_act = win.addAction("Zobrazit okno Blenderu")
+        self.blender_visible_act = win.addAction("Show Blender Window")
         self.blender_visible_act.setCheckable(True)
         self.blender_visible_act.toggled.connect(lambda on: shell_app.set_blender_visible(on))
-        win.addAction("Vrátit se do rozhraní Blenderu (zavřít Qt Shell)",
+        win.addAction("Return to the Blender UI (close Qt Shell)",
                       lambda: QtCore.QTimer.singleShot(0, shell_app.stop))
-        win.addAction("Obnovit rozložení oken", self._reset_layout)
+        win.addAction("Reset Window Layout", self._reset_layout)
         blender_menu("Help", "TOPBAR_MT_help")
 
     def _build_shortcuts(self):
@@ -559,7 +559,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("Space", self.timeline.toggle_play)
         sc("Ctrl+Space", self._toggle_maximize_viewport)
 
-    # ------------------------------------------------------------ obsluha operátorů
+    # ------------------------------------------------------------ operator handling
     def special_op(self, idname, props):
         vp = self.viewport
         if idname in ("transform.translate", "transform.rotate", "transform.resize"):
@@ -570,7 +570,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if "FINISHED" in res:
                 vp.start_modal("G")
             return True
-        # makra "<operátor>_move" (extrude, duplicate, …): spustit operátor a pak interaktivní G
+        # "<operator>_move" macros (extrude, duplicate, …): run the operator, then an interactive G
         if idname.endswith("_move") and bridge.op_exists(idname[:-5]):
             mod, name = idname[:-5].split(".", 1)
             base_props = props.get(f"{mod.upper()}_OT_{name}", None)
@@ -612,7 +612,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _confirm_discard(self):
         r = QtWidgets.QMessageBox.question(
-            self, "Neuložené změny", "Soubor má neuložené změny. Uložit?",
+            self, "Unsaved Changes", "The file has unsaved changes. Save?",
             QtWidgets.QMessageBox.Save | QtWidgets.QMessageBox.Discard | QtWidgets.QMessageBox.Cancel)
         if r == QtWidgets.QMessageBox.Cancel:
             return False
@@ -630,7 +630,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if "filter_blender" in rna_props and not globs:
             globs = "*.blend"
         patterns = " ".join(g for g in globs.replace(",", ";").split(";") if g)
-        filt = f"{title} ({patterns});;Všechny soubory (*)" if patterns else "Všechny soubory (*)"
+        filt = f"{title} ({patterns});;All files (*)" if patterns else "All files (*)"
         save = any(s in idname for s in ("export", "save", "write")) or idname.endswith("_as")
         multi = "files" in rna_props and not save
         if "directory" in rna_props and "filepath" not in rna_props and "files" not in rna_props:
@@ -683,7 +683,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         if not a.startswith("_") and isinstance(getattr(data_from, a), list)
                         and getattr(data_from, a)}
         except Exception as ex:
-            QtWidgets.QMessageBox.warning(self, "Chyba", str(ex))
+            QtWidgets.QMessageBox.warning(self, "Error", str(ex))
             return
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle(os.path.basename(path))
@@ -740,10 +740,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.statusBar().showMessage("Renderuji…")
                 return
         except Exception as ex:
-            bridge.log(f"Asynchronní render selhal ({ex}), renderuji blokujícím způsobem.", "WARNING")
+            bridge.log(f"Asynchronous render failed ({ex}), rendering in blocking mode.", "WARNING")
         finally:
             view.render_display_type = old
-        # záložní varianta: blokující render
+        # fallback: blocking render
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             with bridge.blender_context():
@@ -761,9 +761,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._rendering = False
         if getattr(self, "_render_anim", False):
-            self.statusBar().showMessage(f"Animace vyrenderována do {bpy.context.scene.render.filepath}", 8000)
+            self.statusBar().showMessage(f"Animation rendered to {bpy.context.scene.render.filepath}", 8000)
             return
-        self.statusBar().showMessage("Render hotov.", 4000)
+        self.statusBar().showMessage("Render finished.", 4000)
         self.show_render()
 
     def show_render(self):
@@ -771,7 +771,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.render_window.show()
         self.render_window.raise_()
 
-    # ------------------------------------------------------------ ostatní
+    # ------------------------------------------------------------ misc
     def search(self):
         dlg = OperatorSearch(self)
         dlg.move(self.mapToGlobal(QtCore.QPoint(self.width() // 2 - 260, 80)))
@@ -870,7 +870,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_title(self):
         path = bpy.data.filepath
-        name = os.path.basename(path) if path else "(neuloženo)"
+        name = os.path.basename(path) if path else "(unsaved)"
         dirty = "*" if bpy.data.is_dirty else ""
         self.setWindowTitle(f"Qt Shell · {name}{dirty}")
 
@@ -879,17 +879,17 @@ class MainWindow(QtWidgets.QMainWindow):
             ctx = bpy.context
             sel = len(ctx.selected_objects)
             total = len(ctx.view_layer.objects)
-            self.status_right.setText(f"Objekty {sel}/{total}  |  Blender {bpy.app.version_string}")
+            self.status_right.setText(f"Objects {sel}/{total}  |  Blender {bpy.app.version_string}")
         except Exception:
             pass
 
     def closeEvent(self, ev):
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Zavřít Qt Shell")
-        box.setText("Co chceš udělat?")
-        quit_b = box.addButton("Ukončit Blender", QtWidgets.QMessageBox.DestructiveRole)
-        back_b = box.addButton("Vrátit se do rozhraní Blenderu", QtWidgets.QMessageBox.AcceptRole)
-        box.addButton("Zrušit", QtWidgets.QMessageBox.RejectRole)
+        box.setWindowTitle("Close Qt Shell")
+        box.setText("What do you want to do?")
+        quit_b = box.addButton("Quit Blender", QtWidgets.QMessageBox.DestructiveRole)
+        back_b = box.addButton("Return to the Blender UI", QtWidgets.QMessageBox.AcceptRole)
+        box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
         box.exec()
         clicked = box.clickedButton()
         if clicked is quit_b:

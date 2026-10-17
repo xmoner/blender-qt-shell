@@ -1,4 +1,4 @@
-"""Timeline: přehrávání, rozsah snímků, klíčové snímky aktivního objektu."""
+"""Timeline: playback, frame range, keyframes of the active object."""
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -32,7 +32,7 @@ class TimeBar(QtWidgets.QWidget):
         p.fillRect(self.rect(), QtGui.QColor("#232323"))
         sc = bpy.context.scene
         lo, hi = self._range()
-        # aktivní rozsah
+        # active range
         x0, x1 = self.frame_to_x(sc.frame_start), self.frame_to_x(sc.frame_end)
         p.fillRect(QtCore.QRectF(x0, 0, x1 - x0, self.height()), QtGui.QColor("#2c2c2c"))
         span = hi - lo
@@ -51,7 +51,7 @@ class TimeBar(QtWidgets.QWidget):
             p.drawLine(QtCore.QPointF(x, 14), QtCore.QPointF(x, self.height()))
             p.setPen(QtGui.QColor("#9a9a9a"))
             p.drawText(QtCore.QPointF(x + 2, 11), str(fr))
-        # klíče
+        # keys
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         y = self.height() * 0.65
         for k in self.keys:
@@ -61,7 +61,7 @@ class TimeBar(QtWidgets.QWidget):
             p.setPen(QtGui.QColor("#000"))
             p.setBrush(QtGui.QColor("#e9c44a" if k == sc.frame_current else "#d0d0d0"))
             p.drawPolygon(poly)
-        # aktuální snímek
+        # current frame
         x = self.frame_to_x(sc.frame_current)
         p.setPen(QtGui.QPen(QtGui.QColor("#4772b3"), 2))
         p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, self.height()))
@@ -97,33 +97,33 @@ class Timeline(QtWidgets.QWidget):
             row.addWidget(b)
             return b
 
-        btn("⏮", "Na začátek", lambda: self._jump("start"))
-        btn("◆◀", "Předchozí klíč", lambda: self._jump("prev_key"))
-        self.play_btn = btn("▶", "Přehrát / pauza (mezerník)", self.toggle_play)
-        btn("▶◆", "Další klíč", lambda: self._jump("next_key"))
-        btn("⏭", "Na konec", lambda: self._jump("end"))
+        btn("⏮", "Jump to Start", lambda: self._jump("start"))
+        btn("◆◀", "Previous Keyframe", lambda: self._jump("prev_key"))
+        self.play_btn = btn("▶", "Play / Pause (Space)", self.toggle_play)
+        btn("▶◆", "Next Keyframe", lambda: self._jump("next_key"))
+        btn("⏭", "Jump to End", lambda: self._jump("end"))
         row.addSpacing(12)
         self.auto_key = QtWidgets.QToolButton()
-        self.auto_key.setText("● Auto klíč")
+        self.auto_key.setText("● Auto Key")
         self.auto_key.setCheckable(True)
         self.auto_key.toggled.connect(self._set_auto_key)
         row.addWidget(self.auto_key)
-        btn("+◆ Klíč", "Vložit klíč pro polohu/rotaci/měřítko aktivního objektu", self.insert_key)
-        btn("−◆", "Smazat klíč na aktuálním snímku", self.delete_key)
+        btn("+◆ Key", "Insert a location/rotation/scale keyframe for the active object", self.insert_key)
+        btn("−◆", "Delete the keyframe on the current frame", self.delete_key)
         row.addStretch(1)
-        row.addWidget(QtWidgets.QLabel("Snímek"))
+        row.addWidget(QtWidgets.QLabel("Frame"))
         self.cur = QtWidgets.QSpinBox()
         self.cur.setRange(-1048574, 1048574)
         self.cur.setKeyboardTracking(False)
         self.cur.valueChanged.connect(lambda v: (bpy.context.scene.frame_set(v), self.bar.update()))
         row.addWidget(self.cur)
-        row.addWidget(QtWidgets.QLabel("Začátek"))
+        row.addWidget(QtWidgets.QLabel("Start"))
         self.start = QtWidgets.QSpinBox()
         self.start.setRange(0, 1048574)
         self.start.setKeyboardTracking(False)
         self.start.valueChanged.connect(lambda v: self._set("frame_start", v))
         row.addWidget(self.start)
-        row.addWidget(QtWidgets.QLabel("Konec"))
+        row.addWidget(QtWidgets.QLabel("End"))
         self.end = QtWidgets.QSpinBox()
         self.end.setRange(0, 1048574)
         self.end.setKeyboardTracking(False)

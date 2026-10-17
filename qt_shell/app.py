@@ -1,4 +1,4 @@
-"""Spuštění Qt uvnitř procesu Blenderu a 'pumpování' Qt událostí z časovače Blenderu."""
+"""Runs Qt inside the Blender process and 'pumps' Qt events from a Blender timer."""
 import time
 import traceback
 
@@ -15,7 +15,7 @@ _prefs = None
 
 
 class Hub(QtCore.QObject):
-    """Převádí změny v Blenderu na Qt signály (volá se z pumpy)."""
+    """Turns changes in Blender into Qt signals (called from the pump)."""
     data_changed = QtCore.Signal()
     selection_changed = QtCore.Signal()
     frame_changed = QtCore.Signal(int)
@@ -36,7 +36,7 @@ class Hub(QtCore.QObject):
         self._title = None
         self._stats = ""
         self._was_rendering = False
-        self.viewport = None     # nastaví hlavní okno
+        self.viewport = None     # set by the main window
         self.main_window = None
 
     def tick(self):
@@ -54,7 +54,7 @@ class Hub(QtCore.QObject):
             self.render_done.emit()
         self._was_rendering = rendering
         if rendering:
-            return  # během renderu nesahat na scénu
+            return  # don't touch the scene while rendering
         if F.depsgraph and now - self._last_data > 0.06:
             F.depsgraph = False
             self._last_data = now
@@ -97,11 +97,12 @@ def prefs():
 
 
 class ShellApp(QtWidgets.QApplication):
-    """QApplication, která každé události zajistí kontext Blenderu.
+    """QApplication that gives every event a Blender context.
 
-    Na Windows (a částečně i jinde) rozesílá zprávy oknům Qt i smyčka událostí Blenderu
-    (GHOST), tedy mimo temp_override z naší pumpy. Bez tohoto obalu by např. stisk klávesy
-    viděl bpy.context bez 3D view (mode == 'OBJECT' i v edit módu, operátory by selhaly).
+    On Windows (and partly elsewhere) Blender's own event loop (GHOST) also dispatches
+    messages to Qt windows, i.e. outside the temp_override of our pump. Without this wrapper
+    a key press would see bpy.context without a 3D view (mode == 'OBJECT' even in edit mode,
+    and operators would fail).
     """
 
     def notify(self, obj, ev):
@@ -156,7 +157,7 @@ def qt_window_ids():
 def set_blender_visible(visible):
     ok, msg = native.set_blender_windows_visible(visible, qt_window_ids())
     if not ok:
-        bridge.log(f"Okno Blenderu: {msg}", "WARNING")
+        bridge.log(f"Blender window: {msg}", "WARNING")
     return ok
 
 
@@ -171,9 +172,9 @@ def start(addon_prefs=None):
     QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
         QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     _app = QtWidgets.QApplication.instance() or ShellApp(["blender"])
-    if type(_app).__name__ != "ShellApp":   # po reloadu modulu je to jiná (stejnojmenná) třída
-        bridge.log("QApplication vznikla dřív než Qt Shell – kontext pro události nebude zaručen "
-                   "(restartuj Blender).", "WARNING")
+    if type(_app).__name__ != "ShellApp":   # after a module reload this is a different class with the same name
+        bridge.log("QApplication was created before Qt Shell – event context is not guaranteed "
+                   "(restart Blender).", "WARNING")
     _app.setQuitOnLastWindowClosed(False)
     theme.apply(_app)
 
@@ -188,7 +189,7 @@ def start(addon_prefs=None):
         _pump_on = True
         bpy.app.timers.register(_pump, first_interval=0.0, persistent=True)
     if addon_prefs is None or addon_prefs.hide_blender:
-        # chvilku počkat, až Qt okno opravdu existuje (kvůli vyloučení z X11 hledání)
+        # wait a moment until the Qt window really exists (so it is excluded from the X11 search)
         bridge.later(lambda: set_blender_visible(False), 0.5)
 
 

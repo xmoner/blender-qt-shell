@@ -1,7 +1,7 @@
-"""Editor vlastností v Qt.
+"""Properties editor in Qt.
 
-Většinu záložek generuje z originálních Pythonových panelů Blenderu (bl_ui + addony)
-přes fake_ui → qt_ui. Modifikátory a omezení (v Blenderu kreslené v C) mají vlastní Qt verzi.
+Most tabs are generated from Blender's original Python panels (bl_ui + add-ons)
+via fake_ui → qt_ui. Modifiers and constraints (drawn in C in Blender) have their own Qt version.
 """
 import bpy
 from PySide6 import QtCore, QtWidgets
@@ -10,10 +10,10 @@ from . import bridge, fake_ui, qt_ui, rna_widgets as rw
 from .bridge import tr
 
 TABS = [
-    ("render", "Render"), ("output", "Výstup"), ("view_layer", "Vrstva"), ("scene", "Scéna"),
-    ("world", "Svět"), ("collection", "Kolekce"), ("object", "Objekt"), ("modifier", "Modifikátory"),
-    ("particle", "Částice"), ("physics", "Fyzika"), ("constraint", "Omezení"), ("data", "Data"),
-    ("bone", "Kost"), ("material", "Materiál"), ("texture", "Textura"),
+    ("render", "Render"), ("output", "Output"), ("view_layer", "View Layer"), ("scene", "Scene"),
+    ("world", "World"), ("collection", "Collection"), ("object", "Object"), ("modifier", "Modifiers"),
+    ("particle", "Particles"), ("physics", "Physics"), ("constraint", "Constraints"), ("data", "Data"),
+    ("bone", "Bone"), ("material", "Material"), ("texture", "Texture"),
 ]
 MATERIAL_TYPES = {"MESH", "CURVE", "SURFACE", "FONT", "META", "VOLUME", "POINTCLOUD", "CURVES",
                   "GREASEPENCIL", "GPENCIL"}
@@ -32,7 +32,7 @@ class UndoDebouncer(QtCore.QObject):
         if prop:
             self._msg = f"Change {prop}"
         if data is None and prop and "." in str(prop):
-            return  # operátor si undo dělá sám
+            return  # the operator pushes undo itself
         self._t.start()
 
     def _push(self):
@@ -40,7 +40,7 @@ class UndoDebouncer(QtCore.QObject):
 
 
 class PanelPage(QtWidgets.QScrollArea):
-    """Jedna záložka složená z Blender panelů."""
+    """One tab built from Blender panels."""
 
     def __init__(self, ctx_name, on_change, state):
         super().__init__()
@@ -127,7 +127,7 @@ class PanelPage(QtWidgets.QScrollArea):
 
 
 class StackPage(QtWidgets.QScrollArea):
-    """Modifikátory nebo omezení (stack s přidáváním, pořadím, aplikací)."""
+    """Modifiers or constraints (stack with adding, reordering, applying)."""
 
     def __init__(self, kind, on_change, state):
         super().__init__()
@@ -169,7 +169,7 @@ class StackPage(QtWidgets.QScrollArea):
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(6)
         if ob is None:
-            lay.addWidget(QtWidgets.QLabel("Žádný aktivní objekt."))
+            lay.addWidget(QtWidgets.QLabel("No active object."))
             lay.addStretch(1)
             self.setWidget(host)
             return
@@ -227,10 +227,10 @@ class StackPage(QtWidgets.QScrollArea):
                 b.widget.setMaximumWidth(30)
                 self.bindings.append(b)
                 hl.addWidget(b.widget)
-        for txt, tip, fn, en in (("▲", "Nahoru", lambda: self._move(ob, index, -1), index > 0),
-                                 ("▼", "Dolů", lambda: self._move(ob, index, +1), index < count - 1),
-                                 ("✓", "Aplikovat", lambda: self._apply(ob, item), True),
-                                 ("✕", "Odstranit", lambda: self._remove(ob, item), True)):
+        for txt, tip, fn, en in (("▲", "Move Up", lambda: self._move(ob, index, -1), index > 0),
+                                 ("▼", "Move Down", lambda: self._move(ob, index, +1), index < count - 1),
+                                 ("✓", "Apply", lambda: self._apply(ob, item), True),
+                                 ("✕", "Remove", lambda: self._remove(ob, item), True)):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
@@ -350,7 +350,7 @@ class StackPage(QtWidgets.QScrollArea):
 
 
 class TabColumn(QtWidgets.QWidget):
-    """Svislý sloupec záložek + QStackedWidget (náhrada QTabWidget s API, které používáme)."""
+    """Vertical column of tabs + QStackedWidget (replacement for QTabWidget with the API we use)."""
     currentChanged = QtCore.Signal(int)
 
     def __init__(self):
@@ -470,12 +470,12 @@ class PropertiesEditor(QtWidgets.QWidget):
         cur = TABS[self.tabs.currentIndex()][0]
         if cur not in vis:
             self.tabs.setCurrentIndex([k for k, _ in TABS].index("object" if "object" in vis else "render"))
-            return  # currentChanged spustí refresh
+            return  # currentChanged triggers a refresh
         page = self.pages[cur]
         fw = QtWidgets.QApplication.focusWidget()
         if not force and fw is not None and page.isAncestorOf(fw) and isinstance(
                 fw, (QtWidgets.QLineEdit, QtWidgets.QAbstractSpinBox)):
-            # uživatel právě píše – jen obnov hodnoty, nepřestavuj
+            # the user is typing – only refresh values, don't rebuild
             for b in getattr(page, "builders", []):
                 b.refresh()
             return

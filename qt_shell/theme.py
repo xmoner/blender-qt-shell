@@ -1,4 +1,4 @@
-"""Tmavé téma podobné Blenderu (Fusion + paleta)."""
+"""Dark theme similar to Blender (Fusion + palette)."""
 from PySide6 import QtGui, QtWidgets
 
 C = {
@@ -61,7 +61,7 @@ _icon_cache = {}
 
 
 def type_icon(kind):
-    """Malá kulatá ikonka s písmenem (bez externích obrázků)."""
+    """Small round icon with a letter (no external images)."""
     if kind in _icon_cache:
         return _icon_cache[kind]
     table = {

@@ -1,7 +1,7 @@
-"""UV editor v Qt: zobrazení UV mapy aktivní sítě s texturou, výběr UV bodů, G/R/S, unwrap.
+"""UV editor in Qt: shows the UV map of the active mesh with a texture, UV point selection, G/R/S, unwrap.
 
-V Edit módu se zobrazují UV vybraných stěn (když není vybrána žádná, tak všech) a dají se upravovat.
-V Object módu je zobrazení jen pro čtení.
+In Edit mode it shows the UVs of the selected faces (or of all faces when none is selected) and they can be edited.
+In Object mode the view is read-only.
 """
 import math
 
@@ -78,7 +78,7 @@ class UVCanvas(QtWidgets.QWidget):
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setMouseTracking(True)
         self.scale = 300.0
-        self.offset = QtCore.QPointF(60, 360)   # pozice UV (0,0) ve widgetu
+        self.offset = QtCore.QPointF(60, 360)   # position of UV (0,0) in the widget
         self.sel = set()                         # {(face_index, corner)}
         self._pan = None
         self._press = None
@@ -86,7 +86,7 @@ class UVCanvas(QtWidgets.QWidget):
         self._modal = None
         self._fitted = False
 
-    # --- převody souřadnic
+    # --- coordinate conversion
     def to_screen(self, u, v):
         return QtCore.QPointF(self.offset.x() + u * self.scale, self.offset.y() - v * self.scale)
 
@@ -101,7 +101,7 @@ class UVCanvas(QtWidgets.QWidget):
 
     # --- data
     def data(self):
-        """Vrátí (ob, bm|None, uv_layer, editable, polys) – polys = [(fi, [(ci, Vector2)])]."""
+        """Returns (ob, bm|None, uv_layer, editable, polys) – polys = [(fi, [(ci, Vector2)])]."""
         ob = _active_mesh()
         if ob is None:
             return None
@@ -127,7 +127,7 @@ class UVCanvas(QtWidgets.QWidget):
             polys.append((p.index, [(ci, Vector(uvd[li].uv)) for ci, li in enumerate(p.loop_indices)]))
         return ob, None, layer, False, polys
 
-    # --- kreslení
+    # --- drawing
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor("#2b2b2b"))
@@ -156,12 +156,12 @@ class UVCanvas(QtWidgets.QWidget):
         p.setBrush(QtCore.Qt.NoBrush)
         p.drawRect(sq)
         if d is None:
-            self._hint(p, "Vyber síťový objekt.")
+            self._hint(p, "Select a mesh object.")
             p.end()
             return
         _ob, _bm, uvl, editable, polys = d
         if uvl is None:
-            self._hint(p, "Síť nemá UV mapu – použij Unwrap.")
+            self._hint(p, "The mesh has no UV map – use Unwrap.")
             p.end()
             return
         sel = self.sel
@@ -196,7 +196,7 @@ class UVCanvas(QtWidgets.QWidget):
         f = p.font()
         f.setPixelSize(11)
         p.setFont(f)
-        info = (img.name if img is not None else "bez textury") + ("" if editable else "  ·  jen náhled (Tab = Edit mód)")
+        info = (img.name if img is not None else "no texture") + ("" if editable else "  ·  preview only (Tab = Edit mode)")
         if self._modal:
             info = self._modal_text()
         p.drawText(10, self.height() - 10, info)
@@ -206,14 +206,14 @@ class UVCanvas(QtWidgets.QWidget):
         p.setPen(QtGui.QColor("#aaaaaa"))
         p.drawText(self.rect(), QtCore.Qt.AlignCenter, text)
 
-    # --- výběr
+    # --- selection
     def _all_points(self, polys):
         for fi, corners in polys:
             for ci, uv in corners:
                 yield fi, ci, uv
 
     def _sticky(self, polys, fi, ci, bm):
-        """Všechny rohy, které sdílí stejný vrchol sítě a stejnou UV souřadnici."""
+        """All corners that share the same mesh vertex and the same UV coordinate."""
         bm.faces.ensure_lookup_table()
         f = bm.faces[fi]
         vert = f.loops[ci].vert
@@ -271,7 +271,7 @@ class UVCanvas(QtWidgets.QWidget):
     def start_modal(self, kind):
         d = self.data()
         if not d or not d[3] or d[2] is None:
-            self.status.emit("UV se dají upravovat v Edit módu.")
+            self.status.emit("UVs can be edited in Edit mode.")
             return
         ob, bm, uvl, _ed, polys = d
         bm.faces.ensure_lookup_table()
@@ -281,7 +281,7 @@ class UVCanvas(QtWidgets.QWidget):
                 loop = bm.faces[fi].loops[ci]
                 pts.append((loop, loop[uvl].uv.copy()))
         if not pts:
-            self.status.emit("Nejsou vybrané žádné UV body.")
+            self.status.emit("No UV points are selected.")
             return
         pivot = sum((uv for _l, uv in pts), Vector((0, 0))) / len(pts)
         self._modal = {"kind": kind, "pts": pts, "pivot": pivot, "uvl": uvl, "ob": ob,
@@ -292,14 +292,14 @@ class UVCanvas(QtWidgets.QWidget):
 
     def _modal_text(self):
         m = self._modal
-        names = {"G": "Posun UV", "R": "Rotace UV", "S": "Měřítko UV"}
+        names = {"G": "Move UV", "R": "Rotate UV", "S": "Scale UV"}
         v = m["value"]
         if isinstance(v, Vector):
             v = f"{v.x:.4f}, {v.y:.4f}"
         elif isinstance(v, float):
             v = f"{math.degrees(v):.1f}°" if m["kind"] == "R" else f"{v:.3f}"
         ax = f" ({m['axis']})" if m["axis"] else ""
-        return f"{names[m['kind']]}{ax}: {v or ''}   X/Y osa · LMB/Enter potvrdit · RMB/Esc zrušit"
+        return f"{names[m['kind']]}{ax}: {v or ''}   X/Y axis · LMB/Enter confirm · RMB/Esc cancel"
 
     def _modal_update(self, pos):
         m = self._modal
@@ -354,13 +354,13 @@ class UVCanvas(QtWidgets.QWidget):
             bridge.undo_push("UV Transform")
         self.update()
 
-    # --- události
+    # --- events
     def enterEvent(self, ev):
         fw = QtWidgets.QApplication.focusWidget()
         if not (isinstance(fw, QtWidgets.QLineEdit) and fw.text()):
             self.setFocus()
             win = self.window()
-            if not win.isActiveWindow():   # plovoucí dock = samostatné okno
+            if not win.isActiveWindow():   # floating dock = separate window
                 win.activateWindow()
         super().enterEvent(ev)
 
@@ -455,12 +455,12 @@ class UVEditor(QtWidgets.QWidget):
         bar.setContentsMargins(4, 2, 4, 2)
         self.canvas = UVCanvas()
         for txt, tip, fn in (
-            ("Unwrap", "UV → Unwrap (vybrané stěny)", lambda: self._op("uv.unwrap", {"method": "ANGLE_BASED", "margin": 0.001})),
+            ("Unwrap", "UV → Unwrap (selected faces)", lambda: self._op("uv.unwrap", {"method": "ANGLE_BASED", "margin": 0.001})),
             ("Smart UV", "Smart UV Project", lambda: self._op("uv.smart_project")),
             ("Cube", "Cube Projection", lambda: self._op("uv.cube_project")),
             ("Reset", "Reset UV", lambda: self._op("uv.reset")),
-            ("UV grid textura", "Vytvoří testovací UV grid texturu a připojí ji do materiálu", self.test_texture),
-            ("⤢", "Zobrazit 0–1 (Home)", self.canvas.fit),
+            ("UV grid texture", "Creates a test UV grid texture and connects it to the material", self.test_texture),
+            ("⤢", "Show 0–1 (Home)", self.canvas.fit),
         ):
             b = QtWidgets.QToolButton()
             b.setText(txt)
@@ -468,7 +468,7 @@ class UVEditor(QtWidgets.QWidget):
             b.clicked.connect(fn)
             bar.addWidget(b)
         bar.addStretch(1)
-        hint = QtWidgets.QLabel("LMB výběr · Shift přidat · tažení = obdélník · G/R/S · A / Alt+A")
+        hint = QtWidgets.QLabel("LMB select · Shift add · drag = box · G/R/S · A / Alt+A")
         hint.setProperty("dim", True)
         bar.addWidget(hint)
         lay.addLayout(bar)

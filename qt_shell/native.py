@@ -1,7 +1,7 @@
-"""Skrývání / zobrazování nativních oken Blenderu (Windows, macOS, Linux/X11).
+"""Hiding / showing Blender's native windows (Windows, macOS, Linux/X11).
 
-Blender si okna vytváří přes vlastní vrstvu GHOST, Python API je skrýt neumí.
-Proto se tu sahá přímo na API operačního systému přes ctypes.
+Blender creates its windows through its own GHOST layer and the Python API cannot hide them,
+so this module calls the operating system API directly through ctypes.
 """
 import os
 import sys
@@ -11,14 +11,14 @@ import subprocess
 
 
 def set_blender_windows_visible(visible, exclude_ids=()):
-    """Vrátí (ok, zpráva)."""
+    """Returns (ok, message)."""
     try:
         if sys.platform == "win32":
             return _windows(visible)
         if sys.platform == "darwin":
             return _macos(visible)
         return _x11(visible, set(int(i) for i in exclude_ids))
-    except Exception as ex:  # nikdy nesmí shodit Blender
+    except Exception as ex:  # must never crash Blender
         return False, f"{type(ex).__name__}: {ex}"
 
 
@@ -46,13 +46,13 @@ def _windows(visible):
                 found.append(hwnd)
         return True
 
-    cb = proc_type(callback)  # reference musí žít po dobu EnumWindows
+    cb = proc_type(callback)  # the reference must stay alive during EnumWindows
     user32.EnumWindows(cb, 0)
     for hwnd in found:
         user32.ShowWindow(hwnd, 5 if visible else 0)  # SW_SHOW / SW_HIDE
         if visible:
             user32.SetForegroundWindow(hwnd)
-    return bool(found), f"oken Blenderu: {len(found)}"
+    return bool(found), f"Blender windows: {len(found)}"
 
 
 # --------------------------------------------------------------------------- macOS
@@ -80,22 +80,22 @@ def _macos(visible):
         win = send(windows, b"objectAtIndex:", ctypes.c_void_p, (ctypes.c_ulong,), i)
         name = objc.object_getClassName(win) or b""
         if name.startswith(b"QNS") or b"Qt" in name:
-            continue  # okna Qt necháme být
+            continue  # leave Qt windows alone
         if b"Blender" not in name and b"Cocoa" not in name:
             continue
         sel = b"makeKeyAndOrderFront:" if visible else b"orderOut:"
         send(win, sel, ctypes.c_void_p, (ctypes.c_void_p,), None)
         changed += 1
-    return bool(changed), f"oken Blenderu: {changed}"
+    return bool(changed), f"Blender windows: {changed}"
 
 
 # --------------------------------------------------------------------------- Linux / X11
 def _x11(visible, exclude):
     if os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
-        return False, "Pod čistým Waylandem nejde okno Blenderu skrýt (spusť Blender přes X11/XWayland)."
+        return False, "The Blender window cannot be hidden under pure Wayland (run Blender via X11/XWayland)."
     xdotool = shutil.which("xdotool")
     if not xdotool:
-        return False, "Pro skrytí okna Blenderu nainstaluj 'xdotool' (např. sudo apt install xdotool)."
+        return False, "Install 'xdotool' to hide the Blender window (e.g. sudo apt install xdotool)."
     out = subprocess.run([xdotool, "search", "--pid", str(os.getpid())],
                          capture_output=True, text=True, timeout=3).stdout.split()
     changed = 0
@@ -112,4 +112,4 @@ def _x11(visible, exclude):
             continue
         subprocess.run([xdotool, "windowmap" if visible else "windowunmap", wid], timeout=3)
         changed += 1
-    return bool(changed), f"oken Blenderu: {changed}"
+    return bool(changed), f"Blender windows: {changed}"

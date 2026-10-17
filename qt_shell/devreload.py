@@ -1,4 +1,4 @@
-"""Vývojářský reload: zavře Qt Shell, znovu načte moduly addonu a otevře ho."""
+"""Developer reload: closes Qt Shell, reloads the add-on modules and opens it again."""
 import importlib
 import sys
 

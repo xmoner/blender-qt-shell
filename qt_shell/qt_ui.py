@@ -1,4 +1,4 @@
-"""Stavba Qt widgetů a menu ze stromu zaznamenaného přes fake_ui.FakeLayout."""
+"""Builds Qt widgets and menus from the tree recorded with fake_ui.FakeLayout."""
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -26,7 +26,7 @@ def _glyph(icon, text):
     return ICON_GLYPHS.get(icon, "•")
 
 
-# ---------------------------------------------------------------- speciální vazby
+# ---------------------------------------------------------------- special bindings
 class EnumValueButton(rw.Binding):
     def __init__(self, data, prop_id, value, text, on_change):
         super().__init__(data, prop_id, on_change)
@@ -142,8 +142,8 @@ class TemplateIDBinding(rw.Binding):
         self.widget = w
 
     def _new(self):
-        """Jako tlačítko New v Blenderu: zkopíruje aktuální datablock, jinak vytvoří nový
-        a rovnou ho přiřadí (operátory typu material.new samy přiřazují jen přes UI tlačítko)."""
+        """Like the New button in Blender: copies the current datablock, otherwise creates a new one,
+        and assigns it right away (operators such as material.new only assign via the UI button)."""
         new_id = None
         try:
             cur = getattr(self.data, self.prop_id)
@@ -189,7 +189,7 @@ class TemplateIDBinding(rw.Binding):
             self.combo.refresh()
 
 
-# ---------------------------------------------------------------- sbalitelný panel
+# ---------------------------------------------------------------- collapsible panel
 class CollapsiblePanel(QtWidgets.QFrame):
     def __init__(self, title, key, state, default_closed=False, header_widget=None, flat=False):
         super().__init__()
@@ -235,7 +235,7 @@ class Builder:
         self.state = panel_state if panel_state is not None else {}
 
     def refresh(self):
-        """Obnoví hodnoty; vrátí False, pokud některá data přestala existovat."""
+        """Refreshes values; returns False if some data no longer exists."""
         ok = True
         for b in self.bindings:
             try:
@@ -246,7 +246,7 @@ class Builder:
                 pass
         return ok
 
-    # --- kontejnery
+    # --- containers
     def build(self, node, parent_kind="column"):
         k = node.kind
         if k in ("column", "row", "box", "split", "flow", "unsupported_layout"):
@@ -339,7 +339,7 @@ class Builder:
                 p.body_lay.addWidget(bw)
         return p
 
-    # --- položky
+    # --- items
     def _item(self, node, parent_kind):
         k = node.kind
         a = node.args
@@ -428,7 +428,7 @@ class Builder:
                 return None
             w = QtWidgets.QLabel(f"‹{name}›")
             w.setProperty("dim", True)
-            w.setToolTip("Tento prvek rozhraní Blenderu Qt Shell zatím neumí zobrazit.")
+            w.setToolTip("Qt Shell cannot display this Blender UI element yet.")
         if w is None:
             return None
         if not f.get("enabled", True):
@@ -502,7 +502,7 @@ class Builder:
             btn.setMaximumWidth(34)
         return btn
 
-    # --- node view (materiály, svět)
+    # --- node view (materials, world)
     _BASE_NODE_PROPS = None
 
     def _node_view(self, ntree, node, socket, depth=0):
@@ -553,7 +553,7 @@ class Builder:
 
 
 def _dim(w):
-    """Neaktivní prvek (layout.active = False): jen ztlumený text, pořád editovatelný."""
+    """Inactive element (layout.active = False): only dimmed text, still editable."""
     w.setStyleSheet(w.styleSheet() + "color:#8a8a8a;")
 
 
@@ -574,9 +574,9 @@ def fill_operator_enum_menu(menu, idname, prop, base_props=None, ctx=None):
 
 
 def fill_menu(menu, node):
-    """Naplní QMenu ze zaznamenaného stromu Blender menu."""
+    """Fills a QMenu from the recorded tree of a Blender menu."""
     _fill(menu, node, top=True)
-    # odstraň koncové separátory
+    # remove trailing separators
     acts = menu.actions()
     while acts and acts[-1].isSeparator():
         menu.removeAction(acts.pop())
@@ -671,12 +671,12 @@ def _set_quiet(data, pid, value):
 
 
 class LazyMenu(QtWidgets.QMenu):
-    """QMenu, které se při každém otevření znovu vygeneruje z Blender Menu třídy."""
+    """QMenu that is regenerated from a Blender Menu class every time it opens."""
 
     def __init__(self, menu_id, parent=None, title=None, resolver=None):
         super().__init__(parent)
         self.menu_id = menu_id
-        self.resolver = resolver  # fn() -> menu_id (např. podle režimu)
+        self.resolver = resolver  # fn() -> menu_id (e.g. depending on the mode)
         if title:
             self.setTitle(title)
         self.aboutToShow.connect(self._populate)
@@ -695,7 +695,7 @@ class LazyMenu(QtWidgets.QMenu):
 
 
 class PopoverMenu(QtWidgets.QMenu):
-    """Popover panel Blenderu zobrazený jako widget uvnitř QMenu."""
+    """Blender popover panel shown as a widget inside a QMenu."""
 
     def __init__(self, panel_id, parent=None, on_change=None):
         super().__init__(parent)

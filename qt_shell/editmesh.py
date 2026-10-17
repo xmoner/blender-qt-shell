@@ -1,7 +1,7 @@
-"""Edit mód sítě v Qt viewportu: výběr vrcholů / hran / stěn myší a transformace vybraných vrcholů.
+"""Mesh edit mode in the Qt viewport: mouse selection of vertices / edges / faces and transforming selected vertices.
 
-Pracuje přímo s bmesh editované sítě (bmesh.from_edit_mesh). Body se promítají do obrazovky
-přes numpy, zakryté prvky se odfiltrují ray castem do BVH stromu sítě (kromě X-ray).
+Works directly on the bmesh of the edited mesh (bmesh.from_edit_mesh). Points are projected to the
+screen with numpy; occluded elements are filtered out by ray casting into the mesh BVH tree (except in X-ray).
 """
 import math
 
@@ -46,7 +46,7 @@ def _xray(vp):
 
 
 class Projector:
-    """Promítání lokálních souřadnic sítě do pixelů widgetu + test viditelnosti."""
+    """Projects local mesh coordinates to widget pixels + visibility test."""
 
     def __init__(self, vp, ob, bm):
         self.vp = vp
@@ -166,7 +166,7 @@ def _find_face(pr, x, y):
             f = bm.faces[idx]
             return None if f.hide else f
         return None
-    # X-ray: nejbližší střed stěny
+    # X-ray: nearest face center
     best, best_d = None, PICK_RADIUS * 2
     for f in bm.faces:
         if f.hide:
@@ -181,7 +181,7 @@ def _find_face(pr, x, y):
 
 
 def pick(vp, x, y, extend):
-    """Vrátí True, pokud se výběr změnil."""
+    """Returns True if the selection changed."""
     r = active()
     if not r:
         return False
@@ -257,16 +257,16 @@ def box(vp, rect, mode):
 
 
 class TransformState:
-    """Transformace vybraných vrcholů (G/R/S) v edit módu."""
+    """Transforms the selected vertices (G/R/S) in edit mode."""
 
     def __init__(self):
         r = active()
         if not r:
-            raise ValueError("Není aktivní editovaná síť.")
+            raise ValueError("No active edited mesh.")
         self.ob, self.bm = r
         self.verts = [v for v in self.bm.verts if v.select and not v.hide]
         if not self.verts:
-            raise ValueError("Nic není vybráno.")
+            raise ValueError("Nothing is selected.")
         self.init = [v.co.copy() for v in self.verts]
         self.mw = self.ob.matrix_world.copy()
         self.inv = self.mw.inverted()
@@ -278,7 +278,7 @@ class TransformState:
         try:
             for v, c in zip(self.verts, self.init):
                 v.co = A @ c
-            self.bm.normal_update()   # jinak zůstanou nové (vysunuté) stěny černé
+            self.bm.normal_update()   # otherwise new (extruded) faces stay black
             bmesh.update_edit_mesh(self.ob.data, loop_triangles=True, destructive=False)
         except ReferenceError:
             pass
