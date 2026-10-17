@@ -1,0 +1,211 @@
+"""Spuštění Qt uvnitř procesu Blenderu a 'pumpování' Qt událostí z časovače Blenderu."""
+import time
+import traceback
+
+import bpy
+from PySide6 import QtCore, QtWidgets
+
+from . import bridge, native, theme
+
+_app = None
+_win = None
+_hub = None
+_pump_on = False
+_prefs = None
+
+
+class Hub(QtCore.QObject):
+    """Převádí změny v Blenderu na Qt signály (volá se z pumpy)."""
+    data_changed = QtCore.Signal()
+    selection_changed = QtCore.Signal()
+    frame_changed = QtCore.Signal(int)
+    mode_changed = QtCore.Signal(str)
+    file_loaded = QtCore.Signal()
+    undo_done = QtCore.Signal()
+    render_done = QtCore.Signal()
+    render_stats = QtCore.Signal(str)
+    title_changed = QtCore.Signal()
+    op_done = QtCore.Signal(str, dict, object)
+    log = QtCore.Signal(str, str)
+
+    def __init__(self):
+        super().__init__()
+        self._last_data = 0.0
+        self._last_snap = 0.0
+        self._snap = None
+        self._title = None
+        self._stats = ""
+        self._was_rendering = False
+        self.viewport = None     # nastaví hlavní okno
+        self.main_window = None
+
+    def tick(self):
+        now = time.monotonic()
+        F = bridge.Flags
+        if F.file_loaded:
+            F.file_loaded = False
+            self._snap = None
+            self.file_loaded.emit()
+        if F.undo:
+            F.undo = False
+            self.undo_done.emit()
+        rendering = bridge.is_rendering()
+        if self._was_rendering and not rendering:
+            self.render_done.emit()
+        self._was_rendering = rendering
+        if rendering:
+            return  # během renderu nesahat na scénu
+        if F.depsgraph and now - self._last_data > 0.06:
+            F.depsgraph = False
+            self._last_data = now
+            self.data_changed.emit()
+        if now - self._last_snap > 0.05:
+            self._last_snap = now
+            self._check_snapshot()
+
+    def _check_snapshot(self):
+        ctx = bpy.context
+        try:
+            vl = ctx.view_layer
+            active = vl.objects.active.name if vl.objects.active else ""
+            sel = tuple(sorted(o.name for o in ctx.selected_objects))
+            frame = ctx.scene.frame_current
+            mode = ctx.mode
+        except Exception:
+            return
+        snap = (active, sel, frame, mode)
+        old = self._snap
+        self._snap = snap
+        if old is None or old[:2] != snap[:2]:
+            self.selection_changed.emit()
+        if old is None or old[2] != frame:
+            self.frame_changed.emit(frame)
+        if old is None or old[3] != mode:
+            self.mode_changed.emit(mode)
+        title = (bpy.data.filepath, bpy.data.is_dirty)
+        if title != self._title:
+            self._title = title
+            self.title_changed.emit()
+
+
+def hub():
+    return _hub
+
+
+def prefs():
+    return _prefs
+
+
+class ShellApp(QtWidgets.QApplication):
+    """QApplication, která každé události zajistí kontext Blenderu.
+
+    Na Windows (a částečně i jinde) rozesílá zprávy oknům Qt i smyčka událostí Blenderu
+    (GHOST), tedy mimo temp_override z naší pumpy. Bez tohoto obalu by např. stisk klávesy
+    viděl bpy.context bez 3D view (mode == 'OBJECT' i v edit módu, operátory by selhaly).
+    """
+
+    def notify(self, obj, ev):
+        if _win is not None:
+            try:
+                need = bpy.context.area is None
+            except Exception:
+                need = False
+            if need:
+                try:
+                    cm = bridge.blender_context()
+                    cm.__enter__()
+                except Exception:
+                    return super().notify(obj, ev)
+                try:
+                    return super().notify(obj, ev)
+                finally:
+                    try:
+                        cm.__exit__(None, None, None)
+                    except Exception:
+                        pass
+        return super().notify(obj, ev)
+
+
+def _pump():
+    global _pump_on
+    if _win is None:
+        _pump_on = False
+        return None
+    try:
+        with bridge.blender_context():
+            _hub.tick()
+            _app.processEvents(QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 15)
+    except Exception:
+        traceback.print_exc()
+    return 0.01
+
+
+def qt_window_ids():
+    ids = []
+    if _app is None:
+        return ids
+    for w in _app.topLevelWidgets():
+        try:
+            if w.isWindow() and w.testAttribute(QtCore.Qt.WA_WState_Created):
+                ids.append(int(w.winId()))
+        except Exception:
+            pass
+    return ids
+
+
+def set_blender_visible(visible):
+    ok, msg = native.set_blender_windows_visible(visible, qt_window_ids())
+    if not ok:
+        bridge.log(f"Okno Blenderu: {msg}", "WARNING")
+    return ok
+
+
+def start(addon_prefs=None):
+    global _app, _win, _hub, _pump_on, _prefs
+    _prefs = addon_prefs
+    if _win is not None:
+        _win.show()
+        _win.raise_()
+        _win.activateWindow()
+        return
+    QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
+        QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    _app = QtWidgets.QApplication.instance() or ShellApp(["blender"])
+    if type(_app).__name__ != "ShellApp":   # po reloadu modulu je to jiná (stejnojmenná) třída
+        bridge.log("QApplication vznikla dřív než Qt Shell – kontext pro události nebude zaručen "
+                   "(restartuj Blender).", "WARNING")
+    _app.setQuitOnLastWindowClosed(False)
+    theme.apply(_app)
+
+    _hub = Hub()
+    bridge.add_log_listener(lambda m, lvl: _hub.log.emit(m, lvl))
+
+    from .main_window import MainWindow
+    with bridge.blender_context():
+        _win = MainWindow(_hub)
+        _win.show()
+    if not _pump_on:
+        _pump_on = True
+        bpy.app.timers.register(_pump, first_interval=0.0, persistent=True)
+    if addon_prefs is None or addon_prefs.hide_blender:
+        # chvilku počkat, až Qt okno opravdu existuje (kvůli vyloučení z X11 hledání)
+        bridge.later(lambda: set_blender_visible(False), 0.5)
+
+
+def stop(show_blender=True):
+    global _win, _hub
+    if show_blender:
+        set_blender_visible(True)
+    if _win is not None:
+        try:
+            _win.shutdown()
+            _win.hide()
+            _win.deleteLater()
+        except Exception:
+            pass
+    _win = None
+    bridge.file_dialog_hook = None
+    bridge.special_op_hook = None
+    bridge.after_op_hook = None
+    if _app is not None:
+        _app.processEvents()
