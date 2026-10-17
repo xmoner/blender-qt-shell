@@ -28,6 +28,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Edit mode | Vertex / edge / face selection by click and box (occluded elements are skipped except in X-ray), switching with 1/2/3 or header buttons, G/R/S with axes, E (extrude), Shift+D, F, X/Delete, H/Alt+H, Ctrl+L, U (UV menu) |
 | Node editor | Shader (material), world, Geometry Nodes, compositor: nodes, sockets, links (drag, pull out of an input), moving, Shift+A node search, X delete, M/H mute/hide, Tab into a group, sidebar with node properties and input values |
 | UV editor | UV map over the texture, UV point selection (click / box), G/R/S with axes, Unwrap / Smart UV / Cube / Reset, test UV grid texture |
+| Number fields | Drag left/right to change the value like in Blender (the cursor is hidden and never hits the screen edge; Shift = fine, Ctrl = snap, Esc = cancel), click to type a value; also the Frame / Start / End fields in the timeline |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
 The Blender window is hidden (Windows: WinAPI, macOS: Cocoa via ctypes, Linux: `xdotool` on X11).
