@@ -73,7 +73,13 @@ QLabel[dim="true"] {{ color: {C['dim']}; }}
 def apply(app):
     global _base_pt
     if _base_pt is None:
-        _base_pt = app.font().pointSizeF() if app.font().pointSizeF() > 0 else 9.0
+        # stored on the QApplication so it survives add-on reloads (the app font is already scaled then)
+        stored = app.property("qtshell_base_pt")
+        if stored:
+            _base_pt = float(stored)
+        else:
+            _base_pt = app.font().pointSizeF() if app.font().pointSizeF() > 0 else 9.0
+            app.setProperty("qtshell_base_pt", _base_pt)
     app.setStyle(QtWidgets.QStyleFactory.create("Fusion"))
     pal = QtGui.QPalette()
     col = QtGui.QColor

@@ -945,21 +945,24 @@ class MainWindow(QtWidgets.QMainWindow):
                 d.show()
 
     def _scale_docks(self, ratio):
-        horiz, hw, vert, vh = [], [], [], []
+        """Side docks get wider/narrower with the interface size; the viewport keeps ≥ 40 % of the width."""
+        side = {}
         for d in self.docks.values():
             if d.isFloating() or not d.isVisible():
                 continue
             area = self.dockWidgetArea(d)
             if area in (QtCore.Qt.LeftDockWidgetArea, QtCore.Qt.RightDockWidgetArea):
-                horiz.append(d)
-                hw.append(int(d.width() * ratio))
-            elif area in (QtCore.Qt.TopDockWidgetArea, QtCore.Qt.BottomDockWidgetArea):
-                vert.append(d)
-                vh.append(int(d.height() * ratio))
-        if horiz:
-            self.resizeDocks(horiz, hw, QtCore.Qt.Horizontal)
-        if vert:
-            self.resizeDocks(vert, vh, QtCore.Qt.Vertical)
+                side.setdefault(area, []).append(d)
+        if not side:
+            return
+        # one width per side (docks stacked on one side share it)
+        widths = {a: max(d.width() for d in ds) * ratio for a, ds in side.items()}
+        limit = self.width() * 0.6
+        total = sum(widths.values())
+        if total > limit:
+            widths = {a: w * limit / total for a, w in widths.items()}
+        docks = [ds[0] for ds in side.values()]
+        self.resizeDocks(docks, [int(widths[a]) for a in side], QtCore.Qt.Horizontal)
 
     def _interface_size(self):
         InterfaceSizeDialog(self).exec()
