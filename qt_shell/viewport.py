@@ -4,6 +4,8 @@ Blender renders the scene into a GPUOffScreen (draw_view3d) with our camera matr
 read into numpy and shown as a QImage. Navigation, selection and G/R/S transforms run in Qt.
 """
 import math
+import time
+from collections import deque
 
 import bpy
 import gpu
@@ -77,6 +79,8 @@ class Viewport(QtWidgets.QWidget):
         self._off = None
         self._image = None
         self._dirty = True
+        self._fps_samples = deque(maxlen=120)   # (time, frame) of each newly shown frame during playback
+        self._fps_last_frame = None
         self._extra_frames = 0
         self._draw_kwargs = None
         self._failed = None
@@ -263,6 +267,11 @@ class Viewport(QtWidgets.QWidget):
             img = QtGui.QImage(arr.data, w, h, w * 4, fmt).copy()
             img.setDevicePixelRatio(dpr)
             self._image = img
+            if getattr(self.hub, "playing", False):
+                f = ctx.scene.frame_current
+                if f != self._fps_last_frame:
+                    self._fps_last_frame = f
+                    self._fps_samples.append((time.perf_counter(), f))
             self._img_transparent = transparent and self._draw_kwargs.get("draw_background") is False
             self._failed = None
         except Exception as ex:
@@ -408,6 +417,23 @@ class Viewport(QtWidgets.QWidget):
             p.setPen(QtGui.QColor("#111"))
             p.drawText(QtCore.QRectF(end.x() - 8, end.y() - 8, 16, 16), QtCore.Qt.AlignCenter, name)
 
+    # ------------------------------------------------------------ playback FPS (like Blender)
+    def playback_changed(self, playing):
+        self._fps_samples.clear()
+        self._fps_last_frame = None
+        self.update()
+
+    def playback_fps(self):
+        """Frames actually shown per second over the last second of playback, or None."""
+        s = self._fps_samples
+        if len(s) < 2:
+            return None
+        now = s[-1][0]
+        recent = [t for t, _f in s if now - t <= 1.0]
+        if len(recent) < 2 or recent[-1] - recent[0] <= 0:
+            return None
+        return (len(recent) - 1) / (recent[-1] - recent[0])
+
     def _paint_text(self, p):
         ctx = bpy.context
         p.setPen(QtGui.QColor("#e0e0e0"))
@@ -420,7 +446,27 @@ class Viewport(QtWidgets.QWidget):
             name = "Camera Perspective"
         elif self.ortho and "ortho" not in name.lower():
             name = name.replace("Perspective", "Orthographic") if "Perspective" in name else name + " Orthographic"
-        p.drawText(12, 20, name)
+        playing = getattr(self.hub, "playing", False)
+        if playing:
+            # like Blender: during playback the first line shows the real frame rate,
+            # red when it is below the scene frame rate
+            try:
+                r = ctx.scene.render
+                target = r.fps / (r.fps_base or 1.0)
+            except Exception:
+                target = 0.0
+            fps = self.playback_fps()
+            if fps is None:
+                text = "fps: –"
+            else:
+                text = f"fps: {fps:.1f}" if fps < 100 else f"fps: {fps:.0f}"
+            slow = fps is not None and target > 0 and fps < target * 0.95
+            if slow:
+                p.setPen(QtGui.QColor("#ff5a5a"))
+            p.drawText(12, 20, f"{text}  (target {target:.4g})" if slow else text)
+            p.setPen(QtGui.QColor("#e0e0e0"))
+        else:
+            p.drawText(12, 20, name)
         try:
             ob = ctx.view_layer.objects.active
             coll = ctx.view_layer.active_layer_collection.collection.name

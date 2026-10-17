@@ -37,6 +37,7 @@ class Hub(QtCore.QObject):
         self._stats = ""
         self._was_rendering = False
         self.viewport = None     # set by the main window
+        self.playing = False     # animation playback in the timeline
         self.main_window = None
 
     def tick(self):

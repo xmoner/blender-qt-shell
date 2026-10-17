@@ -186,15 +186,24 @@ class Timeline(QtWidgets.QWidget):
         sc.frame_set(f)
         self.sync()
 
+    def _set_playing(self, on):
+        self.hub.playing = on
+        vp = getattr(self.hub, "viewport", None)
+        if vp is not None:
+            vp.playback_changed(on)
+
     def toggle_play(self):
         if self._play.isActive():
             self._play.stop()
             self.play_btn.setText("▶")
+            self._set_playing(False)
         else:
             r = bpy.context.scene.render
             fps = r.fps / (r.fps_base or 1.0)
+            self._play.setTimerType(QtCore.Qt.PreciseTimer)
             self._play.start(max(5, int(1000 / max(fps, 1))))
             self.play_btn.setText("⏸")
+            self._set_playing(True)
 
     def _step(self):
         sc = bpy.context.scene
@@ -235,3 +244,4 @@ class Timeline(QtWidgets.QWidget):
 
     def stop(self):
         self._play.stop()
+        self._set_playing(False)
