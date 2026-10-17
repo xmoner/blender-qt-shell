@@ -3,6 +3,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge
+from .rna_widgets import DragSpin
 
 
 class TimeBar(QtWidgets.QWidget):
@@ -112,22 +113,18 @@ class Timeline(QtWidgets.QWidget):
         btn("−◆", "Delete the keyframe on the current frame", self.delete_key)
         row.addStretch(1)
         row.addWidget(QtWidgets.QLabel("Frame"))
-        self.cur = QtWidgets.QSpinBox()
-        self.cur.setRange(-1048574, 1048574)
-        self.cur.setKeyboardTracking(False)
-        self.cur.valueChanged.connect(lambda v: (bpy.context.scene.frame_set(v), self.bar.update()))
+        self.cur = self._spin(-1048574, 1048574)
+        self.cur.valueChanged.connect(lambda v: (bpy.context.scene.frame_set(int(v)), self.bar.update()))
         row.addWidget(self.cur)
         row.addWidget(QtWidgets.QLabel("Start"))
-        self.start = QtWidgets.QSpinBox()
-        self.start.setRange(0, 1048574)
-        self.start.setKeyboardTracking(False)
+        self.start = self._spin(0, 1048574)
         self.start.valueChanged.connect(lambda v: self._set("frame_start", v))
+        self.start.editingFinished.connect(lambda: bridge.undo_push("Frame Range"))
         row.addWidget(self.start)
         row.addWidget(QtWidgets.QLabel("End"))
-        self.end = QtWidgets.QSpinBox()
-        self.end.setRange(0, 1048574)
-        self.end.setKeyboardTracking(False)
+        self.end = self._spin(0, 1048574)
         self.end.valueChanged.connect(lambda v: self._set("frame_end", v))
+        self.end.editingFinished.connect(lambda: bridge.undo_push("Frame Range"))
         row.addWidget(self.end)
         lay.addLayout(row)
         self.bar = TimeBar(self)
@@ -144,7 +141,7 @@ class Timeline(QtWidgets.QWidget):
     def sync(self):
         sc = bpy.context.scene
         for w, v in ((self.cur, sc.frame_current), (self.start, sc.frame_start), (self.end, sc.frame_end)):
-            if not w.hasFocus():
+            if not (w._editing or w._dragging):
                 w.blockSignals(True)
                 w.setValue(v)
                 w.blockSignals(False)
@@ -155,9 +152,17 @@ class Timeline(QtWidgets.QWidget):
         self.bar.keys = bridge.object_keyframes(ob) if ob else []
         self.bar.update()
 
+    @staticmethod
+    def _spin(lo, hi):
+        """Integer field draggable with the mouse (like Blender), ~4 px per frame."""
+        s = DragSpin(is_int=True)
+        s.setRange(lo, hi)
+        s.drag_step = 0.25
+        s.setMinimumWidth(64)
+        return s
+
     def _set(self, attr, v):
-        setattr(bpy.context.scene, attr, v)
-        bridge.undo_push("Frame Range")
+        setattr(bpy.context.scene, attr, int(v))
         self.bar.update()
 
     def _set_auto_key(self, on):

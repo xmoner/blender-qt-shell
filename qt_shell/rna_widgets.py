@@ -110,23 +110,33 @@ def _safe_set(data, prop_id, value, index=-1):
 
 # ---------------------------------------------------------------- draggable spinbox
 class DragSpin(QtWidgets.QDoubleSpinBox):
-    """Number field like in Blender: dragging changes the value, click = edit as text."""
+    """Number field like in Blender: dragging left/right changes the value, click = edit as text.
+
+    While dragging the cursor is hidden and kept in place (like Blender), so the drag never
+    stops at the edge of the screen. Shift = fine, Ctrl = snap to whole steps,
+    Esc during the drag = cancel. Enter / Esc / clicking elsewhere ends text editing.
+    """
 
     def __init__(self, is_int=False, parent=None):
         super().__init__(parent)
         self.is_int = is_int
         self.drag_step = 1.0 if is_int else 0.01
-        self._press = None
+        self._press = None          # global position of the press (anchor for the hidden cursor)
         self._start_val = 0.0
+        self._accum = 0.0           # accumulated horizontal movement in pixels
         self._dragging = False
+        self._editing = False       # text editing mode (after a click without dragging)
         self.setKeyboardTracking(False)
         self.setAlignment(QtCore.Qt.AlignCenter)
-        self.lineEdit().installEventFilter(self)
-        self.lineEdit().setCursor(QtCore.Qt.SizeHorCursor)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        le = self.lineEdit()
+        le.installEventFilter(self)
+        le.setCursor(QtCore.Qt.SizeHorCursor)
+        self.editingFinished.connect(self._end_edit)
         if is_int:
             self.setDecimals(0)
 
+    # --- appearance
     def wheelEvent(self, ev):
         if self.hasFocus():
             super().wheelEvent(ev)
@@ -146,34 +156,106 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         super().showEvent(ev)
         self._fix_edit()
 
+    # --- text editing
+    def _start_edit(self):
+        self._editing = True
+        le = self.lineEdit()
+        le.setCursor(QtCore.Qt.IBeamCursor)
+        self.setFocus(QtCore.Qt.MouseFocusReason)
+        le.selectAll()
+
+    def _end_edit(self):
+        if not self._editing:
+            return
+        self._editing = False
+        self.lineEdit().setCursor(QtCore.Qt.SizeHorCursor)
+        self.lineEdit().deselect()
+        if self.hasFocus():
+            self.clearFocus()
+
+    def focusOutEvent(self, ev):
+        super().focusOutEvent(ev)
+        if self._editing:
+            self._editing = False
+            self.lineEdit().setCursor(QtCore.Qt.SizeHorCursor)
+
+    def keyPressEvent(self, ev):
+        if self._press is not None and ev.key() == QtCore.Qt.Key_Escape:
+            self._cancel_drag()
+            return
+        if self._editing and ev.key() == QtCore.Qt.Key_Escape:
+            self.lineEdit().undo()
+            self._editing = False
+            self.clearFocus()
+            return
+        super().keyPressEvent(ev)
+
+    # --- dragging
+    def _drag_value(self, mods):
+        speed = 0.1 if mods & QtCore.Qt.ShiftModifier else 1.0
+        val = self._start_val + self._accum * self.drag_step * speed
+        if mods & QtCore.Qt.ControlModifier:
+            snap = 1.0 if (self.is_int or self.drag_step >= 0.05) else 0.1
+            val = round(val / snap) * snap
+        if self.is_int:
+            val = round(val)
+        return val
+
+    def _finish_drag(self):
+        QtWidgets.QApplication.restoreOverrideCursor()
+        if self._press is not None:
+            QtGui.QCursor.setPos(self._press)
+        self._press = None
+        self._dragging = False
+        self.lineEdit().releaseMouse()
+        if self.hasFocus():
+            self.clearFocus()
+
+    def _cancel_drag(self):
+        was = self._dragging
+        start = self._start_val
+        self._finish_drag()
+        if was:
+            self.setValue(start)
+            self.editingFinished.emit()
+
     def eventFilter(self, obj, ev):
         t = ev.type()
-        if self.lineEdit().hasFocus() and self.hasFocus() and t != QtCore.QEvent.MouseButtonDblClick:
-            return False
+        if self._editing:
+            return False  # normal text editing in the line edit
+        if t == QtCore.QEvent.MouseButtonDblClick:
+            self._start_edit()
+            return True
         if t == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.LeftButton:
-            self._press = ev.position().x()
+            self._press = ev.globalPosition().toPoint()
             self._start_val = self.value()
+            self._accum = 0.0
             self._dragging = False
             return True
         if t == QtCore.QEvent.MouseMove and self._press is not None:
-            dx = ev.position().x() - self._press
-            if not self._dragging and abs(dx) > 3:
-                self._dragging = True
-            if self._dragging:
-                speed = 0.1 if ev.modifiers() & QtCore.Qt.ShiftModifier else 1.0
-                val = self._start_val + dx * self.drag_step * speed
-                if self.is_int:
-                    val = round(val)
-                self.setValue(val)
-            return True
-        if t == QtCore.QEvent.MouseButtonRelease and self._press is not None:
-            self._press = None
+            if not (ev.buttons() & QtCore.Qt.LeftButton):
+                self._finish_drag()
+                return True
+            dx = ev.globalPosition().x() - self._press.x()
             if not self._dragging:
-                self.setFocus(QtCore.Qt.MouseFocusReason)
-                self.lineEdit().selectAll()
-            else:
+                if abs(dx) <= 3:
+                    return True
+                self._dragging = True
+                self.lineEdit().grabMouse()
+                QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.BlankCursor)
+            if dx:
+                self._accum += dx
+                QtGui.QCursor.setPos(self._press)   # keep the hidden cursor in place
+            self.setValue(self._drag_value(ev.modifiers()))
+            return True
+        if t == QtCore.QEvent.MouseButtonRelease and ev.button() == QtCore.Qt.LeftButton \
+                and self._press is not None:
+            dragged = self._dragging
+            self._finish_drag()
+            if dragged:
                 self.editingFinished.emit()
-            self._dragging = False
+            else:
+                self._start_edit()
             return True
         return False
 
@@ -307,7 +389,8 @@ class NumberBinding(Binding):
             self.changed()
 
     def refresh(self):
-        if self.widget.hasFocus():
+        w = self.widget
+        if w._editing or w._dragging:
             return
         self.widget.blockSignals(True)
         self.widget.setValue(self._get())
