@@ -33,6 +33,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Playback | Space / ▶ in the timeline: frames are timed precisely and follow the scene *Sync* mode (Play Every Frame / Frame Dropping); the viewport shows the real `fps:` like Blender (red when below the scene rate). About 120 fps for a simple scene on Windows. |
 | Text editor | Blender's texts (`bpy.data.texts`, saved in the .blend): New / Open / Save / Save As, Python highlighting, line numbers, auto-indent, Tab / Shift+Tab, Ctrl+/ comment, Ctrl+F find, **Run Script (Alt+P)** – output and errors in the Console, the failing line is highlighted; **Run Selection (Ctrl+Enter)** runs the selected lines / current line in the script's namespace (an expression prints its value); **■ Unload** |
 | Scripts (script manager) | Run / ⟳ Reload / ■ Unload in the Text editor; **Auto-load** – a text with the custom property `qtshell_autoload` runs when the .blend is opened (respects *Auto Run Python Scripts*). The **Scripts** dock (list of scripts, Auto-load checkboxes) is temporarily disabled – it crashed Blender on Windows when the window was shown. Qt Shell records what a script registers (Qt Shell API docks, menu items, overlays, events, `bpy` classes, `bpy.app.handlers`): Unload calls the script's `unregister()` and removes whatever is left, running a script again reloads it without duplicates |
+| Split viewport | **▦ Layout** in the viewport header or *View → Viewport Layout*: Single View, Two Views Side by Side, Two Views Stacked, **Four Views** (Top / Perspective / Front / Right, **Ctrl+Alt+Q** like the Quad View in Blender). Each view has its own camera and navigation, the dividers can be dragged, the view under the mouse is active (blue frame) and gets the keys, header and menu commands; moving objects updates all views live. The layout is remembered. |
 | Sidebar (N panel) | N over the viewport (or Window → Sidebar): Blender's and add-ons' VIEW_3D sidebar panels in tabs (Item, Tool, View, …); Item ▸ Transform is a Qt version of Blender's C panel |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
@@ -48,7 +49,7 @@ Most add-ons need nothing special: Qt Shell runs Blender's own UI code, so these
 - **menu entries** appended to Blender menus (`bpy.types.VIEW3D_MT_add.append(...)`, `TOPBAR_MT_file`, …),
 - **operators** (menus, F3 search, panel buttons).
 
-For things that only exist in Qt Shell, use the API (`API_VERSION = (1, 1)`):
+For things that only exist in Qt Shell, use the API (`API_VERSION = (1, 2)`):
 
 ```python
 import qt_shell.api as qs
@@ -74,6 +75,8 @@ qs.set_view(target=(0, 0, 1), distance=10, yaw=0.8, pitch=1.1, ortho=False)
 qs.frame_all(); qs.frame_selected(); qs.redraw()
 qs.project((1, 2, 3))           # world → (x, y) pixel in the viewport, or None
 qs.view_matrix(); qs.projection_matrix(); qs.viewport_size()
+qs.set_viewport_layout("quad")  # single / side / stacked / quad – view functions act on the active view
+qs.viewport_layout(); qs.viewports()
 
 # drawing over the viewport with QPainter
 def draw(painter, ctx):          # ctx.width, ctx.height, ctx.project(co) → QPointF | None
