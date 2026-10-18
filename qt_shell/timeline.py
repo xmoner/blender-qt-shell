@@ -187,10 +187,17 @@ class Timeline(QtWidgets.QWidget):
         self.sync()
 
     def _set_playing(self, on):
+        was = bool(getattr(self.hub, "playing", False))
         self.hub.playing = on
         vp = getattr(self.hub, "viewport", None)
         if vp is not None:
             vp.playback_changed(on)
+        if was != bool(on):
+            try:
+                from . import api
+                api.emit("playback", bool(on))
+            except Exception:
+                pass
 
     def is_playing(self):
         return bool(getattr(self.hub, "playing", False))

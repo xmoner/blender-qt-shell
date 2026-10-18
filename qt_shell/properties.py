@@ -392,6 +392,12 @@ class TabColumn(QtWidgets.QWidget):
         self.stack.addWidget(widget)
         self.nav.addItem(label)
 
+    def clear(self):
+        """Removes all tabs; the page widgets are kept (not deleted) so they can be added again."""
+        self.nav.clear()
+        while self.stack.count():
+            self.stack.removeWidget(self.stack.widget(0))
+
     def count(self):
         return self.nav.count()
 

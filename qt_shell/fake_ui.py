@@ -419,6 +419,56 @@ def properties_panels(context_name):
     return [build(c) for c in order(top)]
 
 
+# ---------------------------------------------------------------- 3D viewport sidebar (N panel)
+def view3d_mode_context(mode=None):
+    """bl_context string of VIEW_3D panels for a context.mode ('EDIT_MESH' → 'mesh_edit')."""
+    mode = mode or bpy.context.mode
+    fixed = {"OBJECT": "objectmode", "POSE": "posemode", "SCULPT": "sculpt_mode",
+             "PAINT_WEIGHT": "weightpaint", "PAINT_VERTEX": "vertexpaint",
+             "PAINT_TEXTURE": "imagepaint", "PARTICLE": "particlemode"}
+    if mode in fixed:
+        return fixed[mode]
+    if mode.startswith("EDIT_"):
+        return mode[5:].lower() + "_edit"
+    return mode.lower()
+
+
+def sidebar_panels(region="UI"):
+    """VIEW_3D panels of a region grouped by tab: {category: [(cls, [children…]), …]}."""
+    mode_ctx = view3d_mode_context()
+    classes = []
+    for c in _all_subclasses(bpy.types.Panel):
+        if not _registered(c):
+            continue
+        if getattr(c, "bl_space_type", "") != "VIEW_3D" or getattr(c, "bl_region_type", "") != region:
+            continue
+        ctx_name = getattr(c, "bl_context", "")
+        if ctx_name and ctx_name != mode_ctx and not getattr(c, "bl_parent_id", ""):
+            continue
+        classes.append(c)
+    by_id = {class_id(c): c for c in classes}
+    children, top = {}, []
+    for c in classes:
+        parent = getattr(c, "bl_parent_id", "")
+        if parent:
+            if parent in by_id:
+                children.setdefault(parent, []).append(c)
+        else:
+            top.append(c)
+
+    def order(lst):
+        return sorted(lst, key=lambda c: getattr(c, "bl_order", 0))
+
+    def build(c):
+        return (c, [build(ch) for ch in order(children.get(class_id(c), []))])
+
+    tabs = {}
+    for c in order(top):
+        cat = getattr(c, "bl_category", "") or "Misc"
+        tabs.setdefault(cat, []).append(build(c))
+    return tabs
+
+
 # ---------------------------------------------------------------- context for Properties
 class FakeSpace:
     type = "PROPERTIES"

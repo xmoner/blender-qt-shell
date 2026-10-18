@@ -320,6 +320,11 @@ class Viewport(QtWidgets.QWidget):
             self._paint_selection(p, mats)
         self._paint_gizmo(p)
         self._paint_text(p)
+        try:
+            from . import api
+            api.paint_overlays(self, p)     # overlays registered through qt_shell.api
+        except Exception:
+            pass
         if self._box:
             p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
@@ -906,6 +911,11 @@ class Viewport(QtWidgets.QWidget):
         digit = digit_of(ev)
         if digit is not None:
             key = int(K.Key_0) + digit   # unify with the number row
+        if key == K.Key_N and not (ctrl or shift or alt):
+            mw = getattr(self.hub, "main_window", None)
+            if mw is not None:
+                mw.toggle_sidebar()      # like Blender: N shows/hides the sidebar
+            return
         edit_mesh = bpy.context.mode == "EDIT_MESH"
         if edit_mesh and not keypad and not ctrl and key in (K.Key_1, K.Key_2, K.Key_3):
             editmesh.set_select_mode(key == K.Key_1, key == K.Key_2, key == K.Key_3)

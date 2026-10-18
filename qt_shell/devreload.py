@@ -3,7 +3,8 @@ import importlib
 import sys
 
 ORDER = ["bridge", "native", "theme", "fake_ui", "rna_widgets", "qt_ui", "editmesh", "viewport",
-         "outliner", "properties", "timeline", "console", "node_editor", "uv_editor", "main_window", "app"]
+         "outliner", "properties", "sidebar", "timeline", "console", "node_editor", "uv_editor", "api",
+         "main_window", "app"]
 
 
 def go(delay=0.3):
@@ -38,7 +39,12 @@ def go(delay=0.3):
                 pass
             app._pump_on = False
         sys.modules[__package__ + ".bridge"].unregister_handlers()
-        for name in ORDER:
+        # also any other loaded module of the add-on (new modules, or ones missing from ORDER)
+        loaded = [k[len(__package__) + 1:] for k in list(sys.modules)
+                  if k.startswith(__package__ + ".") and k.count(".") == __package__.count(".") + 1]
+        extra = [m for m in loaded if m not in ORDER and m != "devreload"]
+        order = ORDER[:ORDER.index("main_window")] + extra + ORDER[ORDER.index("main_window"):]
+        for name in order:
             full = f"{__package__}.{name}"
             if full in sys.modules:
                 importlib.reload(sys.modules[full])

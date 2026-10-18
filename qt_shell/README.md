@@ -28,10 +28,76 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Number fields | Drag left/right to change the value like in Blender (the cursor is hidden and never hits the screen edge; Shift = fine, Ctrl = snap, Esc = cancel), click to type a value; also the Frame / Start / End fields in the timeline |
 | Interface size | **Window → Interface Size…**: *Interface scale* (50–300 %, buttons, fields, icons, spacing and text) and *Text size* (50–250 %, text only), presets 80–200 %, live preview; OK rebuilds the window and widens/narrows the side panels to match. Also in the add-on preferences. |
 | Playback | Space / ▶ in the timeline: frames are timed precisely and follow the scene *Sync* mode (Play Every Frame / Frame Dropping); the viewport shows the real `fps:` like Blender (red when below the scene rate). About 120 fps for a simple scene on Windows. |
+| Sidebar (N panel) | N over the viewport (or Window → Sidebar): Blender's and add-ons' VIEW_3D sidebar panels in tabs (Item, Tool, View, …); Item ▸ Transform is a Qt version of Blender's C panel |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
 The Blender window is hidden (Windows: WinAPI, macOS: Cocoa via ctypes, Linux: `xdotool` on X11).
 You can bring it back at any time with **Window → Show Blender Window**.
+
+## Python API for add-ons (`qt_shell.api`)
+
+Most add-ons need nothing special: Qt Shell runs Blender's own UI code, so these appear in Qt automatically:
+
+- **Properties editor panels** (`bl_space_type = 'PROPERTIES'`),
+- **3D viewport sidebar panels** – the N panel (`bl_space_type = 'VIEW_3D'`, `bl_region_type = 'UI'`), one tab per `bl_category`,
+- **menu entries** appended to Blender menus (`bpy.types.VIEW3D_MT_add.append(...)`, `TOPBAR_MT_file`, …),
+- **operators** (menus, F3 search, panel buttons).
+
+For things that only exist in Qt Shell, use the API (`API_VERSION = (1, 0)`):
+
+```python
+import qt_shell.api as qs
+
+qs.is_running()                       # True when the Qt window exists
+qs.status("Done", timeout_ms=4000)    # status bar message
+
+# dockable panel – the factory is called on every window (re)build
+def make_panel():
+    from PySide6 import QtWidgets
+    return QtWidgets.QPushButton("Top view", clicked=lambda: qs.set_view("TOP"))
+qs.add_dock("my_panel", "My Panel", make_panel, area="left")      # left/right/bottom/top
+qs.remove_dock("my_panel")
+
+# menu items – existing menus ('File', 'Object', 'View', 'Window', …) or a new one ('Tools')
+qs.add_menu_action("Tools", "Say Hello", lambda: qs.status("Hello"), shortcut="Ctrl+Alt+H")
+qs.remove_menu_action("Tools/Say Hello")
+
+# 3D view
+qs.get_view()        # {'target': (x, y, z), 'distance', 'yaw', 'pitch', 'ortho', 'camera_view', 'name'}
+qs.set_view("TOP")   # FRONT/BACK/LEFT/RIGHT/TOP/BOTTOM/CAMERA
+qs.set_view(target=(0, 0, 1), distance=10, yaw=0.8, pitch=1.1, ortho=False)
+qs.frame_all(); qs.frame_selected(); qs.redraw()
+qs.project((1, 2, 3))           # world → (x, y) pixel in the viewport, or None
+qs.view_matrix(); qs.projection_matrix(); qs.viewport_size()
+
+# drawing over the viewport with QPainter
+def draw(painter, ctx):          # ctx.width, ctx.height, ctx.project(co) → QPointF | None
+    for ob in bpy.context.visible_objects:
+        p = ctx.project(ob.matrix_world.translation)
+        if p is not None:
+            painter.drawText(p, ob.name)
+qs.add_overlay("names", draw)
+qs.remove_overlay("names")
+
+# events: data, selection, frame(frame), mode(mode), file, undo, render,
+#         operator(idname, props, result), playback(playing), window(main_window)
+h = qs.on("frame", lambda frame: print("frame", frame))
+qs.off(h)
+```
+
+Everything registered is kept when the Qt window is rebuilt (Interface Size, add-on reload) and can be
+registered before Qt Shell starts. Callbacks run on Blender's main thread with a valid context; errors are
+written to the log instead of breaking the UI. The module does not need PySide6 to be imported, so an add-on
+can use it optionally:
+
+```python
+try:
+    import qt_shell.api as qs
+except ImportError:
+    qs = None
+```
+
+A complete example is `examples/api_demo.py` in the GitHub repository.
 
 ## Tested
 
@@ -53,7 +119,7 @@ national keyboard layouts (e.g. Czech) without Shift.
 
 ## Limitations
 
-- The image editor, sculpt/paint brushes and gizmos are not converted.
+- The image editor, sculpt/paint brushes, gizmos and viewport header buttons of add-ons are not converted.
 - The node editor does not show special node widgets (Color Ramp, curves) – their settings are in
   the sidebar only where they are plain RNA properties.
 - The UV editor has its own UV point selection (not synced with Blender's UV selection).

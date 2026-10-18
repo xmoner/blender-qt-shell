@@ -706,8 +706,13 @@ class LazyMenu(QtWidgets.QMenu):
         if node is None:
             act = self.addAction("—")
             act.setEnabled(False)
-            return
-        fill_menu(self, node)
+        else:
+            fill_menu(self, node)
+        try:
+            from . import api
+            api.extend_menu(self)    # items added by add-ons through qt_shell.api
+        except Exception:
+            pass
 
 
 class PopoverMenu(QtWidgets.QMenu):

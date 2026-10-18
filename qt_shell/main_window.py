@@ -7,13 +7,14 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import app as shell_app
-from . import bridge, rna_widgets as rw, theme
+from . import api, bridge, rna_widgets as rw, theme
 from .bridge import run_op, tr
 from .console import Console
 from .node_editor import NodeEditor
 from .uv_editor import UVEditor
 from .outliner import Outliner
 from .properties import PropertiesEditor
+from .sidebar import Sidebar
 from .qt_ui import LazyMenu, PopoverMenu
 from .timeline import Timeline
 from .viewport import Viewport
@@ -454,6 +455,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_op = LastOperatorPanel(hub)
         self.node_editor = NodeEditor(hub)
         self.uv_editor = UVEditor(hub)
+        self.sidebar = Sidebar(hub)
         self.uv_editor.canvas.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self.docks = {}
         self._dock("outliner", "Outliner", self.outliner, QtCore.Qt.RightDockWidgetArea)
@@ -463,6 +465,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dock("last_op", "Adjust Last Operation", self.last_op, QtCore.Qt.LeftDockWidgetArea)
         self._dock("node_editor", "Node editor", self.node_editor, QtCore.Qt.BottomDockWidgetArea)
         self._dock("uv_editor", "UV editor", self.uv_editor, QtCore.Qt.BottomDockWidgetArea)
+        # 3D viewport sidebar (N panel): next to the viewport, hidden by default like in Blender
+        self._dock("sidebar", "Sidebar", self.sidebar, QtCore.Qt.RightDockWidgetArea)
+        self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.docks["sidebar"], QtCore.Qt.Horizontal)
+        self.docks["sidebar"].hide()
         self.tabifyDockWidget(self.docks["timeline"], self.docks["console"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["node_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["uv_editor"])
@@ -505,6 +511,11 @@ class MainWindow(QtWidgets.QMainWindow):
             old = float(self._settings.value("size_factor", 1.0) or 1.0)
         except Exception:
             old = 1.0
+        # a layout saved before the sidebar existed: give it its own full-height column
+        sb = self.docks["sidebar"]
+        if not self.restoreDockWidget(sb):
+            self.addDockWidget(QtCore.Qt.RightDockWidgetArea, sb, QtCore.Qt.Horizontal)
+            sb.hide()
         # dock sizes are stored in pixels → follow a change of the interface size
         self._size_factor = theme.ui_scale * theme.font_scale ** 0.5
         ratio = self._size_factor / old if old > 0 else 1.0
@@ -514,6 +525,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_status()
         self._on_mode(bpy.context.mode)
         self.viewport.frame_all()
+        # docks, menu items, overlays and event handlers registered by add-ons (qt_shell.api)
+        try:
+            api.apply_to_window(self)
+        except Exception:
+            bridge.log("Qt Shell API: " + __import__("traceback").format_exc(), "ERROR")
 
     # ------------------------------------------------------------ building the UI
     def _dock(self, key, title, widget, area):
@@ -610,6 +626,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def blender_menu(title, menu_id=None, resolver=None):
             m = LazyMenu(menu_id, mb, title=tr(title), resolver=resolver)
+            m.setProperty("qtshell_key", title)        # untranslated name for qt_shell.api
+            m.setProperty("qtshell_generated", True)   # filled on open → api.extend_menu()
             mb.addMenu(m)
             return m
 
@@ -622,14 +640,20 @@ class MainWindow(QtWidgets.QMainWindow):
             ("Vertex", "VIEW3D_MT_edit_mesh_vertices"), ("Edge", "VIEW3D_MT_edit_mesh_edges"),
             ("Face", "VIEW3D_MT_edit_mesh_faces"), ("UV", "VIEW3D_MT_uv_map"))]
         view = mb.addMenu(tr("View"))
+        view.setProperty("qtshell_key", "View")
         for a in self._view_menu(view).actions():
             view.addAction(a)
         blender_menu("Render", "TOPBAR_MT_render")
 
         win = mb.addMenu(tr("Window"))
+        win.setProperty("qtshell_key", "Window")
         for key, d in self.docks.items():
-            win.addAction(d.toggleViewAction())
-        win.addSeparator()
+            act = d.toggleViewAction()
+            if key == "sidebar":
+                act.setText("Sidebar (N)")
+            win.addAction(act)
+        self.window_menu = win
+        self.window_menu_docks_end = win.addSeparator()
         self.blender_visible_act = win.addAction("Show Blender Window")
         self.blender_visible_act.setCheckable(True)
         self.blender_visible_act.toggled.connect(lambda on: shell_app.set_blender_visible(on))
@@ -963,6 +987,14 @@ class MainWindow(QtWidgets.QMainWindow):
             widths = {a: w * limit / total for a, w in widths.items()}
         docks = [ds[0] for ds in side.values()]
         self.resizeDocks(docks, [int(widths[a]) for a in side], QtCore.Qt.Horizontal)
+
+    def toggle_sidebar(self):
+        d = self.docks["sidebar"]
+        d.setVisible(not d.isVisible())
+        if d.isVisible():
+            d.raise_()
+            if not d.isFloating() and d.width() < theme.px(180):
+                self.resizeDocks([d], [theme.px(260)], QtCore.Qt.Horizontal)
 
     def _interface_size(self):
         InterfaceSizeDialog(self).exec()
