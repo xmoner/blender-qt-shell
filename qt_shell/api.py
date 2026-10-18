@@ -34,11 +34,12 @@ __all__ = [
     "add_dock", "remove_dock", "add_menu_action", "remove_menu_action",
     "get_view", "set_view", "frame_all", "frame_selected", "redraw",
     "view_matrix", "projection_matrix", "project", "viewport_size",
+    "viewport_layout", "set_viewport_layout", "viewports",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
     "owner", "current_owner", "cleanup", "owned",
 ]
 
-API_VERSION = (1, 1)
+API_VERSION = (1, 2)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -175,6 +176,31 @@ def viewport():
     attributes where possible – those are not part of the stable API."""
     w = main_window()
     return getattr(w, "viewport", None) if w is not None else None
+
+
+def viewports():
+    """All 3D view widgets of the current layout (the view functions below act on the active one)."""
+    w = main_window()
+    area = getattr(w, "viewports", None) if w is not None else None
+    return area.visible_views() if area is not None else []
+
+
+def viewport_layout():
+    """'single', 'side', 'stacked' or 'quad' (None when Qt Shell is not running)."""
+    w = main_window()
+    area = getattr(w, "viewports", None) if w is not None else None
+    return area.mode if area is not None else None
+
+
+def set_viewport_layout(mode):
+    """Splits the 3D view: 'single', 'side' (two views side by side), 'stacked' or 'quad'
+    (Top / Perspective / Front / Right)."""
+    w = main_window()
+    area = getattr(w, "viewports", None) if w is not None else None
+    if area is None:
+        return False
+    area.set_layout(mode)
+    return True
 
 
 def status(text, timeout_ms=4000):
@@ -415,9 +441,8 @@ def frame_selected():
 
 
 def redraw():
-    """Redraws the viewport (scene and overlays)."""
-    vp = viewport()
-    if vp is not None:
+    """Redraws the 3D views (scene and overlays)."""
+    for vp in viewports() or ([viewport()] if viewport() is not None else []):
         vp.request_redraw()
         vp.update()
 

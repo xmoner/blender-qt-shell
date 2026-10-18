@@ -38,6 +38,7 @@ class Hub(QtCore.QObject):
         self._stats = ""
         self._was_rendering = False
         self.viewport = None     # set by the main window
+        self.viewport_area = None   # all 3D views (ViewportArea); viewport is the active one
         self.playing = False     # animation playback in the timeline
         self.main_window = None
 

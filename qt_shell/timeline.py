@@ -189,7 +189,9 @@ class Timeline(QtWidgets.QWidget):
     def _set_playing(self, on):
         was = bool(getattr(self.hub, "playing", False))
         self.hub.playing = on
-        vp = getattr(self.hub, "viewport", None)
+        vp = getattr(self.hub, "viewport_area", None)
+        if vp is None:
+            vp = getattr(self.hub, "viewport", None)
         if vp is not None:
             vp.playback_changed(on)
         if was != bool(on):
@@ -250,9 +252,11 @@ class Timeline(QtWidgets.QWidget):
                 return
             self._next = self._t0 + (n + 1) / fps
         sc.frame_set(f)
-        vp = getattr(self.hub, "viewport", None)
+        vp = getattr(self.hub, "viewport_area", None)
+        if vp is None:
+            vp = getattr(self.hub, "viewport", None)
         if vp is not None:
-            vp.render_now()
+            vp.render_now()        # every visible view
         self.cur.blockSignals(True)
         self.cur.setValue(f)
         self.cur.blockSignals(False)

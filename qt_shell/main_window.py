@@ -19,7 +19,7 @@ from .text_editor import TextEditor
 from . import scripts
 from .qt_ui import LazyMenu, PopoverMenu
 from .timeline import Timeline
-from .viewport import Viewport
+from .viewport import ViewportArea
 
 MODE_MENUS = {
     "add": {"OBJECT": "VIEW3D_MT_add", "EDIT_MESH": "VIEW3D_MT_mesh_add",
@@ -439,14 +439,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setDockOptions(QtWidgets.QMainWindow.AnimatedDocks | QtWidgets.QMainWindow.AllowTabbedDocks)
 
         # viewport + header
-        self.viewport = Viewport(hub, shell_app.prefs())
-        hub.viewport = self.viewport
-        center = QtWidgets.QWidget()
+        center = QtWidgets.QWidget(self)
+        # one or several 3D views (View ▸ Viewport Layout); self.viewport is the active view
+        self.viewports = ViewportArea(hub, shell_app.prefs(), center)
         cl = QtWidgets.QVBoxLayout(center)
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(0)
         cl.addWidget(self._viewport_header())
-        cl.addWidget(self.viewport, 1)
+        cl.addWidget(self.viewports, 1)
         self.setCentralWidget(center)
 
         # docks
@@ -498,11 +498,11 @@ class MainWindow(QtWidgets.QMainWindow):
         hub.data_changed.connect(self._update_status)
         hub.data_changed.connect(self._sync_shading)
         hub.selection_changed.connect(lambda: self._sync_selmode())
-        self.viewport.selection_edited.connect(self._sync_selmode)
+        self.viewports.selection_edited.connect(self._sync_selmode)
         hub.mode_changed.connect(self._on_mode)
         hub.render_done.connect(self._on_render_done)
         hub.file_loaded.connect(self._on_file_loaded)
-        self.viewport.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
+        self.viewports.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self._rendering = False
 
         self._settings = QtCore.QSettings("QtShell", "QtShell")
@@ -516,6 +516,12 @@ class MainWindow(QtWidgets.QMainWindow):
             old = float(self._settings.value("size_factor", 1.0) or 1.0)
         except Exception:
             old = 1.0
+        mode = self._settings.value("viewport_layout", "single")
+        if mode in ViewportArea.LAYOUTS and mode != "single":
+            try:
+                self.viewports.set_layout(mode)
+            except Exception:
+                bridge.log("Viewport layout: " + __import__("traceback").format_exc(), "ERROR")
         # a layout saved before the sidebar existed: give it its own full-height column
         sb = self.docks["sidebar"]
         if not self.restoreDockWidget(sb):
@@ -611,25 +617,56 @@ class MainWindow(QtWidgets.QMainWindow):
         ov.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         ov.setMenu(PopoverMenu("VIEW3D_PT_overlay", ov))
         lay.addWidget(ov)
+        lb = QtWidgets.QToolButton(bar)
+        lb.setText("▦ Layout ▾")
+        lb.setToolTip("Split the 3D view: one, two or four views (Ctrl+Alt+Q = Four Views)")
+        lb.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        lb.setMenu(self._layout_menu(lb))
+        lay.addWidget(lb)
         QtCore.QTimer.singleShot(0, self._sync_shading)
         return bar
 
+    @property
+    def viewport(self):
+        """The active 3D view."""
+        return self.viewports.active
+
+    def _layout_menu(self, parent):
+        m = QtWidgets.QMenu("Viewport Layout", parent)
+        group = QtGui.QActionGroup(m)
+        acts = {}
+        for key, label in ViewportArea.LAYOUTS.items():
+            a = m.addAction(label + ("   Ctrl+Alt+Q" if key == "quad" else ""),
+                            lambda k=key: self.viewports.set_layout(k))
+            a.setCheckable(True)
+            group.addAction(a)
+            acts[key] = a
+        m.aboutToShow.connect(lambda: acts[self.viewports.mode].setChecked(True))
+        return m
+
     def _view_menu(self, parent):
         m = QtWidgets.QMenu(parent)
-        vp = self.viewport
-        m.addAction("Frame Selected (Num .)", vp.frame_selected)
-        m.addAction("Frame All (Home)", vp.frame_all)
+        vp = lambda: self.viewport        # the active view at the time the item is used
+        m.addAction("Frame Selected (Num .)", lambda: vp().frame_selected())
+        m.addAction("Frame All (Home)", lambda: vp().frame_all())
         m.addSeparator()
         for key, label in (("FRONT", "Front (1)"), ("BACK", "Back (Ctrl+1)"), ("RIGHT", "Right (3)"),
                            ("LEFT", "Left (Ctrl+3)"), ("TOP", "Top (7)"), ("BOTTOM", "Bottom (Ctrl+7)"),
                            ("CAMERA", "Camera (0)")):
-            m.addAction(label, lambda k=key: vp.set_view(k))
-        m.addAction("Perspective / Orthographic (5)", vp.toggle_ortho)
+            m.addAction(label, lambda k=key: vp().set_view(k))
+        m.addAction("Perspective / Orthographic (5)", lambda: vp().toggle_ortho())
+        m.addSeparator()
+        m.addMenu(self._layout_menu(m))
         m.addSeparator()
         a = m.addAction("Selection boxes in Qt")
         a.setCheckable(True)
         a.setChecked(False)
-        a.toggled.connect(lambda on: (setattr(vp, "show_boxes", on), vp.update()))
+
+        def boxes(on):
+            for v in self.viewports.views:
+                v.show_boxes = on
+            self.viewports.update_all()
+        a.toggled.connect(boxes)
         m.addAction("Camera to View", self._camera_to_view)
         return m
 
@@ -697,6 +734,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("Ctrl+Q", self.close)
         sc("Space", self.timeline.toggle_play)
         sc("Ctrl+Space", self._toggle_maximize_viewport)
+        sc("Ctrl+Alt+Q", self.viewports.toggle_quad)
 
     # ------------------------------------------------------------ operator handling
     def special_op(self, idname, props):
@@ -934,7 +972,7 @@ class MainWindow(QtWidgets.QMainWindow):
             cur = [k == i for k in range(3)]
         editmesh.set_select_mode(*cur)
         self._sync_selmode()
-        self.viewport.request_redraw()
+        self.viewports.request_redraw()
 
     def _sync_selmode(self):
         try:
@@ -955,7 +993,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for m in getattr(self, "mesh_menus", []):
             m.menuAction().setVisible(mode == "EDIT_MESH")
         self._sync_selmode()
-        self.viewport.request_redraw()
+        self.viewports.request_redraw()
 
     def _sync_shading(self):
         b = self.shading_buttons.get(self.viewport.shading())
@@ -1039,7 +1077,8 @@ class MainWindow(QtWidgets.QMainWindow):
             bridge.log("Scripts: " + __import__("traceback").format_exc(), "ERROR")
         self._update_title()
         self._sync_shading()
-        self.viewport.frame_all()
+        for v in self.viewports.visible_views():
+            v.frame_all()
         p = shell_app.prefs()
         if (p is None or p.hide_blender) and not self.blender_visible_act.isChecked():
             bridge.later(lambda: shell_app.set_blender_visible(False), 0.3)
@@ -1093,7 +1132,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._settings.setValue("size_factor", self._size_factor)
         except Exception:
             pass
-        self.viewport.shutdown()
+        try:
+            self._settings.setValue("viewport_layout", self.viewports.mode)
+        except Exception:
+            pass
+        self.viewports.shutdown()
         self.timeline.stop()
         try:
             self.text_editor.shutdown()   # keep the last typed text in bpy.data.texts

@@ -93,6 +93,7 @@ class Viewport(QtWidgets.QWidget):
         self._box = None
         self._modal = None
         self._numeric = ""
+        self.area = None            # ViewportArea when the viewport is one of several views
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -118,11 +119,18 @@ class Viewport(QtWidgets.QWidget):
         sp, _r = self.space()
         if sp:
             sp.shading.type = kind
-            self.request_redraw()
+            self.redraw_scene()          # the shading is shared by all views
 
     def request_redraw(self, extra=0):
         self._dirty = True
         self._extra_frames = max(self._extra_frames, extra)
+
+    def redraw_scene(self):
+        """The scene changed (not just this view's camera): redraws every view."""
+        if self.area is not None:
+            self.area.request_redraw()
+        else:
+            self.request_redraw()
 
     def _on_file_loaded(self):
         self.camera_view = False
@@ -325,6 +333,10 @@ class Viewport(QtWidgets.QWidget):
             api.paint_overlays(self, p)     # overlays registered through qt_shell.api
         except Exception:
             pass
+        if self.area is not None and self.area.active is self and len(self.area.visible_views()) > 1:
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.setPen(QtGui.QPen(QtGui.QColor("#5680c2"), 2))
+            p.drawRect(QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1))
         if self._box:
             p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
@@ -754,7 +766,7 @@ class Viewport(QtWidgets.QWidget):
             m["edit"].apply(X)
         for ob, init in m["objs"]:
             ob.matrix_world = X @ init
-        self.request_redraw()
+        self.redraw_scene()
         self.update()
 
     def _modal_end(self, confirm):
@@ -780,10 +792,14 @@ class Viewport(QtWidgets.QWidget):
                     except Exception:
                         pass
             bridge.undo_push({"G": "Move", "R": "Rotate", "S": "Resize"}[m["kind"]])
-        self.request_redraw()
+        self.redraw_scene()
         self.update()
 
     # ------------------------------------------------------------ events
+    def focusInEvent(self, ev):
+        if self.area is not None:
+            self.area.set_active(self)
+        super().focusInEvent(ev)
     def enterEvent(self, ev):
         # like Blender: keys go to the editor under the mouse (except a console being typed in)
         fw = QtWidgets.QApplication.focusWidget()
@@ -1044,3 +1060,153 @@ class Viewport(QtWidgets.QWidget):
             except Exception:
                 pass
             self._off = None
+
+
+# ---------------------------------------------------------------- several views
+class ViewportArea(QtWidgets.QWidget):
+    """The 3D view area: one viewport or several split views (like Blender's Quad View / Maya's
+    four views). Each view has its own camera; the shading is Blender's (shared by all views).
+    The active view (the one under the mouse / last clicked) is the one the header, the menus and
+    the API control."""
+    status = QtCore.Signal(str)
+    selection_edited = QtCore.Signal()
+    active_changed = QtCore.Signal(object)
+
+    LAYOUTS = {"single": "Single View", "side": "Two Views Side by Side",
+               "stacked": "Two Views Stacked", "quad": "Four Views"}
+    # views 1–3 in Four Views; view 0 keeps its (perspective) camera
+    _QUAD_PRESETS = ("TOP", "FRONT", "RIGHT")
+
+    def __init__(self, hub, prefs=None, parent=None):
+        super().__init__(parent)
+        self.hub = hub
+        self.prefs = prefs
+        self.mode = "single"
+        self._prev_mode = "single"
+        self.views = []
+        self._lay = QtWidgets.QVBoxLayout(self)
+        self._lay.setContentsMargins(0, 0, 0, 0)
+        self._lay.setSpacing(0)
+        self._root = None
+        self.active = self._view(0)
+        hub.viewport = self.active
+        hub.viewport_area = self
+        self.set_layout("single")
+
+    # --- views
+    def _view(self, i):
+        while len(self.views) <= i:
+            v = Viewport(self.hub, self.prefs)
+            v.setParent(self)                  # always owned by Qt (never a parentless widget)
+            v.area = self
+            v.status.connect(self.status)
+            v.selection_edited.connect(self.selection_edited)
+            if self.views:                     # a new view starts as a copy of the first one
+                src = self.views[0]
+                v.target, v.dist, v.yaw, v.pitch = src.target.copy(), src.dist, src.yaw, src.pitch
+                v.ortho, v.view_name = src.ortho, src.view_name
+            v.hide()
+            self.views.append(v)
+        return self.views[i]
+
+    def visible_views(self):
+        return [v for v in self.views if v.isVisible()]
+
+    def set_active(self, v):
+        if v is self.active or v not in self.views:
+            return
+        old = self.active
+        self.active = v
+        self.hub.viewport = v
+        old.update()
+        v.update()
+        self.active_changed.emit(v)
+
+    # --- layout
+    def set_layout(self, mode):
+        if mode not in self.LAYOUTS:
+            raise ValueError(f"layout must be one of {sorted(self.LAYOUTS)}")
+        new_quad = mode == "quad" and self.mode != "quad"
+        if mode != self.mode:
+            self._prev_mode = self.mode
+        self.mode = mode
+        # take the views out of the old splitters before those are deleted
+        for v in self.views:
+            v.hide()
+            v.setParent(self)
+        if self._root is not None and self._root not in self.views:
+            self._lay.removeWidget(self._root)
+            self._root.hide()
+            self._root.deleteLater()
+        elif self._root is not None:
+            self._lay.removeWidget(self._root)
+        self._root = None
+
+        V = QtCore.Qt.Vertical
+        H = QtCore.Qt.Horizontal
+        if mode == "single":
+            used = [self._view(0)]
+            root = used[0]
+        elif mode in ("side", "stacked"):
+            used = [self._view(0), self._view(1)]
+            root = self._splitter(H if mode == "side" else V, self, used)
+        else:
+            used = [self._view(i) for i in range(4)]
+            root = QtWidgets.QSplitter(V, self)
+            root.setChildrenCollapsible(False)
+            # Maya-like: Top | Perspective / Front | Right
+            self._splitter(H, root, [used[1], used[0]])
+            self._splitter(H, root, [used[2], used[3]])
+            root.setSizes([10000, 10000])
+            if new_quad:
+                for v, preset in zip(used[1:], self._QUAD_PRESETS):
+                    v.set_view(preset)
+                    v.frame_all()
+        self._root = root
+        self._lay.addWidget(root)
+        root.show()
+        for v in used:
+            v.show()
+            v.request_redraw()
+        if self.active not in used:
+            self.active = used[0]
+            self.hub.viewport = self.active
+            self.active_changed.emit(self.active)
+        for v in used:
+            v.update()
+
+    @staticmethod
+    def _splitter(orientation, parent, widgets):
+        sp = QtWidgets.QSplitter(orientation, parent)
+        sp.setChildrenCollapsible(False)
+        sp.setHandleWidth(theme.px(4))
+        for w in widgets:
+            sp.addWidget(w)
+        sp.setSizes([10000] * len(widgets))
+        return sp
+
+    def toggle_quad(self):
+        """Ctrl+Alt+Q like in Blender: Four Views ↔ the previous layout."""
+        self.set_layout(self._prev_mode if self.mode == "quad" and self._prev_mode != "quad" else
+                        ("single" if self.mode == "quad" else "quad"))
+
+    # --- all views
+    def request_redraw(self, extra=0):
+        for v in self.views:
+            v.request_redraw(extra)
+
+    def update_all(self):
+        for v in self.visible_views():
+            v.update()
+
+    def render_now(self):
+        for v in self.visible_views():
+            v.render_now()
+
+    def playback_changed(self, playing):
+        for v in self.views:
+            v.playback_changed(playing)
+
+    def shutdown(self):
+        for v in self.views:
+            v.shutdown()
