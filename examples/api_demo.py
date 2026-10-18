@@ -1,5 +1,5 @@
 """Qt Shell API demo – run it in Blender (Text Editor ▸ Run Script, or the Qt Shell console:
-exec(open(r"path/to/api_demo.py").read())).
+exec(open(r"path/to/api_demo.py").read())), or open it in the Qt Shell Text editor and press Alt+P.
 
 It adds:
 - a dock "API Demo" with the active object and buttons that control the 3D view,

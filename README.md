@@ -31,6 +31,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Number fields | Drag left/right to change the value like in Blender (the cursor is hidden and never hits the screen edge; Shift = fine, Ctrl = snap, Esc = cancel), click to type a value; also the Frame / Start / End fields in the timeline |
 | Interface size | **Window → Interface Size…**: *Interface scale* (50–300 %, buttons, fields, icons, spacing and text) and *Text size* (50–250 %, text only), presets 80–200 %, live preview; OK rebuilds the window and widens/narrows the side panels to match. Also in the add-on preferences. |
 | Playback | Space / ▶ in the timeline: frames are timed precisely and follow the scene *Sync* mode (Play Every Frame / Frame Dropping); the viewport shows the real `fps:` like Blender (red when below the scene rate). About 120 fps for a simple scene on Windows. |
+| Text editor | Blender's texts (`bpy.data.texts`, saved in the .blend): New / Open / Save / Save As, Python highlighting, line numbers, auto-indent, Tab / Shift+Tab, Ctrl+/ comment, Ctrl+F find, **Run Script (Alt+P)** – output and errors in the Console, the failing line is highlighted |
 | Sidebar (N panel) | N over the viewport (or Window → Sidebar): Blender's and add-ons' VIEW_3D sidebar panels in tabs (Item, Tool, View, …); Item ▸ Transform is a Qt version of Blender's C panel |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
@@ -100,7 +101,7 @@ except ImportError:
     qs = None
 ```
 
-A complete example is in [`examples/api_demo.py`](examples/api_demo.py).
+A complete example is in [`examples/api_demo.py`](examples/api_demo.py) – open it in the Text editor dock and press Alt+P.
 
 ## Tested
 

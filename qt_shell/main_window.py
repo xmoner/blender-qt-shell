@@ -15,6 +15,7 @@ from .uv_editor import UVEditor
 from .outliner import Outliner
 from .properties import PropertiesEditor
 from .sidebar import Sidebar
+from .text_editor import TextEditor
 from .qt_ui import LazyMenu, PopoverMenu
 from .timeline import Timeline
 from .viewport import Viewport
@@ -456,6 +457,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.node_editor = NodeEditor(hub)
         self.uv_editor = UVEditor(hub)
         self.sidebar = Sidebar(hub)
+        self.text_editor = TextEditor(hub)
         self.uv_editor.canvas.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self.docks = {}
         self._dock("outliner", "Outliner", self.outliner, QtCore.Qt.RightDockWidgetArea)
@@ -465,6 +467,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dock("last_op", "Adjust Last Operation", self.last_op, QtCore.Qt.LeftDockWidgetArea)
         self._dock("node_editor", "Node editor", self.node_editor, QtCore.Qt.BottomDockWidgetArea)
         self._dock("uv_editor", "UV editor", self.uv_editor, QtCore.Qt.BottomDockWidgetArea)
+        self._dock("text_editor", "Text editor", self.text_editor, QtCore.Qt.BottomDockWidgetArea)
         # 3D viewport sidebar (N panel): next to the viewport, hidden by default like in Blender
         self._dock("sidebar", "Sidebar", self.sidebar, QtCore.Qt.RightDockWidgetArea)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.docks["sidebar"], QtCore.Qt.Horizontal)
@@ -472,6 +475,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(self.docks["timeline"], self.docks["console"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["node_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["uv_editor"])
+        self.tabifyDockWidget(self.docks["timeline"], self.docks["text_editor"])
         self.docks["timeline"].raise_()
         self.resizeDocks([self.docks["outliner"], self.docks["properties"]], [260, 560], QtCore.Qt.Vertical)
         self.resizeDocks([self.docks["properties"]], [400], QtCore.Qt.Horizontal)
@@ -1004,7 +1008,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           ("timeline", QtCore.Qt.BottomDockWidgetArea), ("console", QtCore.Qt.BottomDockWidgetArea),
                           ("last_op", QtCore.Qt.LeftDockWidgetArea),
                           ("node_editor", QtCore.Qt.BottomDockWidgetArea),
-                          ("uv_editor", QtCore.Qt.BottomDockWidgetArea)):
+                          ("uv_editor", QtCore.Qt.BottomDockWidgetArea),
+                          ("text_editor", QtCore.Qt.BottomDockWidgetArea)):
             d = self.docks[key]
             d.setFloating(False)
             self.addDockWidget(area, d)
@@ -1012,6 +1017,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(self.docks["timeline"], self.docks["console"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["node_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["uv_editor"])
+        self.tabifyDockWidget(self.docks["timeline"], self.docks["text_editor"])
 
     def _on_log(self, msg, level):
         if level in ("ERROR", "WARNING"):
@@ -1076,4 +1082,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         self.viewport.shutdown()
         self.timeline.stop()
+        try:
+            self.text_editor.shutdown()   # keep the last typed text in bpy.data.texts
+        except Exception:
+            pass
         self.render_window.close()
