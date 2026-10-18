@@ -29,7 +29,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Interface size | **Window → Interface Size…**: *Interface scale* (50–300 %, buttons, fields, icons, spacing and text) and *Text size* (50–250 %, text only), presets 80–200 %, live preview; OK rebuilds the window and widens/narrows the side panels to match. Also in the add-on preferences. |
 | Playback | Space / ▶ in the timeline: frames are timed precisely and follow the scene *Sync* mode (Play Every Frame / Frame Dropping); the viewport shows the real `fps:` like Blender (red when below the scene rate). About 120 fps for a simple scene on Windows. |
 | Text editor | Blender's texts (`bpy.data.texts`, saved in the .blend): New / Open / Save / Save As, Python highlighting, line numbers, auto-indent, Tab / Shift+Tab, Ctrl+/ comment, Ctrl+F find, **Run Script (Alt+P)** – output and errors in the Console, the failing line is highlighted; **Run Selection (Ctrl+Enter)** runs the selected lines / current line in the script's namespace (an expression prints its value); **■ Unload** |
-| Scripts (script manager) | **Scripts** dock (bottom tabs): the texts of the .blend and your own .py files with their state (*loaded · N items*, *ran*, *error*); ▶ Run / ⟳ Reload / ■ Unload / Unload All / Edit; **Auto-load** – a text runs when the .blend is opened (respects *Auto Run Python Scripts*), a file runs when Qt Shell starts. Qt Shell records what a script registers (Qt Shell API docks, menu items, overlays, events, `bpy` classes, `bpy.app.handlers`): Unload calls the script's `unregister()` and removes whatever is left, running a script again reloads it without duplicates |
+| Scripts (script manager) | Run / ⟳ Reload / ■ Unload in the Text editor; **Auto-load** – a text with the custom property `qtshell_autoload` runs when the .blend is opened (respects *Auto Run Python Scripts*). The **Scripts** dock (list of scripts, Auto-load checkboxes) is temporarily disabled – it crashed Blender on Windows when the window was shown. Qt Shell records what a script registers (Qt Shell API docks, menu items, overlays, events, `bpy` classes, `bpy.app.handlers`): Unload calls the script's `unregister()` and removes whatever is left, running a script again reloads it without duplicates |
 | Sidebar (N panel) | N over the viewport (or Window → Sidebar): Blender's and add-ons' VIEW_3D sidebar panels in tabs (Item, Tool, View, …); Item ▸ Transform is a Qt version of Blender's C panel |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
@@ -147,6 +147,8 @@ national keyboard layouts (e.g. Czech) without Shift.
   (Windows: `%TEMP%\qtshell.log`), because Blender's console is hidden.
 - If the Qt window can't be created, the normal Blender window comes back automatically.
 - A hard crash writes the Python stack to `%TEMP%\qtshell_crash.log`.
+- **Safe start:** if the previous start of Qt Shell crashed Blender, the next start discards the saved
+  window layout and opens with the default one.
 
 ## Limitations
 

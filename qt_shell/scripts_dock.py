@@ -22,11 +22,16 @@ class ScriptsPanel(QtWidgets.QWidget):
         lay.setContentsMargins(2, 2, 2, 2)
         lay.setSpacing(2)
 
-        bar = QtWidgets.QHBoxLayout()
+        # every widget gets its parent when it is created: widgets added to a layout that is not yet
+        # installed on a widget can be freed by Python, which crashes Qt when the window is shown
+        barw = QtWidgets.QWidget(self)
+        bar = QtWidgets.QHBoxLayout(barw)
+        bar.setContentsMargins(0, 0, 0, 0)
         bar.setSpacing(3)
+        lay.addWidget(barw)
 
         def tool(text, tip, fn):
-            b = QtWidgets.QToolButton()
+            b = QtWidgets.QToolButton(barw)
             b.setText(text)
             b.setToolTip(tip)
             b.clicked.connect(fn)
@@ -38,22 +43,20 @@ class ScriptsPanel(QtWidgets.QWidget):
         self.unload_btn = tool("■ Unload", "Call unregister() and remove everything the script registered",
                                self.unload)
         self.edit_btn = tool("Edit", "Open in the Text editor (double-click)", self.edit)
-        bar.addSpacing(theme.px(8))
-        tool("Add File…", "Add a .py file to the list (it stays there for every .blend)", self.add_file)
+        self.add_btn = tool("Add File…", "Add a .py file to the list (it stays there for every .blend)",
+                            self.add_file)
         self.remove_btn = tool("Remove", "Remove the file from the list (the file itself is kept)",
                                self.remove_file)
         bar.addStretch(1)
-        tool("Unload All", "Unload every loaded script", self.unload_all)
-        lay.addLayout(bar)
+        self.unload_all_btn = tool("Unload All", "Unload every loaded script", self.unload_all)
 
-        self.tree = QtWidgets.QTreeWidget()
+        self.tree = QtWidgets.QTreeWidget(self)
         self.tree.setHeaderLabels(["Script", "Status", "Auto-load", "Location"])
         self.tree.setRootIsDecorated(False)
         self.tree.setUniformRowHeights(True)
         self.tree.setAlternatingRowColors(True)
         h = self.tree.header()
         h.setStretchLastSection(True)
-        h.setSectionResizeMode(COL_NAME, QtWidgets.QHeaderView.Interactive)
         self.tree.setColumnWidth(COL_NAME, theme.px(180))
         self.tree.setColumnWidth(COL_STATUS, theme.px(140))
         self.tree.setColumnWidth(COL_AUTO, theme.px(75))
@@ -64,14 +67,13 @@ class ScriptsPanel(QtWidgets.QWidget):
         self.tree.customContextMenuRequested.connect(self._context_menu)
         lay.addWidget(self.tree, 3)
 
-        self.details = QtWidgets.QPlainTextEdit()
+        self.details = QtWidgets.QPlainTextEdit(self)
         self.details.setReadOnly(True)
         self.details.setMaximumHeight(theme.px(110))
         self.details.setPlaceholderText("What the selected script has registered.")
         lay.addWidget(self.details, 1)
 
-        self.note = QtWidgets.QLabel()
-        self.note.setWordWrap(True)
+        self.note = QtWidgets.QLabel(self)
         self.note.setProperty("dim", True)
         lay.addWidget(self.note)
 

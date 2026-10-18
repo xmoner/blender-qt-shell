@@ -237,14 +237,45 @@ def start(addon_prefs=None):
     _hub = Hub()
     bridge.add_log_listener(lambda m, lvl: _hub.log.emit(m, lvl))
 
+    # safe start: a marker file exists while the window is being created and shown. If it is still
+    # there on the next start, the previous start crashed Blender – the saved window layout is then
+    # discarded (a broken layout is the usual cause) and the window starts with the default one.
+    import os
+    import tempfile
+    marker = os.path.join(tempfile.gettempdir(), "qtshell_starting")
+    safe = os.path.exists(marker)
+    if safe:
+        bridge.log("The previous start of Qt Shell did not finish – starting with the default window "
+                   "layout.", "WARNING")
+        try:
+            st = QtCore.QSettings("QtShell", "QtShell")
+            st.remove("state")
+            st.remove("geometry")
+            st.sync()
+        except Exception:
+            pass
+    try:
+        with open(marker, "w") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+
+    def _started():
+        try:
+            os.remove(marker)
+        except Exception:
+            pass
+
     try:
         from .main_window import MainWindow
         with bridge.blender_context():
             _win = MainWindow(_hub)
             _win.show()
+        bridge.later(_started, 3.0)
     except Exception:
         # never leave the user without a window: log the error and bring Blender back
         bridge.log("Qt Shell window could not be created:\n" + traceback.format_exc(), "ERROR")
+        _started()
         _win = None
         set_blender_visible(True)
         return
