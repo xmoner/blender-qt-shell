@@ -274,13 +274,15 @@ class Builder:
         lay.setContentsMargins(m, m, m, m)
         lay.setSpacing(1 if align else 4)
         heading = node.args.get("heading")
+        split_heading = bool(heading) and f.get("use_property_split", False) and k in ("row", "column")
         n_items = 0
-        if heading:
+        if heading and not split_heading:
             lab = QtWidgets.QLabel(heading)
             if isinstance(lay, QtWidgets.QGridLayout):
                 lay.addWidget(lab, 0, 0)
             else:
                 lay.addWidget(lab)
+        first_child = None
         children = node.children
         factor = node.args.get("factor", 0.0) if k == "split" else 0.0
         cols = node.args.get("columns", 0) if k == "flow" else 0
@@ -300,6 +302,8 @@ class Builder:
             cw = self.build(ch, k)
             if cw is None:
                 continue
+            if first_child is None:
+                first_child = cw
             if k == "flow":
                 lay.addWidget(cw, n_items // cols + (1 if heading else 0), n_items % cols)
             elif k == "split":
@@ -315,6 +319,16 @@ class Builder:
             n_items += 1
         if n_items == 0 and not heading:
             return None
+        if split_heading:
+            # Blender puts a heading into the label column of the first row ("Show In  ☑ Viewports")
+            placed = False
+            if k == "column" and first_child is not None:
+                lab = first_child.findChild(QtWidgets.QLabel, "qtshell_split_label")
+                if lab is not None and not lab.text():
+                    lab.setText(heading)
+                    placed = True
+            if not placed:
+                w = rw.labeled_row(heading, w, True)
         if not f.get("enabled", True):
             w.setEnabled(False)
         if not f.get("active", True):
@@ -462,10 +476,12 @@ class Builder:
             label = ""
         split = f.get("use_property_split", False) and bool(label)
         if isinstance(b, rw.BoolBinding):
-            if split and label:
-                return rw.labeled_row(label, b.widget, True)
             if label:
                 b.widget.setText(label)
+            if split and isinstance(b.widget, QtWidgets.QCheckBox):
+                # like Blender: the label column stays empty (or gets the column heading),
+                # the checkbox carries its own text in the value column
+                return rw.labeled_row("", b.widget, True)
             return b.widget
         if isinstance(b, rw.NumberBinding) and not split:
             if label:

@@ -93,37 +93,52 @@ class PanelPage(QtWidgets.QScrollArea):
                 self._sig = None
 
     def _build(self, recorded):
+        """Builds the whole page into a new widget and only then swaps it in, together with its
+        bindings. (A half-built page used to leave old widgets on screen whose bindings were already
+        gone – their checkboxes toggled but changed nothing.)"""
         scroll = self.verticalScrollBar().value()
-        self.builders = []
+        builders = []
         host = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(host)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(6)
-        self._add_panels(lay, recorded)
+        self._add_panels(lay, recorded, builders)
         lay.addStretch(1)
+        self.builders = builders
         self.setWidget(host)
         QtCore.QTimer.singleShot(0, lambda: self.verticalScrollBar().setValue(scroll))
 
-    def _add_panels(self, lay, recorded):
+    def _add_panels(self, lay, recorded, builders):
         for cls, header, body, children in recorded:
-            b = qt_ui.Builder(self.on_change, self.state)
-            self.builders.append(b)
-            opts = getattr(cls, "bl_options", set()) or set()
-            hw = b.build(header, "row") if header is not None else None
-            if "HIDE_HEADER" in opts:
-                w = b.build(body)
-                if w is not None:
-                    lay.addWidget(w)
-                continue
-            title = tr(getattr(cls, "bl_label", cls.__name__))
-            panel = qt_ui.CollapsiblePanel(title, fake_ui.class_id(cls), self.state,
-                                           "DEFAULT_CLOSED" in opts, hw)
+            try:
+                self._add_panel(lay, cls, header, body, children, builders)
+            except Exception as ex:
+                # one broken panel must not take the whole tab down
+                bridge.log(f"Panel {cls.__name__}: {ex}", "ERROR")
+                err = QtWidgets.QLabel(f"⚠ {tr(getattr(cls, 'bl_label', cls.__name__))}: {ex}")
+                err.setWordWrap(True)
+                err.setStyleSheet("color:#ff8080;")
+                lay.addWidget(err)
+
+    def _add_panel(self, lay, cls, header, body, children, builders):
+        b = qt_ui.Builder(self.on_change, self.state)
+        builders.append(b)
+        opts = getattr(cls, "bl_options", set()) or set()
+        hw = b.build(header, "row") if header is not None else None
+        if "HIDE_HEADER" in opts:
             w = b.build(body)
             if w is not None:
-                panel.body_lay.addWidget(w)
-            if children:
-                self._add_panels(panel.body_lay, children)
-            lay.addWidget(panel)
+                lay.addWidget(w)
+            return
+        title = tr(getattr(cls, "bl_label", cls.__name__))
+        panel = qt_ui.CollapsiblePanel(title, fake_ui.class_id(cls), self.state,
+                                       "DEFAULT_CLOSED" in opts, hw)
+        w = b.build(body)
+        if w is not None:
+            panel.body_lay.addWidget(w)
+        if children:
+            self._add_panels(panel.body_lay, children, builders)
+        lay.addWidget(panel)
 
 
 class StackPage(QtWidgets.QScrollArea):

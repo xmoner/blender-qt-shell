@@ -580,6 +580,23 @@ class EnumBinding(Binding):
             w.blockSignals(False)
 
 
+def _item_key(item):
+    """Unique key of a pointer target: ID name, or identifier for non-ID structs (e.g. ActionSlot)."""
+    for attr in ("name", "identifier"):
+        v = getattr(item, attr, None)
+        if isinstance(v, str):
+            return v
+    return str(item)
+
+
+def _item_label(item):
+    for attr in ("name_display", "name", "identifier"):
+        v = getattr(item, attr, None)
+        if isinstance(v, str) and v:
+            return v
+    return str(item)
+
+
 class IDBinding(Binding):
     def __init__(self, data, prop_id, rp, on_change, search_data=None, search_prop=None):
         super().__init__(data, prop_id, on_change)
@@ -605,24 +622,25 @@ class IDBinding(Binding):
             value = None
             if name:
                 for item in self._source():
-                    if getattr(item, "name", None) == name:
+                    if _item_key(item) == name:
                         value = item
                         break
         if _safe_set(self.data, self.prop_id, value):
             self.changed()
 
     def refresh(self):
-        names = [getattr(i, "name", str(i)) for i in self._source()]
+        items = self._source()
+        names = [(_item_key(i), _item_label(i)) for i in items]
         cur = getattr(self.data, self.prop_id)
-        cur_name = cur if self.is_string else (cur.name if cur is not None else "")
+        cur_name = cur if self.is_string else (_item_key(cur) if cur is not None else "")
         w = self.widget
         w.blockSignals(True)
         if names != self._names:
             self._names = names
             w.clear()
             w.addItem("—", "")
-            for n in names:
-                w.addItem(n, n)
+            for key, label in names:
+                w.addItem(label, key)
         w.setCurrentIndex(max(0, w.findData(cur_name)))
         w.blockSignals(False)
 
@@ -692,6 +710,7 @@ def labeled_row(label, widget, split=True):
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(6)
     lab = QtWidgets.QLabel(label or "")
+    lab.setObjectName("qtshell_split_label")   # a column/row heading can be placed here later
     lab.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignTop if split else QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
     lab.setContentsMargins(0, 3, 0, 0)
     lay.addWidget(lab, 2 if split else 0)
