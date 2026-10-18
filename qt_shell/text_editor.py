@@ -2,19 +2,18 @@
 
 Works on Blender's text datablocks (bpy.data.texts), so the texts are saved in the .blend file and
 shared with Blender's own Text Editor. Python syntax highlighting, line numbers, auto-indent,
-Tab / Shift+Tab indentation, Ctrl+/ comments, Ctrl+F search and Run Script (Alt+P).
+Tab / Shift+Tab indentation, Ctrl+/ comments, Ctrl+F search, Run Script (Alt+P) and
+Run Selection (Ctrl+Enter). Scripts are run through the script manager (scripts.py), so running a
+script again replaces its previous run and Unload removes everything it registered.
 """
-import contextlib
-import io
 import keyword
 import os
 import re
-import traceback
 
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, theme
+from . import scripts, theme
 
 INDENT = "    "
 
@@ -114,9 +113,10 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
     # keys that belong to the editor even though the main window has shortcuts for them
     # (Ctrl+S saves the text, not the .blend; Ctrl+Z is the editor's undo; Space types a space…)
     _OWN_KEYS = {("S", "C"), ("F", "C"), ("P", "A"), ("Slash", "C"), ("Z", "C"), ("Y", "C"),
-                 ("Z", "CS"), ("Space", ""), ("Tab", ""), ("Backtab", "S"), ("Return", ""), ("Delete", "")}
+                 ("Z", "CS"), ("Space", ""), ("Tab", ""), ("Backtab", "S"), ("Return", ""), ("Return", "C"), ("Delete", "")}
     save_requested = QtCore.Signal()
     run_requested = QtCore.Signal()
+    run_selection_requested = QtCore.Signal()
     find_requested = QtCore.Signal()
 
     def __init__(self, parent=None):
@@ -237,6 +237,9 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         if (mods & QtCore.Qt.AltModifier) and k == QtCore.Qt.Key_P:
             self.run_requested.emit()
             return
+        if ctrl and k in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            self.run_selection_requested.emit()
+            return
         if ctrl and k == QtCore.Qt.Key_Slash:
             self._toggle_comment()
             return
@@ -349,13 +352,21 @@ class TextEditor(QtWidgets.QWidget):
         tool("Save As…", "Save the text to a new file", self.save_as)
         tool("✕", "Delete this text from the .blend file", self.delete_text)
         bar.addStretch(1)
-        self.run_btn = tool("▶ Run Script", "Run the text as a Python script (Alt+P)", self.run_script)
+        self.state_lab = QtWidgets.QLabel()
+        bar.addWidget(self.state_lab)
+        tool("Run Selection", "Run the selected lines, or the current line, in the script's namespace "
+             "(Ctrl+Enter). A single expression prints its value.", self.run_selection)
+        self.unload_btn = tool("■ Unload", "Call the script's unregister() and remove everything it "
+                               "registered (menus, docks, overlays, handlers, classes)", self.unload_script)
+        self.run_btn = tool("▶ Run Script", "Run the text as a Python script (Alt+P). "
+                            "If it is already loaded, it is unloaded first.", self.run_script)
         self.run_btn.setStyleSheet("QToolButton{background:#3d6b3d;}")
         lay.addLayout(bar)
 
         self.editor = CodeEditor()
         self.editor.save_requested.connect(self.save)
         self.editor.run_requested.connect(self.run_script)
+        self.editor.run_selection_requested.connect(self.run_selection)
         self.editor.find_requested.connect(self.show_find)
         self.editor.textChanged.connect(self._edited)
         lay.addWidget(self.editor, 1)
@@ -395,6 +406,7 @@ class TextEditor(QtWidgets.QWidget):
         self._poll.setInterval(1000)
         self._poll.timeout.connect(self._sync_from_blender)
         self._poll.start()
+        self._scripts_version = None
         hub.file_loaded.connect(lambda: (setattr(self, "_name", None), self.refresh_list()))
         self.refresh_list()
 
@@ -434,6 +446,7 @@ class TextEditor(QtWidgets.QWidget):
         self.editor.mark_error(None)
         self._loading = False
         self._update_info()
+        self._update_state()
 
     def _edited(self):
         if not self._loading:
@@ -452,6 +465,8 @@ class TextEditor(QtWidgets.QWidget):
 
     def _sync_from_blender(self):
         """Picks up changes made outside (Blender's Text Editor, scripts) while not typing here."""
+        if self._scripts_version != scripts.version():
+            self._update_state()
         if self._push.isActive() or self.editor.hasFocus() or not self.isVisible():
             return
         names = [t.name for t in bpy.data.texts]
@@ -464,6 +479,29 @@ class TextEditor(QtWidgets.QWidget):
             c = self.editor.textCursor()
             c.setPosition(min(pos, len(self.editor.toPlainText())))
             self.editor.setTextCursor(c)
+
+    def _key(self):
+        t = self._text()
+        return scripts.key_for_text(t) if t is not None else None
+
+    def _update_state(self):
+        self._scripts_version = scripts.version()
+        key = self._key()
+        i = scripts.info(key) if key else None
+        self.unload_btn.setEnabled(i is not None)
+        self.run_btn.setText("⟳ Reload" if i is not None and i["status"] == "loaded" else "▶ Run Script")
+        if i is None:
+            self.state_lab.setText("")
+            self.state_lab.setToolTip("")
+        elif i["status"] == "error":
+            self.state_lab.setText("<span style='color:#ff7070'>● error</span>")
+        elif i["status"] == "loaded":
+            n = i["items"]
+            self.state_lab.setText(f"<span style='color:#7fcf7f'>● loaded · {n} item{'s' if n != 1 else ''}</span>")
+            self.state_lab.setToolTip("\n".join(scripts.items(key)) or "has unregister()")
+        else:
+            self.state_lab.setText("<span style='color:#999'>● ran</span>")
+            self.state_lab.setToolTip("The script ran and registered nothing.")
 
     def _update_info(self):
         t = self._text()
@@ -544,54 +582,75 @@ class TextEditor(QtWidgets.QWidget):
         self.refresh_list()
 
     # --- run
+    def _console(self):
+        scripts.show_console()
+
     def run_script(self):
         """Runs the text like Blender's Run Script; output and errors go to the Console dock."""
         t = self._text()
         if t is None:
             return
         self._write_back()
-        src = self.editor.toPlainText()
-        mw = getattr(self.hub, "main_window", None)
-        console = getattr(mw, "console", None)
-        if console is not None:
-            mw.docks["console"].show()
-            mw.docks["console"].raise_()
-            console.write(f"\n▶ Run Script: {t.name}\n", "#8fb3ff")
-        out = io.StringIO()
-        filename = bpy.path.abspath(t.filepath) if t.filepath else t.name
-        ns = {"__name__": "__main__", "__file__": filename, "bpy": bpy}
-        error_line = None
+        key = self._key()
+        was = scripts.is_loaded(key)
+        self._console()
+        r = scripts.run(key)
+        title = f"{'⟳ Reload' if was else '▶ Run Script'}: {t.name}"
+        if r.removed:
+            title += f"  (removed {r.removed} item{'s' if r.removed != 1 else ''} of the previous run)"
+        scripts.report_result(title, r)
+        self.editor.mark_error(r.error_line)
+        self._status("Script finished" if r.ok else
+                     f"Script error{f' on line {r.error_line}' if r.error_line else ''} – see the Console")
+        self._update_state()
+        self._undo_push("Run Script")
+
+    def run_selection(self):
+        """Runs the selected lines (or the current line) in the namespace of the script (Ctrl+Enter)."""
+        t = self._text()
+        if t is None:
+            return
+        self._write_back()
+        cur = self.editor.textCursor()
+        blocks = self.editor._selected_blocks()
+        if cur.hasSelection() and len(blocks) == 1:
+            src = cur.selectedText()                       # part of one line
+        else:
+            src = "\n".join(b.text() for b in blocks)
+        lines = src.split("\n")
+        # remove the common indentation, so an indented block can be run on its own
+        ind = min((len(l) - len(l.lstrip()) for l in lines if l.strip()), default=0)
+        src = "\n".join(l[ind:] for l in lines)
+        if not src.strip():
+            return
+        self._console()
+        first = blocks[0].blockNumber() + 1
+        r = scripts.run_snippet(self._key(), src, first)
+        scripts.report(f"\n>>> {t.name}:{first}" + (f"-{first + len(lines) - 1}" if len(lines) > 1 else "")
+                       + "\n", "#8fb3ff")
+        if r.output:
+            scripts.report(r.output if r.output.endswith("\n") else r.output + "\n",
+                           "#e5e5e5" if r.ok else "#ff7070")
+        if r.error_line:
+            self.editor.mark_error(r.error_line)
+        self._update_state()
+        self._undo_push("Run Selection")
+
+    def unload_script(self):
+        key = self._key()
+        if not key or not scripts.is_loaded(key):
+            return
+        self._console()
+        r = scripts.unload(key)
+        scripts.report_result(f"■ Unload: {scripts.label(key)}  (removed {r.removed} item"
+                              f"{'s' if r.removed != 1 else ''})", r)
+        self._status(f"Unloaded {scripts.label(key)}")
+        self._update_state()
+
+    @staticmethod
+    def _undo_push(msg):
         try:
-            code = compile(src, t.name, "exec")
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                with bridge.blender_context():
-                    exec(code, ns)
-            ok = True
-        except Exception as ex:
-            ok = False
-            # show only the script's own frames (skip the exec() call inside Qt Shell)
-            tb = ex.__traceback__
-            while tb is not None and tb.tb_frame.f_code.co_filename != t.name:
-                tb = tb.tb_next
-            if isinstance(ex, SyntaxError) or tb is None:
-                out.write("".join(traceback.format_exception_only(type(ex), ex)))
-            else:
-                out.write("Traceback (most recent call last):\n")
-                out.write("".join(traceback.format_list(traceback.extract_tb(tb))))
-                out.write("".join(traceback.format_exception_only(type(ex), ex)))
-            if isinstance(ex, SyntaxError) and ex.filename == t.name:
-                error_line = ex.lineno
-            else:
-                for fr in traceback.extract_tb(ex.__traceback__):
-                    if fr.filename == t.name:
-                        error_line = fr.lineno
-        if console is not None and out.getvalue():
-            console.write(out.getvalue(), "#e5e5e5" if ok else "#ff7070")
-        self.editor.mark_error(error_line)
-        self._status("Script finished" if ok else
-                     f"Script error{f' on line {error_line}' if error_line else ''} – see the Console")
-        try:
-            bpy.ops.ed.undo_push(message="Run Script")
+            bpy.ops.ed.undo_push(message=msg)
         except Exception:
             pass
 

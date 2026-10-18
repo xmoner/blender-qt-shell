@@ -15,11 +15,17 @@ All callbacks run on Blender's main thread inside a valid Blender context, so ``
 ``bpy.ops`` can be used in them. Exceptions in callbacks are caught and written to the Qt Shell
 log (Console dock and ``%TEMP%/qtshell.log``).
 
+Ownership: everything registered inside ``with owner("name"):`` (and everything a script registers
+while it is run by Qt Shell – Text editor ▸ Run Script, Scripts dock) belongs to that owner and is
+removed together by ``cleanup("name")``. Add-ons can use it in their ``unregister()``.
+
 This module does not import PySide6 at load time, so it can be imported even when PySide6 is not
 installed (``is_running()`` is then simply ``False``).
 """
+import contextlib
 import sys
 import traceback
+import types
 
 import bpy
 
@@ -29,9 +35,10 @@ __all__ = [
     "get_view", "set_view", "frame_all", "frame_selected", "redraw",
     "view_matrix", "projection_matrix", "project", "viewport_size",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
+    "owner", "current_owner", "cleanup", "owned",
 ]
 
-API_VERSION = (1, 0)
+API_VERSION = (1, 1)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -45,6 +52,7 @@ EVENTS = {
     "operator": "op_done",             # fn(idname, props, result)    operator run from Qt Shell
     "playback": None,                  # fn(playing: bool)            animation playback started/stopped
     "window": None,                    # fn(main_window)              Qt window (re)built
+    "script": None,                    # fn(key: str, state: str)     a script was run / unloaded
 }
 
 _AREAS = {"left": "LeftDockWidgetArea", "right": "RightDockWidgetArea",
@@ -52,16 +60,80 @@ _AREAS = {"left": "LeftDockWidgetArea", "right": "RightDockWidgetArea",
 
 
 # ---------------------------------------------------------------- registry
+def state_store(name):
+    """A dict that lives for the whole Blender session: survives reloads of the add-on modules and
+    loading other .blend files (kept in a module of its own in sys.modules)."""
+    mod = sys.modules.get("_qt_shell_state")
+    if mod is None:
+        mod = sys.modules["_qt_shell_state"] = types.ModuleType("_qt_shell_state")
+    d = getattr(mod, name, None)
+    if not isinstance(d, dict):
+        d = {}
+        setattr(mod, name, d)
+    return d
+
+
 def _reg():
-    """Registry kept in Blender's driver namespace, so it survives reloads of this module."""
-    ns = bpy.app.driver_namespace
-    r = ns.get("_qt_shell_api")
-    if not isinstance(r, dict):
-        r = ns["_qt_shell_api"] = {}
-    for key in ("docks", "actions", "overlays", "events"):
+    """Registry of everything added through the API."""
+    r = state_store("api")
+    if not r:
+        old = bpy.app.driver_namespace.get("_qt_shell_api")     # registry of version 1.0
+        if isinstance(old, dict):
+            r.update(old)
+    for key in ("docks", "actions", "overlays", "events", "owners"):
         r.setdefault(key, {})
     r.setdefault("seq", 0)
+    r.setdefault("owner_stack", [])
     return r
+
+
+# ---------------------------------------------------------------- ownership
+@contextlib.contextmanager
+def owner(name):
+    """Everything registered inside the block belongs to ``name`` (see cleanup())."""
+    stack = _reg()["owner_stack"]
+    stack.append(str(name))
+    try:
+        yield
+    finally:
+        if stack and stack[-1] == str(name):
+            stack.pop()
+
+
+def current_owner():
+    stack = _reg()["owner_stack"]
+    return stack[-1] if stack else None
+
+
+def _disown(kind, item_id):
+    for items in _reg()["owners"].values():
+        items.discard((kind, item_id))
+
+
+def _own(kind, item_id):
+    r = _reg()
+    _disown(kind, item_id)                       # an id re-registered by someone else changes owner
+    o = current_owner()
+    if o is not None:
+        r["owners"].setdefault(o, set()).add((kind, item_id))
+
+
+def owned(name):
+    """List of (kind, id) registered by an owner – kind is 'dock', 'action', 'overlay' or 'event'."""
+    return sorted(_reg()["owners"].get(str(name), ()))
+
+
+def cleanup(name):
+    """Removes everything registered by an owner. Returns the number of removed items."""
+    items = _reg()["owners"].pop(str(name), set())
+    remove = {"dock": remove_dock, "action": remove_menu_action,
+              "overlay": remove_overlay, "event": off}
+    for kind, item_id in items:
+        try:
+            remove[kind](item_id)
+        except Exception:
+            _log(f"cleanup of {kind} '{item_id}' failed:\n{traceback.format_exc()}")
+    return len(items)
 
 
 def _next_id(prefix):
@@ -123,6 +195,7 @@ def add_dock(dock_id, title, factory, area="right", visible=True):
     if area not in _AREAS:
         raise ValueError(f"area must be one of {sorted(_AREAS)}")
     _reg()["docks"][dock_id] = {"title": title, "factory": factory, "area": area, "visible": visible}
+    _own("dock", dock_id)
     w = main_window()
     if w is not None:
         _install_dock(w, dock_id)
@@ -130,6 +203,7 @@ def add_dock(dock_id, title, factory, area="right", visible=True):
 
 
 def remove_dock(dock_id):
+    _disown("dock", dock_id)
     _reg()["docks"].pop(dock_id, None)
     w = main_window()
     if w is not None:
@@ -183,6 +257,7 @@ def add_menu_action(menu, text, callback, shortcut=None, tooltip=None, action_id
     aid = action_id or f"{menu}/{text}"
     _reg()["actions"][aid] = {"menu": menu, "text": text, "callback": callback,
                               "shortcut": shortcut, "tooltip": tooltip}
+    _own("action", aid)
     w = main_window()
     if w is not None:
         _install_actions(w)
@@ -190,6 +265,7 @@ def add_menu_action(menu, text, callback, shortcut=None, tooltip=None, action_id
 
 
 def remove_menu_action(action_id):
+    _disown("action", action_id)
     _reg()["actions"].pop(action_id, None)
     w = main_window()
     if w is not None:
@@ -394,11 +470,13 @@ def add_overlay(overlay_id, fn):
     screen position of a 3D point. Call redraw() when your overlay needs to change.
     """
     _reg()["overlays"][overlay_id] = fn
+    _own("overlay", overlay_id)
     redraw()
     return overlay_id
 
 
 def remove_overlay(overlay_id):
+    _disown("overlay", overlay_id)
     _reg()["overlays"].pop(overlay_id, None)
     redraw()
 
@@ -428,10 +506,12 @@ def on(event, fn):
         raise ValueError(f"unknown event {event!r}, use one of {sorted(EVENTS)}")
     hid = _next_id("h")
     _reg()["events"][hid] = (event, fn)
+    _own("event", hid)
     return hid
 
 
 def off(handle):
+    _disown("event", handle)
     _reg()["events"].pop(handle, None)
 
 

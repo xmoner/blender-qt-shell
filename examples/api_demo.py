@@ -1,5 +1,5 @@
-"""Qt Shell API demo – run it in Blender (Text Editor ▸ Run Script, or the Qt Shell console:
-exec(open(r"path/to/api_demo.py").read())), or open it in the Qt Shell Text editor and press Alt+P.
+"""Qt Shell API demo – open it in the Qt Shell Text editor and press Alt+P (Run Script), or add it in
+the Scripts dock (Add File…) and click Run.
 
 It adds:
 - a dock "API Demo" with the active object and buttons that control the 3D view,
@@ -7,7 +7,9 @@ It adds:
 - an overlay that writes object names next to the objects in the viewport,
 - an event handler that updates the dock when the selection changes.
 
-Run remove_demo() to take everything away again.
+It follows Blender's add-on convention: register() adds everything, unregister() removes it.
+Qt Shell remembers what a script registered, so ■ Unload (Text editor or Scripts dock) removes it
+all – even without unregister(). Running the script again reloads it without duplicates.
 """
 import bpy
 import qt_shell.api as qs
@@ -65,7 +67,7 @@ def draw_names(painter, ctx):
             painter.drawText(p + QtCore.QPointF(8, -8), ob.name)
 
 
-def add_demo():
+def register():
     qs.add_dock("api_demo", "API Demo", make_dock, area="left")
     qs.add_menu_action("Tools", "Say Hello", lambda: qs.status("Hello from qt_shell.api!"),
                        shortcut="Ctrl+Alt+H", action_id="demo_hello")
@@ -76,7 +78,7 @@ def add_demo():
     _state["handlers"] = [qs.on("selection", _update_label), qs.on("frame", _update_label)]
 
 
-def remove_demo():
+def unregister():
     qs.remove_dock("api_demo")
     qs.remove_menu_action("demo_hello")
     qs.remove_menu_action("demo_print")
@@ -86,4 +88,8 @@ def remove_demo():
     _state["handlers"] = []
 
 
-add_demo()
+add_demo, remove_demo = register, unregister      # the names used by version 0.7
+
+
+if __name__ == "__main__":
+    register()

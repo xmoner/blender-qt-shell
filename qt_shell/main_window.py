@@ -16,6 +16,8 @@ from .outliner import Outliner
 from .properties import PropertiesEditor
 from .sidebar import Sidebar
 from .text_editor import TextEditor
+from .scripts_dock import ScriptsPanel
+from . import scripts
 from .qt_ui import LazyMenu, PopoverMenu
 from .timeline import Timeline
 from .viewport import Viewport
@@ -458,6 +460,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.uv_editor = UVEditor(hub)
         self.sidebar = Sidebar(hub)
         self.text_editor = TextEditor(hub)
+        self.scripts_panel = ScriptsPanel(hub)
         self.uv_editor.canvas.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self.docks = {}
         self._dock("outliner", "Outliner", self.outliner, QtCore.Qt.RightDockWidgetArea)
@@ -468,6 +471,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dock("node_editor", "Node editor", self.node_editor, QtCore.Qt.BottomDockWidgetArea)
         self._dock("uv_editor", "UV editor", self.uv_editor, QtCore.Qt.BottomDockWidgetArea)
         self._dock("text_editor", "Text editor", self.text_editor, QtCore.Qt.BottomDockWidgetArea)
+        self._dock("scripts", "Scripts", self.scripts_panel, QtCore.Qt.BottomDockWidgetArea)
         # 3D viewport sidebar (N panel): next to the viewport, hidden by default like in Blender
         self._dock("sidebar", "Sidebar", self.sidebar, QtCore.Qt.RightDockWidgetArea)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.docks["sidebar"], QtCore.Qt.Horizontal)
@@ -476,6 +480,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(self.docks["timeline"], self.docks["node_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["uv_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["text_editor"])
+        self.tabifyDockWidget(self.docks["timeline"], self.docks["scripts"])
         self.docks["timeline"].raise_()
         self.resizeDocks([self.docks["outliner"], self.docks["properties"]], [260, 560], QtCore.Qt.Vertical)
         self.resizeDocks([self.docks["properties"]], [400], QtCore.Qt.Horizontal)
@@ -515,6 +520,9 @@ class MainWindow(QtWidgets.QMainWindow):
             old = float(self._settings.value("size_factor", 1.0) or 1.0)
         except Exception:
             old = 1.0
+        # a layout saved before the Scripts dock existed: put it next to the Text editor
+        if not self.restoreDockWidget(self.docks["scripts"]):
+            self.tabifyDockWidget(self.docks["text_editor"], self.docks["scripts"])
         # a layout saved before the sidebar existed: give it its own full-height column
         sb = self.docks["sidebar"]
         if not self.restoreDockWidget(sb):
@@ -534,6 +542,14 @@ class MainWindow(QtWidgets.QMainWindow):
             api.apply_to_window(self)
         except Exception:
             bridge.log("Qt Shell API: " + __import__("traceback").format_exc(), "ERROR")
+        # auto-load scripts (files: once per session, texts of the .blend: once per file)
+        QtCore.QTimer.singleShot(0, self._scripts_startup)
+
+    def _scripts_startup(self):
+        try:
+            scripts.startup()
+        except Exception:
+            bridge.log("Scripts: " + __import__("traceback").format_exc(), "ERROR")
 
     # ------------------------------------------------------------ building the UI
     def _dock(self, key, title, widget, area):
@@ -1009,7 +1025,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           ("last_op", QtCore.Qt.LeftDockWidgetArea),
                           ("node_editor", QtCore.Qt.BottomDockWidgetArea),
                           ("uv_editor", QtCore.Qt.BottomDockWidgetArea),
-                          ("text_editor", QtCore.Qt.BottomDockWidgetArea)):
+                          ("text_editor", QtCore.Qt.BottomDockWidgetArea),
+                          ("scripts", QtCore.Qt.BottomDockWidgetArea)):
             d = self.docks[key]
             d.setFloating(False)
             self.addDockWidget(area, d)
@@ -1018,12 +1035,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(self.docks["timeline"], self.docks["node_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["uv_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["text_editor"])
+        self.tabifyDockWidget(self.docks["timeline"], self.docks["scripts"])
 
     def _on_log(self, msg, level):
         if level in ("ERROR", "WARNING"):
             self.statusBar().showMessage(msg.splitlines()[-1] if msg else msg, 6000)
 
     def _on_file_loaded(self):
+        try:
+            scripts.on_file_loaded()
+        except Exception:
+            bridge.log("Scripts: " + __import__("traceback").format_exc(), "ERROR")
         self._update_title()
         self._sync_shading()
         self.viewport.frame_all()

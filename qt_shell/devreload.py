@@ -4,7 +4,7 @@ import sys
 
 ORDER = ["bridge", "native", "theme", "fake_ui", "rna_widgets", "qt_ui", "editmesh", "viewport",
          "outliner", "properties", "sidebar", "timeline", "console", "node_editor", "uv_editor", "api",
-         "main_window", "app"]
+         "scripts", "text_editor", "scripts_dock", "main_window", "app"]
 
 
 def go(delay=0.3):

@@ -31,7 +31,8 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Number fields | Drag left/right to change the value like in Blender (the cursor is hidden and never hits the screen edge; Shift = fine, Ctrl = snap, Esc = cancel), click to type a value; also the Frame / Start / End fields in the timeline |
 | Interface size | **Window → Interface Size…**: *Interface scale* (50–300 %, buttons, fields, icons, spacing and text) and *Text size* (50–250 %, text only), presets 80–200 %, live preview; OK rebuilds the window and widens/narrows the side panels to match. Also in the add-on preferences. |
 | Playback | Space / ▶ in the timeline: frames are timed precisely and follow the scene *Sync* mode (Play Every Frame / Frame Dropping); the viewport shows the real `fps:` like Blender (red when below the scene rate). About 120 fps for a simple scene on Windows. |
-| Text editor | Blender's texts (`bpy.data.texts`, saved in the .blend): New / Open / Save / Save As, Python highlighting, line numbers, auto-indent, Tab / Shift+Tab, Ctrl+/ comment, Ctrl+F find, **Run Script (Alt+P)** – output and errors in the Console, the failing line is highlighted |
+| Text editor | Blender's texts (`bpy.data.texts`, saved in the .blend): New / Open / Save / Save As, Python highlighting, line numbers, auto-indent, Tab / Shift+Tab, Ctrl+/ comment, Ctrl+F find, **Run Script (Alt+P)** – output and errors in the Console, the failing line is highlighted; **Run Selection (Ctrl+Enter)** runs the selected lines / current line in the script's namespace (an expression prints its value); **■ Unload** |
+| Scripts (script manager) | **Scripts** dock (bottom tabs): the texts of the .blend and your own .py files with their state (*loaded · N items*, *ran*, *error*); ▶ Run / ⟳ Reload / ■ Unload / Unload All / Edit; **Auto-load** – a text runs when the .blend is opened (respects *Auto Run Python Scripts*), a file runs when Qt Shell starts. Qt Shell records what a script registers (Qt Shell API docks, menu items, overlays, events, `bpy` classes, `bpy.app.handlers`): Unload calls the script's `unregister()` and removes whatever is left, running a script again reloads it without duplicates |
 | Sidebar (N panel) | N over the viewport (or Window → Sidebar): Blender's and add-ons' VIEW_3D sidebar panels in tabs (Item, Tool, View, …); Item ▸ Transform is a Qt version of Blender's C panel |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
@@ -47,7 +48,7 @@ Most add-ons need nothing special: Qt Shell runs Blender's own UI code, so these
 - **menu entries** appended to Blender menus (`bpy.types.VIEW3D_MT_add.append(...)`, `TOPBAR_MT_file`, …),
 - **operators** (menus, F3 search, panel buttons).
 
-For things that only exist in Qt Shell, use the API (`API_VERSION = (1, 0)`):
+For things that only exist in Qt Shell, use the API (`API_VERSION = (1, 1)`):
 
 ```python
 import qt_shell.api as qs
@@ -84,9 +85,16 @@ qs.add_overlay("names", draw)
 qs.remove_overlay("names")
 
 # events: data, selection, frame(frame), mode(mode), file, undo, render,
-#         operator(idname, props, result), playback(playing), window(main_window)
+#         operator(idname, props, result), playback(playing), window(main_window),
+#         script(key, state)
 h = qs.on("frame", lambda frame: print("frame", frame))
 qs.off(h)
+
+# ownership – remove everything an add-on registered in one call
+with qs.owner("my_addon"):
+    qs.add_dock(...); qs.add_menu_action(...)
+qs.owned("my_addon")      # [('action', 'Tools/Say Hello'), ('dock', 'my_panel')]
+qs.cleanup("my_addon")    # e.g. in your add-on's unregister()
 ```
 
 Everything registered is kept when the Qt window is rebuilt (Interface Size, add-on reload) and can be
@@ -101,7 +109,29 @@ except ImportError:
     qs = None
 ```
 
-A complete example is in [`examples/api_demo.py`](examples/api_demo.py) – open it in the Text editor dock and press Alt+P.
+A complete example is [`examples/api_demo.py`](examples/api_demo.py) – open it in the Text editor dock and press Alt+P,
+then **■ Unload** to remove it again.
+
+### Scripts: run, unload, reload
+
+Write scripts like Blender add-ons – it keeps them easy to turn into an add-on later:
+
+```python
+def register():
+    ...            # register classes, handlers, Qt Shell docks / menus / overlays / events
+
+def unregister():
+    ...            # optional in Qt Shell – whatever is left is removed automatically
+
+if __name__ == "__main__":
+    register()
+```
+
+A script run by Qt Shell (Text editor, Scripts dock, auto-load) owns everything it registers. **■ Unload**
+calls its `unregister()` and then removes what is still registered; **Run** on a loaded script unloads it
+first, so editing and re-running never leaves duplicate menu items or handlers. Not tracked automatically:
+`bpy.app.timers`, keymaps and functions appended to Blender menus (`VIEW3D_MT_…append`) – remove those in
+`unregister()`.
 
 ## Tested
 
