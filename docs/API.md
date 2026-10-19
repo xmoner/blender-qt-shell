@@ -17,7 +17,7 @@ control the 3D views, draw over the viewport, react to events and show messages.
 5. [Menu items and shortcuts](#5-menu-items-and-shortcuts)
 6. [3D views](#6-3d-views)
 7. [Viewport layout (split views)](#7-viewport-layout-split-views)
-8. [Overlays (drawing over the viewport)](#8-overlays-drawing-over-the-viewport)
+8. [Overlays (drawing over the viewport)](#8-overlays-drawing-over-the-viewport) · [Buttons over the viewport](#buttons-over-the-viewport)
 9. [Events](#9-events)
 10. [Ownership and cleanup](#10-ownership-and-cleanup)
 11. [Scripts: run, reload, unload, auto-load](#11-scripts-run-reload-unload-auto-load)
@@ -299,6 +299,83 @@ qs.remove_overlay("names")
 
 The overlay is repainted when the view changes. If it shows something that changes on its own
 (a timer, external data), call `qs.redraw()`.
+
+
+### Buttons over the viewport
+
+An overlay only draws – it can't be clicked. For a clickable button in the 3D view, create a normal
+PySide widget with the **viewport as its parent**: it then floats over the view. The full script is
+[`examples/viewport_button.py`](../examples/viewport_button.py).
+
+```python
+import bpy
+import qt_shell.api as qs
+
+_buttons = []          # the Qt buttons we created (to remove them again)
+
+
+def add_cube():
+    """What the button does – runs inside Blender, bpy and bpy.ops work here."""
+    bpy.ops.mesh.primitive_cube_add(location=bpy.context.scene.cursor.location)
+    qs.status("Cube added")
+
+
+def _make_buttons(*_args):
+    _remove_buttons()
+    from PySide6 import QtWidgets
+    for vp in qs.viewports():                          # every visible 3D view
+        b = QtWidgets.QPushButton("+ Cube", vp)        # parent = the viewport -> it floats over it
+        b.setToolTip("Add a cube at the 3D cursor")
+        b.clicked.connect(add_cube)
+        b.move(10, 50)                                 # x, y from the top-left corner of the view
+        b.show()
+        _buttons.append(b)
+
+
+def _remove_buttons():
+    for b in _buttons:
+        try:
+            b.deleteLater()
+        except RuntimeError:                           # already deleted with its viewport
+            pass
+    _buttons.clear()
+
+
+def register():
+    _make_buttons()
+    qs.on("window", _make_buttons)    # the Qt window was rebuilt (Interface Size…) -> add them again
+
+
+def unregister():
+    _remove_buttons()
+
+
+if __name__ == "__main__":
+    register()
+```
+
+How it works:
+
+- `qs.viewports()` returns the visible 3D views; the button is created as their child, so it is shown on
+  top of the view and moves with it.
+- The button's `clicked` handler runs inside Blender's context, so `bpy` and `bpy.ops` work in it.
+- The Qt window is rebuilt e.g. after *Window → Interface Size*; the `"window"` event creates the buttons
+  again.
+- **■ Unload** removes the `"window"` handler automatically and calls `unregister()`, which deletes the
+  buttons (Qt widgets you create yourself are not tracked, so remove them in `unregister()`).
+
+Adapt it:
+
+| What | Where |
+|---|---|
+| Text of the button | `QPushButton("+ Cube", vp)` |
+| What it does | the body of `add_cube()` – e.g. `bpy.ops.object.shade_smooth()` or `qs.set_viewport_layout("quad")` |
+| Position | `b.move(10, 50)` – pixels from the top-left corner of the view |
+| More buttons | create another `QPushButton` in `_make_buttons()`, e.g. at `move(10, 85)` |
+
+> The buttons are added to the views that are visible when the script runs. After switching the
+> layout (e.g. to Four Views) run the script again. For buttons in a panel *next to* the viewport, use a
+> [dock](#4-docks-panels) instead.
 
 ---
 
