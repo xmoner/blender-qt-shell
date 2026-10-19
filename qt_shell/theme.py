@@ -79,7 +79,14 @@ QToolButton#qtshell_panel_header {{ background: transparent; border: none; font-
     text-align: left; padding: {p(3)}px; }}
 QToolButton#qtshell_panel_header:hover {{ background: rgba(109, 154, 212, 70); border: none; }}
 QCheckBox:hover, QRadioButton:hover {{ background: rgba(109, 154, 212, 55); border-radius: {p(3)}px; }}
+QMenuBar::item {{ padding: {p(3)}px {p(8)}px; background: transparent; border-radius: {p(3)}px; }}
 QMenuBar::item:selected {{ background: {HOVER['bg']}; }}
+QMenuBar::item:pressed {{ background: {HOVER['press_bg']}; }}
+QMenu {{ background: {C['alt']}; border: 1px solid {C['border']}; }}
+QMenu::item {{ border: 1px solid transparent; border-radius: {p(3)}px; margin: 0px {p(2)}px; }}
+QMenu::item:selected {{ background: {HOVER['bg']}; border: 1px solid {HOVER['border']}; color: #ffffff; }}
+QMenu::item:disabled {{ color: {C['dim']}; }}
+QMenu::item:disabled:selected {{ background: transparent; border: 1px solid transparent; }}
 QTreeView::item:hover:!selected, QListView::item:hover:!selected {{ background: rgba(109, 154, 212, 60); }}
 QTabBar::tab:hover:!selected {{ background: {HOVER['bg']}; }}
 QTabWidget::pane {{ border: none; }}
