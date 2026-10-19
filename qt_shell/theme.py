@@ -24,6 +24,13 @@ def hover_qss(sel="QToolButton, QPushButton"):
             f"{chk} {{ background: {h['checked_hover']}; }}\n")
 
 
+def field_hover_qss():
+    """Hover for fields (numbers, text, drop-downs): light blue frame, slightly lighter background."""
+    h = HOVER
+    return (f"QAbstractSpinBox:hover, QLineEdit:hover, QComboBox:hover {{ background: #5b6470; "
+            f"border: 1px solid {h['border']}; }}\n")
+
+
 # Interface size (set from the add-on preferences / Window → Interface Size…)
 ui_scale = 1.0      # buttons, fields, spacing, icons and text
 font_scale = 1.0    # extra multiplier for text only
@@ -62,7 +69,7 @@ QAbstractSpinBox, QLineEdit, QComboBox {{ background: #545454; border: 1px solid
     border-radius: {p(4)}px; padding: {p(2)}px {p(4)}px; min-height: {p(18)}px; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0px; border: none; }}
 QAbstractSpinBox::up-arrow, QAbstractSpinBox::down-arrow {{ width: 0px; height: 0px; }}
-QAbstractSpinBox:focus, QLineEdit:focus {{ background: #222; }}
+{field_hover_qss()}QAbstractSpinBox:focus, QLineEdit:focus {{ background: #222; border: 1px solid {HOVER['border']}; }}
 QComboBox QAbstractItemView {{ background: {C['alt']}; selection-background-color: {C['highlight']}; }}
 QCheckBox::indicator {{ width: {p(13)}px; height: {p(13)}px; }}
 QGroupBox {{ border: 1px solid {C['border']}; border-radius: {p(5)}px; margin-top: {p(6)}px; }}
@@ -70,7 +77,10 @@ QFrame#qtshell_panel {{ background: #303030; border: 1px solid {C['border']}; bo
 QFrame#qtshell_box {{ background: #2a2a2a; border: 1px solid #202020; border-radius: {p(4)}px; }}
 QToolButton#qtshell_panel_header {{ background: transparent; border: none; font-weight: bold;
     text-align: left; padding: {p(3)}px; }}
-QToolButton#qtshell_panel_header:hover {{ background: rgba(109, 154, 212, 45); border: none; }}
+QToolButton#qtshell_panel_header:hover {{ background: rgba(109, 154, 212, 70); border: none; }}
+QCheckBox:hover, QRadioButton:hover {{ background: rgba(109, 154, 212, 55); border-radius: {p(3)}px; }}
+QMenuBar::item:selected {{ background: {HOVER['bg']}; }}
+QTreeView::item:hover:!selected, QListView::item:hover:!selected {{ background: rgba(109, 154, 212, 60); }}
 QTabBar::tab:hover:!selected {{ background: {HOVER['bg']}; }}
 QTabWidget::pane {{ border: none; }}
 QTabBar::tab {{ background: {C['alt']}; padding: {p(6)}px; border: none; }}
