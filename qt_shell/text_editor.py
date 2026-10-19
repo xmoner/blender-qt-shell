@@ -3,17 +3,18 @@
 Works on Blender's text datablocks (bpy.data.texts), so the texts are saved in the .blend file and
 shared with Blender's own Text Editor. Python syntax highlighting, line numbers, auto-indent,
 Tab / Shift+Tab indentation, Ctrl+/ comments, Ctrl+F search, Run Script (Alt+P) and
-Run Selection (Ctrl+Enter). Scripts are run through the script manager (scripts.py), so running a
+Run Selection (Ctrl+Enter), auto-completion (Ctrl+Space; automatic after "." and while typing). Scripts are run through the script manager (scripts.py), so running a
 script again replaces its previous run and Unload removes everything it registered.
 """
 import keyword
 import os
 import re
+import sys
 
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import scripts, theme
+from . import completion, scripts, theme
 
 INDENT = "    "
 
@@ -113,7 +114,8 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
     # keys that belong to the editor even though the main window has shortcuts for them
     # (Ctrl+S saves the text, not the .blend; Ctrl+Z is the editor's undo; Space types a space…)
     _OWN_KEYS = {("S", "C"), ("F", "C"), ("P", "A"), ("Slash", "C"), ("Z", "C"), ("Y", "C"),
-                 ("Z", "CS"), ("Space", ""), ("Tab", ""), ("Backtab", "S"), ("Return", ""), ("Return", "C"), ("Delete", "")}
+                 ("Z", "CS"), ("Space", ""), ("Tab", ""), ("Backtab", "S"), ("Return", ""), ("Return", "C"), ("Delete", ""),
+                 ("Space", "C")}
     save_requested = QtCore.Signal()
     run_requested = QtCore.Signal()
     run_selection_requested = QtCore.Signal()
@@ -137,6 +139,20 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         self._error_line = None
         self._update_margin()
         self._highlight_line()
+        # auto-completion
+        self.completion_namespace = None   # fn() -> dict of names, set by the TextEditor
+        self.auto_complete = True          # popup automatically after "." and while typing
+        self._completer = QtWidgets.QCompleter(self)
+        self._completer.setWidget(self)
+        self._completer.setCompletionMode(QtWidgets.QCompleter.PopupCompletion)
+        self._completer.setCaseSensitivity(QtCore.Qt.CaseInsensitive)
+        self._completer.setMaxVisibleItems(12)
+        self._cmodel = QtGui.QStandardItemModel(self._completer)
+        self._completer.setModel(self._cmodel)
+        self._completer.setCompletionRole(QtCore.Qt.UserRole)   # the name; the label may add "()"
+        self._completer.activated[str].connect(self._insert_completion)
+        self._completer.popup().setFont(font)
+        self._clist_key = None
 
     # --- line numbers
     def line_number_width(self):
@@ -225,6 +241,104 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         return super().event(ev)
 
     def keyPressEvent(self, ev):
+        k = ev.key()
+        ctrl = bool(ev.modifiers() & QtCore.Qt.ControlModifier)
+        popup = self._completer.popup()
+        if popup.isVisible():
+            if k in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Tab) and not ctrl:
+                idx = popup.currentIndex()
+                if not idx.isValid():
+                    idx = self._completer.completionModel().index(0, 0)
+                if idx.isValid():
+                    self._insert_completion(idx.data(QtCore.Qt.UserRole))
+                popup.hide()
+                return
+            if k == QtCore.Qt.Key_Escape:
+                popup.hide()
+                return
+        if ctrl and k == QtCore.Qt.Key_Space:
+            self.complete(manual=True)
+            return
+        self._key_press(ev)
+        self._after_key(ev)
+
+    # --- auto-completion
+    def _after_key(self, ev):
+        k = ev.key()
+        text = ev.text()
+        popup = self._completer.popup()
+        if popup.isVisible():
+            if text or k in (QtCore.Qt.Key_Backspace, QtCore.Qt.Key_Delete):
+                self.complete(manual=False, refresh=True)
+            elif k in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right, QtCore.Qt.Key_Home, QtCore.Qt.Key_End):
+                popup.hide()
+            return
+        if not self.auto_complete or not text:
+            return
+        if text == "." or text.isalnum() or text == "_":
+            self.complete(manual=False)
+
+    def _line_before(self):
+        c = self.textCursor()
+        return c.block().text()[:c.positionInBlock()]
+
+    def complete(self, manual=False, refresh=False):
+        """Shows the completion popup for the word before the cursor."""
+        popup = self._completer.popup()
+        before = self._line_before()
+        if completion.in_string_or_comment(before):
+            popup.hide()
+            return
+        base, prefix = completion.split(before)
+        if not manual and not refresh and base is None and len(prefix) < 3:
+            return
+        if base is None and not prefix and not manual:
+            popup.hide()
+            return
+        try:
+            ns = self.completion_namespace() if self.completion_namespace else {}
+        except Exception:
+            ns = {}
+        try:
+            items = completion.candidates(base, "", ns, self.toPlainText()) if base is not None else \
+                completion.candidates(None, prefix[:1], ns, self.toPlainText())
+        except Exception:
+            items = []
+        if base is None and prefix:
+            # the word being typed is in the document too – don't offer it unless it is used elsewhere
+            if len(re.findall(rf"\b{re.escape(prefix)}\b", self.toPlainText())) <= 1:
+                items = [it for it in items if it[0] != prefix]
+        key = (base, tuple(items))
+        if key != self._clist_key:
+            self._clist_key = key
+            self._cmodel.clear()
+            for name, is_call in items:
+                it = QtGui.QStandardItem(name + ("()" if is_call else ""))
+                it.setData(name, QtCore.Qt.UserRole)
+                it.setToolTip("function / method" if is_call else "")
+                self._cmodel.appendRow(it)
+        self._completer.setCompletionPrefix(prefix)
+        cm = self._completer.completionModel()
+        n = cm.rowCount()
+        if n == 0 or (n == 1 and not manual and cm.index(0, 0).data(QtCore.Qt.UserRole) == prefix):
+            popup.hide()
+            return
+        rect = self.cursorRect()
+        rect.translate(self.viewport().geometry().topLeft())
+        rect.setWidth(popup.sizeHintForColumn(0) + popup.verticalScrollBar().sizeHint().width() + 12)
+        self._completer.complete(rect)
+        popup.setCurrentIndex(cm.index(0, 0))
+
+    def _insert_completion(self, name):
+        if not name:
+            return
+        prefix = self._completer.completionPrefix()
+        c = self.textCursor()
+        c.movePosition(QtGui.QTextCursor.Left, QtGui.QTextCursor.KeepAnchor, len(prefix))
+        c.insertText(name)
+        self.setTextCursor(c)
+
+    def _key_press(self, ev):
         k = ev.key()
         mods = ev.modifiers()
         ctrl = bool(mods & QtCore.Qt.ControlModifier)
@@ -352,6 +466,10 @@ class TextEditor(QtWidgets.QWidget):
         tool("Save As…", "Save the text to a new file", self.save_as)
         tool("✕", "Delete this text from the .blend file", self.delete_text)
         bar.addStretch(1)
+        self.ac_check = QtWidgets.QCheckBox("Auto-complete")
+        self.ac_check.setToolTip("Suggest names automatically after \".\" and while typing.\n"
+                                 "Ctrl+Space shows the suggestions any time.")
+        bar.addWidget(self.ac_check)
         self.state_lab = QtWidgets.QLabel()
         bar.addWidget(self.state_lab)
         tool("Run Selection", "Run the selected lines, or the current line, in the script's namespace "
@@ -364,6 +482,11 @@ class TextEditor(QtWidgets.QWidget):
         lay.addLayout(bar)
 
         self.editor = CodeEditor()
+        self.editor.completion_namespace = self._completion_namespace
+        settings = QtCore.QSettings("QtShell", "QtShell")
+        self.editor.auto_complete = str(settings.value("text_editor/autocomplete", "true")).lower() == "true"
+        self.ac_check.setChecked(self.editor.auto_complete)
+        self.ac_check.toggled.connect(self._set_auto_complete)
         self.editor.save_requested.connect(self.save)
         self.editor.run_requested.connect(self.run_script)
         self.editor.run_selection_requested.connect(self.run_selection)
@@ -409,6 +532,26 @@ class TextEditor(QtWidgets.QWidget):
         self._scripts_version = None
         hub.file_loaded.connect(lambda: (setattr(self, "_name", None), self.refresh_list()))
         self.refresh_list()
+
+    # --- auto-completion
+    def _set_auto_complete(self, on):
+        self.editor.auto_complete = bool(on)
+        QtCore.QSettings("QtShell", "QtShell").setValue("text_editor/autocomplete", "true" if on else "false")
+
+    def _completion_namespace(self):
+        """Names for auto-completion: bpy, C, D, common Blender modules, the script's own namespace
+        (after it has run) and the modules imported by the text."""
+        ns = {"bpy": bpy, "C": bpy.context, "D": bpy.data}
+        for name in ("mathutils", "bmesh", "math", "gpu", "bpy_extras"):
+            mod = sys.modules.get(name)
+            if mod is not None:
+                ns[name] = mod
+        key = self._key()
+        loaded = scripts._state()["loaded"].get(key) if key else None
+        if loaded is not None:
+            ns.update({k: v for k, v in loaded["ns"].items() if not k.startswith("__")})
+        ns.update(completion.imports_namespace(self.editor.toPlainText()))
+        return ns
 
     # --- texts
     def _text(self):

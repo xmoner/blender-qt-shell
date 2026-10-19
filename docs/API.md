@@ -3,7 +3,7 @@
 `qt_shell.api` lets scripts and add-ons extend the Qt Shell window: add dockable panels and menu items,
 control the 3D views, draw over the viewport, react to events and show messages.
 
-- **API version:** `1.2` (`qt_shell.api.API_VERSION == (1, 2)`), Qt Shell 0.9.1
+- **API version:** `1.2` (`qt_shell.api.API_VERSION == (1, 2)`), Qt Shell 0.9.2
 - **Requires:** Blender 4.2+, PySide6 (installed from the add-on preferences)
 
 ---
@@ -41,7 +41,7 @@ Where to run it:
 | Where | How |
 |---|---|
 | **Console** (bottom tabs) | Type a line, press Enter. Good for trying things out. |
-| **Text editor** (bottom tabs) | `+ New`, write a script, **▶ Run Script** (Alt+P). **Ctrl+Enter** runs the selected lines / the current line. |
+| **Text editor** (bottom tabs) | `+ New`, write a script, **▶ Run Script** (Alt+P). **Ctrl+Enter** runs the selected lines / the current line. Names are suggested after `.` (e.g. `qs.` lists this API) – **Ctrl+Space** shows suggestions any time. |
 | **On startup** | See [Auto-load](#auto-load). |
 | **From an add-on** | See [section 12](#12-using-the-api-from-an-add-on). |
 
