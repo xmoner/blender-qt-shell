@@ -626,7 +626,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _viewport_header(self):
         bar = QtWidgets.QWidget()
-        bar.setStyleSheet("background:#303030;")
+        bar.setStyleSheet("QWidget { background: #303030; }\n" + theme.hover_qss())
         lay = QtWidgets.QHBoxLayout(bar)
         lay.setContentsMargins(4, 3, 4, 3)
         lay.setSpacing(3)

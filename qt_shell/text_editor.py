@@ -478,7 +478,10 @@ class TextEditor(QtWidgets.QWidget):
                                "registered (menus, docks, overlays, handlers, classes)", self.unload_script)
         self.run_btn = tool("▶ Run Script", "Run the text as a Python script (Alt+P). "
                             "If it is already loaded, it is unloaded first.", self.run_script)
-        self.run_btn.setStyleSheet("QToolButton{background:#3d6b3d;}")
+        self.run_btn.setStyleSheet(
+            "QToolButton{background:#3d6b3d;} "
+            "QToolButton:hover{background:#4f8f4f; border:1px solid #8fd08f;} "
+            "QToolButton:pressed{background:#62a862; border:1px solid #b0e8b0;}")
         lay.addLayout(bar)
 
         self.editor = CodeEditor()

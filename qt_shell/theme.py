@@ -7,6 +7,23 @@ C = {
     "border": "#151515", "header": "#303030", "viewport": "#3d3d3d",
 }
 
+# buttons "light up" light blue under the mouse and when pressed
+HOVER = {"bg": "#46658c", "border": "#6d9ad4", "press_bg": "#5b84b8", "press_border": "#9cc3f0",
+         "checked_hover": "#5683c4"}
+
+
+def hover_qss(sel="QToolButton, QPushButton"):
+    """Hover / pressed rules for buttons – add them to widget style sheets that set a button
+    background, otherwise those would hide the effect."""
+    h = HOVER
+    hov = ", ".join(f"{s.strip()}:hover" for s in sel.split(","))
+    prs = ", ".join(f"{s.strip()}:pressed" for s in sel.split(","))
+    chk = ", ".join(f"{s.strip()}:checked:hover" for s in sel.split(","))
+    return (f"{hov} {{ background: {h['bg']}; border: 1px solid {h['border']}; }}\n"
+            f"{prs} {{ background: {h['press_bg']}; border: 1px solid {h['press_border']}; }}\n"
+            f"{chk} {{ background: {h['checked_hover']}; }}\n")
+
+
 # Interface size (set from the add-on preferences / Window → Interface Size…)
 ui_scale = 1.0      # buttons, fields, spacing, icons and text
 font_scale = 1.0    # extra multiplier for text only
@@ -39,9 +56,8 @@ QMainWindow::separator {{ background: {C['border']}; width: {p(3)}px; height: {p
 QDockWidget::title {{ background: {C['header']}; padding: {p(4)}px {p(6)}px; }}
 QToolButton, QPushButton {{ background: {C['button']}; border: 1px solid {C['border']};
     border-radius: {p(4)}px; padding: {p(3)}px {p(8)}px; }}
-QToolButton:hover, QPushButton:hover {{ background: #474747; }}
 QToolButton:checked, QPushButton:checked {{ background: {C['highlight']}; }}
-QAbstractButton {{ qproperty-iconSize: {icon}px {icon}px; }}
+{hover_qss()}QAbstractButton {{ qproperty-iconSize: {icon}px {icon}px; }}
 QAbstractSpinBox, QLineEdit, QComboBox {{ background: #545454; border: 1px solid {C['border']};
     border-radius: {p(4)}px; padding: {p(2)}px {p(4)}px; min-height: {p(18)}px; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ width: 0px; border: none; }}
@@ -54,6 +70,8 @@ QFrame#qtshell_panel {{ background: #303030; border: 1px solid {C['border']}; bo
 QFrame#qtshell_box {{ background: #2a2a2a; border: 1px solid #202020; border-radius: {p(4)}px; }}
 QToolButton#qtshell_panel_header {{ background: transparent; border: none; font-weight: bold;
     text-align: left; padding: {p(3)}px; }}
+QToolButton#qtshell_panel_header:hover {{ background: rgba(109, 154, 212, 45); border: none; }}
+QTabBar::tab:hover:!selected {{ background: {HOVER['bg']}; }}
 QTabWidget::pane {{ border: none; }}
 QTabBar::tab {{ background: {C['alt']}; padding: {p(6)}px; border: none; }}
 QTabBar::tab:selected {{ background: {C['highlight']}; }}

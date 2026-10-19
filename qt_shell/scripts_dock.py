@@ -39,7 +39,10 @@ class ScriptsPanel(QtWidgets.QWidget):
             return b
 
         self.run_btn = tool("▶ Run", "Run the script; a loaded script is unloaded first (= Reload)", self.run)
-        self.run_btn.setStyleSheet("QToolButton{background:#3d6b3d;}")
+        self.run_btn.setStyleSheet(
+            "QToolButton{background:#3d6b3d;} "
+            "QToolButton:hover{background:#4f8f4f; border:1px solid #8fd08f;} "
+            "QToolButton:pressed{background:#62a862; border:1px solid #b0e8b0;}")
         self.unload_btn = tool("■ Unload", "Call unregister() and remove everything the script registered",
                                self.unload)
         self.edit_btn = tool("Edit", "Open in the Text editor (double-click)", self.edit)
