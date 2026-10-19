@@ -45,6 +45,8 @@ You can bring it back at any time with **Window → Show Blender Window**.
 
 **Full reference: [`docs/API.md`](docs/API.md)** – every function, event and example.
 
+Development notes, status and open issues: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+
 Most add-ons need nothing special: Qt Shell runs Blender's own UI code, so these appear in Qt automatically:
 
 - **Properties editor panels** (`bl_space_type = 'PROPERTIES'`),
