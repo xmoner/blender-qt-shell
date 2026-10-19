@@ -34,6 +34,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Text editor | Blender's texts (`bpy.data.texts`, saved in the .blend): New / Open / Save / Save As, Python highlighting, line numbers, auto-indent, Tab / Shift+Tab, Ctrl+/ comment, Ctrl+F find, **Run Script (Alt+P)** – output and errors in the Console, the failing line is highlighted; **Run Selection (Ctrl+Enter)** runs the selected lines / current line in the script's namespace (an expression prints its value); **■ Unload** |
 | Scripts (script manager) | Run / ⟳ Reload / ■ Unload in the Text editor; **Auto-load** – a text with the custom property `qtshell_autoload` runs when the .blend is opened (respects *Auto Run Python Scripts*). The **Scripts** dock (list of scripts, Auto-load checkboxes) is temporarily disabled – it crashed Blender on Windows when the window was shown. Qt Shell records what a script registers (Qt Shell API docks, menu items, overlays, events, `bpy` classes, `bpy.app.handlers`): Unload calls the script's `unregister()` and removes whatever is left, running a script again reloads it without duplicates |
 | Split viewport | **▦ Layout** in the viewport header or *View → Viewport Layout*: Single View, Two Views Side by Side, Two Views Stacked, **Four Views** (Top / Perspective / Front / Right, **Ctrl+Alt+Q** like the Quad View in Blender). Each view has its own camera and navigation, the dividers can be dragged, the view under the mouse is active (blue frame) and gets the keys, header and menu commands; moving objects updates all views live. The layout is remembered. |
+| Status history | Click the status bar or 🕘 at its right end: the last 200 status messages of the session with their time (Copy / Clear). Every message is also written to the Console in grey. From scripts: `qs.status_history()`. |
 | Sidebar (N panel) | N over the viewport (or Window → Sidebar): Blender's and add-ons' VIEW_3D sidebar panels in tabs (Item, Tool, View, …); Item ▸ Transform is a Qt version of Blender's C panel |
 | Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
@@ -56,6 +57,7 @@ import qt_shell.api as qs
 
 qs.is_running()                       # True when the Qt window exists
 qs.status("Done", timeout_ms=4000)    # status bar message
+qs.status_history()                   # [('19:25:59', 'Done'), …] – also: click the status bar
 
 # dockable panel – the factory is called on every window (re)build
 def make_panel():

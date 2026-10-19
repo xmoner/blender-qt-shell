@@ -34,7 +34,7 @@ __all__ = [
     "add_dock", "remove_dock", "add_menu_action", "remove_menu_action",
     "get_view", "set_view", "frame_all", "frame_selected", "redraw",
     "view_matrix", "projection_matrix", "project", "viewport_size",
-    "viewport_layout", "set_viewport_layout", "viewports",
+    "viewport_layout", "set_viewport_layout", "viewports", "status_history",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
     "owner", "current_owner", "cleanup", "owned",
 ]
@@ -176,6 +176,11 @@ def viewport():
     attributes where possible – those are not part of the stable API."""
     w = main_window()
     return getattr(w, "viewport", None) if w is not None else None
+
+
+def status_history():
+    """The status bar messages of this Blender session: [(time 'HH:MM:SS', text), …], newest last."""
+    return [(stamp, msg) for stamp, msg, _t in state_store("status").get("history", ())]
 
 
 def viewports():

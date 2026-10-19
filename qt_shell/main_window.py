@@ -1,6 +1,7 @@
 """Qt Shell main window: menus, docks, viewport, render, last operation, search."""
 import math
 import os
+import time
 import tempfile
 
 import bpy
@@ -429,6 +430,59 @@ class InterfaceSizeDialog(QtWidgets.QDialog):
 
 
 # ---------------------------------------------------------------- main window
+def status_history():
+    """Messages shown in the status bar: deque of (time 'HH:MM:SS', text, timestamp), newest last.
+    Kept for the whole Blender session (survives rebuilding the window)."""
+    from collections import deque
+    st = api.state_store("status")
+    h = st.get("history")
+    if not isinstance(h, deque):
+        h = st["history"] = deque(maxlen=200)
+    return h
+
+
+class StatusHistoryDialog(QtWidgets.QDialog):
+    """List of the status bar messages, newest first."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Status History")
+        self.resize(theme.px(560), theme.px(360))
+        lay = QtWidgets.QVBoxLayout(self)
+        self.list = QtWidgets.QListWidget(self)
+        self.list.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.list.setWordWrap(True)
+        lay.addWidget(self.list, 1)
+        row = QtWidgets.QHBoxLayout()
+        lay.addLayout(row)
+        info = QtWidgets.QLabel("Newest first · the last 200 messages of this Blender session", self)
+        info.setProperty("dim", True)
+        row.addWidget(info, 1)
+        copy = QtWidgets.QPushButton("Copy", self)
+        copy.setToolTip("Copy the selected messages (all when nothing is selected)")
+        copy.clicked.connect(self.copy)
+        row.addWidget(copy)
+        clear = QtWidgets.QPushButton("Clear", self)
+        clear.clicked.connect(self.clear)
+        row.addWidget(clear)
+        close = QtWidgets.QPushButton("Close", self)
+        close.clicked.connect(self.close)
+        row.addWidget(close)
+
+    def refresh(self):
+        self.list.clear()
+        for stamp, msg, _t in reversed(status_history()):
+            self.list.addItem(f"{stamp}   {msg}")
+
+    def copy(self):
+        items = self.list.selectedItems() or [self.list.item(i) for i in range(self.list.count())]
+        QtWidgets.QApplication.clipboard().setText("\n".join(it.text() for it in items))
+
+    def clear(self):
+        status_history().clear()
+        self.refresh()
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, hub):
         super().__init__()
@@ -485,8 +539,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.render_window = RenderWindow(self)
         self._build_menus()
         self._build_shortcuts()
-        self.status_right = QtWidgets.QLabel()
+        self.status_right = QtWidgets.QLabel(self.statusBar())
         self.statusBar().addPermanentWidget(self.status_right)
+        # status history: every message is kept (newest 200) and also written to the Console
+        self._last_log_line = None
+        hist_btn = QtWidgets.QToolButton(self.statusBar())
+        hist_btn.setText("🕘")
+        hist_btn.setAutoRaise(True)
+        hist_btn.setToolTip("Status history (or click the status bar)")
+        hist_btn.clicked.connect(self.show_status_history)
+        self.statusBar().addPermanentWidget(hist_btn)
+        self.statusBar().messageChanged.connect(self._on_status_message)
+        self.statusBar().installEventFilter(self)
+        self._status_dialog = None
 
         # hooks in bridge
         bridge.file_dialog_hook = self.file_dialog
@@ -1068,7 +1133,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_log(self, msg, level):
         if level in ("ERROR", "WARNING"):
-            self.statusBar().showMessage(msg.splitlines()[-1] if msg else msg, 6000)
+            line = msg.splitlines()[-1] if msg else msg
+            self._last_log_line = line          # already in the Console as a log message
+            self.statusBar().showMessage(line, 6000)
+
+    # ------------------------------------------------------------ status history
+    def _on_status_message(self, msg):
+        if not msg:
+            return                               # the message timed out / was cleared
+        hist = status_history()
+        stamp = time.strftime("%H:%M:%S")
+        if hist and hist[-1][1] == msg and time.time() - hist[-1][2] < 0.5:
+            return                               # the same message set twice in a row
+        hist.append((stamp, msg, time.time()))
+        if msg != self._last_log_line:
+            try:
+                self.console.write(f"[status {stamp}] {msg}\n", "#8a8a8a")
+            except Exception:
+                pass
+        self._last_log_line = None
+        if self._status_dialog is not None and self._status_dialog.isVisible():
+            self._status_dialog.refresh()
+
+    def show_status_history(self):
+        if self._status_dialog is None:
+            self._status_dialog = StatusHistoryDialog(self)
+        self._status_dialog.refresh()
+        self._status_dialog.show()
+        self._status_dialog.raise_()
+        self._status_dialog.activateWindow()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.statusBar() and ev.type() == QtCore.QEvent.MouseButtonRelease \
+                and ev.button() == QtCore.Qt.LeftButton:
+            self.show_status_history()
+            return True
+        return super().eventFilter(obj, ev)
 
     def _on_file_loaded(self):
         try:
