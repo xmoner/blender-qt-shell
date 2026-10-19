@@ -1,0 +1,564 @@
+# Qt Shell – Python API reference
+
+`qt_shell.api` lets scripts and add-ons extend the Qt Shell window: add dockable panels and menu items,
+control the 3D views, draw over the viewport, react to events and show messages.
+
+- **API version:** `1.2` (`qt_shell.api.API_VERSION == (1, 2)`), Qt Shell 0.9.1
+- **Requires:** Blender 4.2+, PySide6 (installed from the add-on preferences)
+
+---
+
+## Contents
+
+1. [Getting started](#1-getting-started)
+2. [Basics: threads, context, errors](#2-basics-threads-context-errors)
+3. [Window and status bar](#3-window-and-status-bar)
+4. [Docks (panels)](#4-docks-panels)
+5. [Menu items and shortcuts](#5-menu-items-and-shortcuts)
+6. [3D views](#6-3d-views)
+7. [Viewport layout (split views)](#7-viewport-layout-split-views)
+8. [Overlays (drawing over the viewport)](#8-overlays-drawing-over-the-viewport)
+9. [Events](#9-events)
+10. [Ownership and cleanup](#10-ownership-and-cleanup)
+11. [Scripts: run, reload, unload, auto-load](#11-scripts-run-reload-unload-auto-load)
+12. [Using the API from an add-on](#12-using-the-api-from-an-add-on)
+13. [Complete example](#13-complete-example)
+14. [Version history](#14-version-history)
+
+---
+
+## 1. Getting started
+
+```python
+import qt_shell.api as qs
+
+qs.set_viewport_layout("quad")      # four views
+qs.status("Hello from my script")   # message in the status bar
+```
+
+Where to run it:
+
+| Where | How |
+|---|---|
+| **Console** (bottom tabs) | Type a line, press Enter. Good for trying things out. |
+| **Text editor** (bottom tabs) | `+ New`, write a script, **▶ Run Script** (Alt+P). **Ctrl+Enter** runs the selected lines / the current line. |
+| **On startup** | See [Auto-load](#auto-load). |
+| **From an add-on** | See [section 12](#12-using-the-api-from-an-add-on). |
+
+`bpy` is Blender itself (objects, materials, animation, operators). `qs` is the Qt Shell window
+(panels, menus, views, status bar). Most scripts use both.
+
+---
+
+## 2. Basics: threads, context, errors
+
+- **Main thread, valid context.** Every callback you give to the API (dock factories, menu actions,
+  overlays, event handlers) runs on Blender's main thread with a valid context, so `bpy.context` and
+  `bpy.ops` work inside it.
+- **Errors don't break the UI.** An exception in a callback is caught and written to the Console and
+  to `%TEMP%\qtshell.log` (Windows) / `$TMPDIR/qtshell.log`. A failing **overlay** is removed after its
+  first error, so it does not flood the log on every repaint.
+- **Registrations persist.** Docks, menu items, overlays and event handlers are kept in a registry
+  that lives for the whole Blender session. When the Qt window is rebuilt (Interface Size, add-on
+  reload) they are installed again automatically. They also survive opening another .blend file.
+- **Register any time.** You can register before Qt Shell is started; everything is applied when the
+  window opens.
+- **No PySide6 needed to import.** `import qt_shell.api` works even when PySide6 is missing –
+  `is_running()` is then `False`. Import PySide6 only inside your callbacks.
+- **IDs.** Functions that take an id (`dock_id`, `action_id`, `overlay_id`) replace an existing item with
+  the same id, so running a script twice does not create duplicates.
+
+---
+
+## 3. Window and status bar
+
+### `is_running() -> bool`
+`True` when the Qt Shell window exists.
+
+### `main_window() -> QMainWindow | None`
+The Qt main window. Useful as a parent for your own dialogs. Its attributes are **not** part of the
+stable API.
+
+```python
+from PySide6 import QtWidgets
+QtWidgets.QMessageBox.information(qs.main_window(), "Info", "Done")
+```
+
+### `status(text, timeout_ms=4000)`
+Shows `text` in the status bar at the bottom of the window.
+
+| Parameter | Description |
+|---|---|
+| `text` | Message (converted with `str()`). |
+| `timeout_ms` | How long it stays, in milliseconds. `0` = until the next message replaces it. |
+
+Every message is also written to the Console (grey) and kept in the status history.
+
+### `status_history() -> list[tuple[str, str]]`
+The status bar messages of this Blender session, `[("19:25:59", "text"), …]`, newest **last**, at most 200.
+In the UI: click the status bar or the 🕘 button at its right end.
+
+---
+
+## 4. Docks (panels)
+
+### `add_dock(dock_id, title, factory, area="right", visible=True) -> str`
+Adds a dockable panel. It also appears in the **Window** menu, so the user can show/hide it.
+
+| Parameter | Description |
+|---|---|
+| `dock_id` | Unique id (string). Calling again with the same id replaces the dock. |
+| `title` | Title of the dock. |
+| `factory` | `fn() -> QWidget`. Called every time the Qt window is built – it must create a **new** widget each time. |
+| `area` | `"left"`, `"right"`, `"bottom"` or `"top"` – where it appears the first time. The position the user drags it to is remembered. |
+| `visible` | Shown the first time (later the saved state wins). |
+
+Returns `dock_id`.
+
+### `remove_dock(dock_id)`
+Removes the dock.
+
+```python
+def make_panel():
+    from PySide6 import QtWidgets
+    w = QtWidgets.QWidget()
+    lay = QtWidgets.QVBoxLayout(w)
+    for name in ("TOP", "FRONT", "RIGHT"):
+        b = QtWidgets.QPushButton(name.title(), w)
+        b.clicked.connect(lambda _=False, n=name: qs.set_view(n))
+        lay.addWidget(b)
+    lay.addStretch(1)
+    return w
+
+qs.add_dock("my_views", "My Views", make_panel, area="left")
+```
+
+> **Tip:** give every widget its parent when you create it (`QPushButton("…", w)`). A widget added to
+> a layout that is not yet installed on a widget can be freed by Python and crash Qt when the
+> window is shown.
+
+> **Tip:** the factory runs again when the window is rebuilt, and the old widget is deleted.
+> If you keep a reference to a widget, catch `RuntimeError` when using it (see the
+> [complete example](#13-complete-example)).
+
+---
+
+## 5. Menu items and shortcuts
+
+### `add_menu_action(menu, text, callback, shortcut=None, tooltip=None, action_id=None) -> str`
+Adds an item to a menu of the menu bar.
+
+| Parameter | Description |
+|---|---|
+| `menu` | Title of a top-level menu. An existing one – `File`, `Edit`, `Add`, `Object`, `Select`, `View`, `Render`, `Window`, `Help` – or a new one (e.g. `Tools` or the name of your add-on), which is created before **Help**. |
+| `text` | Text of the item. |
+| `callback` | `fn()` – runs in Blender's context. |
+| `shortcut` | Optional key, e.g. `"Ctrl+Alt+H"`. Active in the whole Qt window and shown in the menu. |
+| `tooltip` | Optional tooltip / status tip. |
+| `action_id` | Optional id; default `"<menu>/<text>"`. |
+
+Returns the action id.
+
+### `remove_menu_action(action_id)`
+Removes the item (and its shortcut).
+
+```python
+qs.add_menu_action("Tools", "Frame Selected", qs.frame_selected,
+                   shortcut="Ctrl+Alt+F", action_id="my_frame")
+qs.remove_menu_action("my_frame")
+```
+
+Items are added at the end of the menu, after a separator. Menus generated from Blender (File, Add,
+Object, …) get them when they open.
+
+> Functions appended to Blender's own menus (`bpy.types.VIEW3D_MT_add.append(draw_fn)`) also appear in
+> Qt Shell automatically – no API needed.
+
+---
+
+## 6. 3D views
+
+All functions in this section act on the **active view** – the view under the mouse / last clicked
+(it has a blue frame when there are several views). They do nothing / return `None` when Qt Shell is
+not running.
+
+### `get_view() -> dict | None`
+The current view:
+
+| Key | Description |
+|---|---|
+| `target` | `(x, y, z)` – the point the view orbits around |
+| `distance` | Distance from the target |
+| `yaw` | Rotation around Z, radians |
+| `pitch` | Tilt, radians: `0` = from above, `π/2` = horizontal, `π` = from below |
+| `ortho` | `True` for orthographic |
+| `camera_view` | `True` when looking through the scene camera |
+| `name` | e.g. `"User Perspective"`, `"Top Orthographic"` |
+
+### `set_view(preset=None, target=None, distance=None, yaw=None, pitch=None, ortho=None) -> bool`
+Changes the view.
+
+| Parameter | Description |
+|---|---|
+| `preset` | `"FRONT"`, `"BACK"`, `"LEFT"`, `"RIGHT"`, `"TOP"`, `"BOTTOM"` (orthographic views) or `"CAMERA"` (toggles the camera view). |
+| `target`, `distance`, `yaw`, `pitch` | Set the orbit view directly (leaves the camera view). |
+| `ortho` | `True` / `False` – orthographic / perspective. |
+
+Returns `False` when Qt Shell is not running.
+
+```python
+import math
+qs.set_view("TOP")
+qs.set_view(target=(0, 0, 1), distance=12, yaw=math.radians(45), pitch=math.radians(60), ortho=False)
+v = qs.get_view()
+qs.set_view(yaw=v["yaw"] + math.radians(15))     # orbit 15°
+```
+
+### `frame_all()` / `frame_selected()`
+Fit all visible objects / the selected objects into the view (like Home / Numpad .).
+
+### `redraw()`
+Redraws **all** views (scene and overlays). Call it after changing what your overlay draws.
+
+### `viewport() -> QWidget | None`
+The active view widget. Prefer the functions above – its attributes are not stable API.
+
+### `viewport_size() -> (width, height) | None`
+Size of the active view in Qt (logical) pixels.
+
+### `view_matrix()` / `projection_matrix()` -> `mathutils.Matrix | None`
+4×4 matrices of the active view for its current size.
+
+### `project(co) -> (x, y) | None`
+World coordinates → pixel position in the active view widget (`(0, 0)` = top-left), or `None` when
+the point is behind the view.
+
+```python
+ob = bpy.context.object
+print(qs.project(ob.matrix_world.translation))
+```
+
+---
+
+## 7. Viewport layout (split views)
+
+### `set_viewport_layout(mode) -> bool`
+
+| `mode` | Layout |
+|---|---|
+| `"single"` | One view |
+| `"side"` | Two views side by side |
+| `"stacked"` | Two views, one above the other |
+| `"quad"` | Four views: Top · Perspective / Front · Right |
+
+Returns `False` when Qt Shell is not running. Raises `ValueError` for an unknown mode.
+Each view keeps its own camera; when switching to `"quad"`, the Top / Front / Right views are set and
+framed. In the UI: **▦ Layout** in the viewport header, *View → Viewport Layout*, or **Ctrl+Alt+Q**.
+
+### `viewport_layout() -> str | None`
+The current layout (`"single"`, `"side"`, `"stacked"` or `"quad"`).
+
+### `viewports() -> list[QWidget]`
+All visible view widgets of the current layout.
+
+The shading (Solid / Material / Rendered) is Blender's own setting and is shared by all views.
+
+---
+
+## 8. Overlays (drawing over the viewport)
+
+### `add_overlay(overlay_id, fn) -> str`
+Draws over **every** 3D view with Qt's `QPainter`. `fn(painter, ctx)` is called on every repaint of
+each view – keep it fast.
+
+`ctx` (`OverlayContext`):
+
+| Attribute | Description |
+|---|---|
+| `ctx.width`, `ctx.height` | Size of the view being painted |
+| `ctx.view_matrix`, `ctx.projection_matrix` | Matrices of that view |
+| `ctx.project(co)` | World coordinates → `QPointF` in that view, or `None` if behind the view |
+
+The painter state is saved and restored around your function. If `fn` raises, the overlay is
+removed and the error is logged.
+
+### `remove_overlay(overlay_id)`
+
+```python
+def draw_names(painter, ctx):
+    from PySide6 import QtCore, QtGui
+    painter.setPen(QtGui.QColor("#ffcc33"))
+    for ob in bpy.context.visible_objects:
+        p = ctx.project(ob.matrix_world.translation)
+        if p is not None:
+            painter.drawText(p + QtCore.QPointF(8, -8), ob.name)
+
+qs.add_overlay("names", draw_names)
+qs.remove_overlay("names")
+```
+
+The overlay is repainted when the view changes. If it shows something that changes on its own
+(a timer, external data), call `qs.redraw()`.
+
+---
+
+## 9. Events
+
+### `on(event, fn) -> handle`
+Calls `fn` when something happens. Returns a handle for `off()`. Raises `ValueError` for an unknown
+event name.
+
+### `off(handle)`
+Removes the handler.
+
+| Event | Arguments | When |
+|---|---|---|
+| `"data"` | `fn()` | Scene data changed (throttled) |
+| `"selection"` | `fn()` | Selection or active object changed |
+| `"frame"` | `fn(frame: int)` | Current frame changed |
+| `"mode"` | `fn(mode: str)` | Mode changed: `"OBJECT"`, `"EDIT_MESH"`, … |
+| `"file"` | `fn()` | A .blend file was loaded |
+| `"undo"` | `fn()` | Undo / redo |
+| `"render"` | `fn()` | F12 render finished |
+| `"operator"` | `fn(idname, props, result)` | An operator was run from Qt Shell |
+| `"playback"` | `fn(playing: bool)` | Animation playback started / stopped |
+| `"window"` | `fn(main_window)` | The Qt window was (re)built |
+| `"script"` | `fn(key: str, state: str)` | A script changed state (see [section 11](#11-scripts-run-reload-unload-auto-load)) |
+
+`qs.EVENTS` contains the list of names.
+
+```python
+h = qs.on("frame", lambda f: qs.status(f"Frame {f}", 1000))
+qs.off(h)
+```
+
+---
+
+## 10. Ownership and cleanup
+
+Everything registered inside `with qs.owner(name):` belongs to that owner and can be removed in one
+call. This is the easiest way to clean up in an add-on's `unregister()`.
+
+### `owner(name)` – context manager
+### `current_owner() -> str | None`
+### `owned(name) -> list[tuple[str, str]]`
+What the owner registered: `[("dock", "my_panel"), ("action", "Tools/Hello"), ("overlay", …), ("event", "h3")]`.
+
+### `cleanup(name) -> int`
+Removes everything the owner registered. Returns the number of removed items.
+
+```python
+with qs.owner("my_addon"):
+    qs.add_dock("my_panel", "My Panel", make_panel)
+    qs.add_menu_action("Tools", "Hello", lambda: qs.status("Hello"))
+
+qs.cleanup("my_addon")
+```
+
+Scripts run by Qt Shell (Text editor, auto-load) are owners automatically – their key (see below) is
+the owner name.
+
+---
+
+## 11. Scripts: run, reload, unload, auto-load
+
+Qt Shell records what a script registers while it runs:
+
+- Qt Shell API docks, menu items, overlays, event handlers,
+- `bpy` classes (`bpy.utils.register_class`),
+- `bpy.app.handlers`.
+
+**■ Unload** (Text editor) calls the script's `unregister()` if it has one, and then removes everything
+that is still registered. **Run** on a loaded script unloads it first (= **⟳ Reload**), so editing and
+re-running never leaves duplicates.
+
+Not tracked automatically: `bpy.app.timers`, keymaps and functions appended to Blender menus –
+remove those in `unregister()`.
+
+Recommended structure (the same as a Blender add-on):
+
+```python
+import bpy
+import qt_shell.api as qs
+
+def register():
+    qs.add_menu_action("Tools", "Hello", lambda: qs.status("Hello"), action_id="hello")
+
+def unregister():          # optional in Qt Shell
+    qs.remove_menu_action("hello")
+
+if __name__ == "__main__":
+    register()
+```
+
+### Script keys
+A script is identified by a key:
+
+- `"text:<name>"` – a text in `bpy.data.texts` without a file (saved in the .blend),
+- `"file:<path>"` – a `.py` file (also a text opened from that file; its current content is run).
+
+### `qt_shell.scripts` – managing scripts from Python
+
+```python
+import qt_shell.scripts as s
+```
+
+| Function | Description |
+|---|---|
+| `s.key_for_text(text)` | Key of a `bpy.types.Text`. |
+| `s.run(key)` | Runs the script (unloads it first if loaded). Returns a result with `.ok`, `.output`, `.error_line`, `.removed`. |
+| `s.unload(key)` | Calls `unregister()` and removes what is left. Returns a result (`.removed` = number of removed items). |
+| `s.unload_all()` | Unloads every loaded script. |
+| `s.is_loaded(key)` | `True` when the script has run in this session and was not unloaded. |
+| `s.info(key)` | `None` or `{"status": "loaded" | "ran" | "error", "items": n, "error_line", "time", "has_unregister"}`. |
+| `s.items(key)` | Human-readable list of what the script registered. |
+| `s.add_file(path)` | Adds a .py file to the script list; returns its key. |
+| `s.remove_file(key)` | Removes the file from the list (the file itself is kept). |
+| `s.set_autoload(key, on)` | Turns auto-load on / off (see below). |
+| `s.autoload(key)` | `True` when auto-load is on. |
+
+The `"script"` event is emitted with these states: `loaded`, `ran`, `error`, `unloaded`, `added`,
+`removed`, `autoload`, `blocked`.
+
+### Auto-load
+
+**A file on every start of Qt Shell** (once per Blender session):
+
+```python
+import qt_shell.scripts as s
+s.set_autoload(s.add_file(r"C:\Users\me\Documents\qt_start.py"), True)
+```
+
+The list is stored in Blender's config folder: `config/qt_shell/scripts.json`.
+
+**A text when its .blend file is opened:**
+
+```python
+bpy.data.texts["Text"]["qtshell_autoload"] = True    # then save the .blend
+```
+
+This needs *Edit → Preferences → Save & Load → Auto Run Python Scripts*. When it is off, the script is
+not run and a message appears in the Console.
+
+When another .blend is opened, scripts from the texts of the old file are unloaded.
+
+---
+
+## 12. Using the API from an add-on
+
+Make Qt Shell optional – your add-on keeps working without it:
+
+```python
+try:
+    import qt_shell.api as qs
+except ImportError:
+    qs = None
+
+def register():
+    # … your normal registration …
+    if qs is not None:
+        with qs.owner(__package__):
+            qs.add_menu_action("Tools", "My Tool", my_tool, action_id=f"{__package__}.my_tool")
+
+def unregister():
+    if qs is not None:
+        qs.cleanup(__package__)
+    # … your normal unregistration …
+```
+
+Most add-ons need nothing special, because Qt Shell runs Blender's own UI code:
+
+- **Properties editor panels** (`bl_space_type = 'PROPERTIES'`) appear in the Properties dock,
+- **3D view sidebar panels** (`bl_space_type = 'VIEW_3D'`, `bl_region_type = 'UI'`) appear in the
+  Sidebar (N), one tab per `bl_category`,
+- **menu entries** appended to Blender menus appear in Qt Shell menus,
+- **operators** work from menus, F3 search and panel buttons.
+
+Use `qt_shell.api` for things that exist only in Qt Shell: Qt docks, Qt menu items with shortcuts,
+QPainter overlays, view control and the viewport layout.
+
+---
+
+## 13. Complete example
+
+A dock that shows the active object and updates on selection / frame changes, a menu with a shortcut
+and an overlay with object names. Open it in the Text editor and press Alt+P; **■ Unload** removes
+everything. (A shorter version of [`examples/api_demo.py`](../examples/api_demo.py).)
+
+```python
+import bpy
+import qt_shell.api as qs
+
+_state = {"label": None}
+
+
+def _update_label(*_args):
+    lab = _state["label"]
+    if lab is None:
+        return
+    ob = bpy.context.view_layer.objects.active
+    try:
+        lab.setText(f"Active object: {ob.name if ob else '—'}\n"
+                    f"Selected: {len(bpy.context.selected_objects)}\n"
+                    f"Frame: {bpy.context.scene.frame_current}")
+    except RuntimeError:          # the widget was deleted (window rebuilt)
+        _state["label"] = None
+
+
+def make_dock():
+    from PySide6 import QtWidgets
+    w = QtWidgets.QWidget()
+    lay = QtWidgets.QVBoxLayout(w)
+    _state["label"] = QtWidgets.QLabel(w)
+    lay.addWidget(_state["label"])
+    for text, fn in (("Top view", lambda: qs.set_view("TOP")),
+                     ("Four views", lambda: qs.set_viewport_layout("quad")),
+                     ("Frame all", qs.frame_all)):
+        b = QtWidgets.QPushButton(text, w)
+        b.clicked.connect(fn)
+        lay.addWidget(b)
+    lay.addStretch(1)
+    _update_label()
+    return w
+
+
+def draw_names(painter, ctx):
+    from PySide6 import QtCore, QtGui
+    painter.setPen(QtGui.QColor("#ffcc33"))
+    for ob in bpy.context.visible_objects:
+        p = ctx.project(ob.matrix_world.translation)
+        if p is not None:
+            painter.drawText(p + QtCore.QPointF(8, -8), ob.name)
+
+
+def register():
+    qs.add_dock("api_demo", "API Demo", make_dock, area="left")
+    qs.add_menu_action("Tools", "Say Hello", lambda: qs.status("Hello!"),
+                       shortcut="Ctrl+Alt+H", action_id="demo_hello")
+    qs.add_overlay("demo_names", draw_names)
+    qs.on("selection", _update_label)
+    qs.on("frame", _update_label)
+
+
+if __name__ == "__main__":
+    register()
+```
+
+No `unregister()` is needed here – Unload removes what `register()` added.
+
+---
+
+## 14. Version history
+
+| API | Qt Shell | Changes |
+|---|---|---|
+| 1.2 | 0.9.0 – 0.9.1 | `set_viewport_layout()`, `viewport_layout()`, `viewports()`; overlays drawn in every view. 0.9.1: `status_history()`, status messages also in the Console. |
+| 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
+| 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
+
+Check the version in your code:
+
+```python
+if qs.API_VERSION >= (1, 2):
+    qs.set_viewport_layout("quad")
+```

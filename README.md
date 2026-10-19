@@ -43,6 +43,8 @@ You can bring it back at any time with **Window → Show Blender Window**.
 
 ## Python API for add-ons (`qt_shell.api`)
 
+**Full reference: [`docs/API.md`](docs/API.md)** – every function, event and example.
+
 Most add-ons need nothing special: Qt Shell runs Blender's own UI code, so these appear in Qt automatically:
 
 - **Properties editor panels** (`bl_space_type = 'PROPERTIES'`),
