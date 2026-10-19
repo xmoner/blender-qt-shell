@@ -530,7 +530,12 @@ class NodeView(QtWidgets.QGraphicsView):
             self.editor.frame_all()           # Home like Blender, F as requested
         elif k == K.Key_Period and mods & K.KeypadModifier:
             self.editor.frame_selected()      # Numpad . like Blender
+        elif k == K.Key_Tab and not mods & K.ControlModifier:
+            # node search at the mouse (like Shift+A)
+            gpos = QtGui.QCursor.pos()
+            self.editor.add_node_popup(gpos, self.mapToScene(self.mapFromGlobal(gpos)))
         elif k == K.Key_Tab:
+            # Ctrl+Tab: into the selected group node / out of the group
             sel = [it for it in self.scene().selectedItems() if isinstance(it, NodeItem)]
             if sel and getattr(sel[0].node, "node_tree", None) is not None:
                 self.editor.enter_group(sel[0].node)
@@ -594,7 +599,7 @@ class AddNodePopup(QtWidgets.QDialog):
         self.on_pick = on_pick
         lay = QtWidgets.QVBoxLayout(self)
         self.edit = QtWidgets.QLineEdit()
-        self.edit.setPlaceholderText("Search node…")
+        self.edit.setPlaceholderText("Search node…  (Enter adds, Esc closes)")
         self.edit.textChanged.connect(self._filter)
         self.edit.returnPressed.connect(self._accept)
         lay.addWidget(self.edit)
@@ -660,6 +665,7 @@ class NodeEditor(QtWidgets.QWidget):
         bar.addWidget(self.path_label, 1)
         self.up_btn = QtWidgets.QToolButton()
         self.up_btn.setText("↑ Exit Group")
+        self.up_btn.setToolTip("Exit the node group (Ctrl+Tab). Ctrl+Tab on a selected group node enters it.")
         self.up_btn.clicked.connect(self.exit_group)
         bar.addWidget(self.up_btn)
         self.new_btn = QtWidgets.QToolButton()
@@ -667,7 +673,8 @@ class NodeEditor(QtWidgets.QWidget):
         self.new_btn.clicked.connect(self.new_tree)
         bar.addWidget(self.new_btn)
         add = QtWidgets.QToolButton()
-        add.setText("+ Add Node (Shift+A)")
+        add.setText("+ Add Node (Tab)")
+        add.setToolTip("Search and add a node – Tab or Shift+A over the editor")
         add.clicked.connect(lambda: self.add_node_popup(QtGui.QCursor.pos(), self.view.mapToScene(
             self.view.viewport().rect().center())))
         bar.addWidget(add)
