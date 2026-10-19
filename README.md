@@ -140,6 +140,8 @@ first, so editing and re-running never leaves duplicate menu items or handlers. 
 `bpy.app.timers`, keymaps and functions appended to Blender menus (`VIEW3D_MT_…append`) – remove those in
 `unregister()`.
 
+How to see which scripts are loaded and how to remove a script (also one set to auto-load on startup): [Which scripts are loaded / Removing a script](docs/API.md#removing-a-script).
+
 ## Tested
 
 Blender 5.2.0 LTS, Windows 11 (Czech keyboard): startup, hiding the Blender window, viewport

@@ -442,6 +442,60 @@ not run and a message appears in the Console.
 
 When another .blend is opened, scripts from the texts of the old file are unloaded.
 
+### Which scripts are loaded
+
+Paste into the **Console** and press Enter:
+
+```python
+import qt_shell.scripts as s; print("\n".join(f'{s.info(k)["status"]:8} {s.location(k)}' for k in s.all_keys() if s.info(k)) or "No script is loaded")
+```
+
+```
+ran      c:\users\me\documents\qt_start.py
+loaded   in the .blend
+```
+
+| Status | Meaning |
+|---|---|
+| `loaded` | The script registered something (menu item, dock, overlay, handler, class) that is still active. **■ Unload** removes it. |
+| `ran` | The script ran but registered nothing lasting. |
+| `error` | The script stopped with an error (see the Console). |
+
+Scripts set to auto-load on startup: `s.managed_files()` → `[(key, autoload), …]`.
+
+### Removing a script
+
+**In the Text editor** (a script opened or written there):
+
+1. Choose the script in the list at the top left of the **Text editor**.
+2. **■ Unload** – removes what the script registered (greyed out when there is nothing to remove).
+3. **✕** – deletes the text from the .blend file. A file on disk is kept; delete it in your file manager
+   if you don't need it.
+
+**A file set to auto-load on startup** – deleting it from the Text editor is not enough, it would run
+again on the next start. Remove it from the script list (this also unloads it):
+
+```python
+import qt_shell.scripts as s; k = s.add_file(r"C:\Users\me\Documents\qt_start.py"); s.unload(k); s.remove_file(k)
+```
+
+`add_file` only turns the path into the script's key – a file that is already in the list is not added
+twice. To keep the file in the list and only stop it from running on startup:
+
+```python
+import qt_shell.scripts as s; s.set_autoload(s.add_file(r"C:\Users\me\Documents\qt_start.py"), False)
+```
+
+**A text set to auto-load with its .blend:**
+
+```python
+del bpy.data.texts["Text"]["qtshell_autoload"]    # then save the .blend
+```
+
+> **Unload does not undo one-time changes.** It removes what a script *registered*, not what it *did*:
+> objects it created stay in the scene (delete them or use Ctrl+Z), and a layout it switched to stays
+> (`qs.set_viewport_layout("single")` or Ctrl+Alt+Q).
+
 ---
 
 ## 12. Using the API from an add-on
