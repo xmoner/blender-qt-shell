@@ -383,11 +383,34 @@ class NodeView(QtWidgets.QGraphicsView):
                 win.activateWindow()
         super().enterEvent(ev)
 
+    ZOOM_MIN, ZOOM_MAX = 0.03, 4.0
+
     def wheelEvent(self, ev):
-        f = 1.15 ** (ev.angleDelta().y() / 120.0)
+        d = ev.angleDelta().y() or ev.angleDelta().x()
+        if not d:
+            d = ev.pixelDelta().y()           # touchpads
+        if not d:
+            return
         cur = self.transform().m11()
-        if 0.1 < cur * f < 4:
-            self.scale(f, f)
+        # clamp instead of refusing: zooming always works, even from a view outside the range
+        new = min(max(cur * 1.15 ** (d / 120.0), self.ZOOM_MIN), self.ZOOM_MAX)
+        if abs(new / cur - 1.0) > 1e-4:
+            self.scale(new / cur, new / cur)
+        ev.accept()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if getattr(self.editor, "_frame_pending", False) and self._big_enough():
+            self.editor._frame_pending = False
+            QtCore.QTimer.singleShot(0, self.editor.frame_all)
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        if getattr(self.editor, "_frame_pending", False):
+            QtCore.QTimer.singleShot(0, lambda: self._big_enough() and self.editor.frame_all())
+
+    def _big_enough(self):
+        return self.isVisible() and self.viewport().width() > 80 and self.viewport().height() > 60
 
     def _item_at(self, pos):
         for it in self.items(pos):
@@ -503,8 +526,10 @@ class NodeView(QtWidgets.QGraphicsView):
             self.editor.toggle("mute")
         elif k == K.Key_H:
             self.editor.toggle("hide")
-        elif k == K.Key_Home:
-            self.editor.frame_all()
+        elif k == K.Key_Home or (k == K.Key_F and not mods & (K.ControlModifier | K.AltModifier)):
+            self.editor.frame_all()           # Home like Blender, F as requested
+        elif k == K.Key_Period and mods & K.KeypadModifier:
+            self.editor.frame_selected()      # Numpad . like Blender
         elif k == K.Key_Tab:
             sel = [it for it in self.scene().selectedItems() if isinstance(it, NodeItem)]
             if sel and getattr(sel[0].node, "node_tree", None) is not None:
@@ -648,7 +673,7 @@ class NodeEditor(QtWidgets.QWidget):
         bar.addWidget(add)
         fit = QtWidgets.QToolButton()
         fit.setText("⤢")
-        fit.setToolTip("Frame All (Home)")
+        fit.setToolTip("Frame All (Home / F)\nFrame Selected: Numpad .")
         fit.clicked.connect(self.frame_all)
         bar.addWidget(fit)
         lay.addLayout(bar)
@@ -901,15 +926,30 @@ class NodeEditor(QtWidgets.QWidget):
             self.rebuild()
 
     def frame_all(self):
+        self._frame_items(list(self.items.values()))
+
+    def frame_selected(self):
+        sel = [it for it in self.view.scene().selectedItems() if isinstance(it, NodeItem)]
+        self._frame_items(sel or list(self.items.values()))
+
+    def _frame_items(self, items):
         rect = QtCore.QRectF()
-        for it in self.items.values():
+        for it in items:
             rect = rect.united(it.sceneBoundingRect())
         if rect.isNull():
             return
+        if not self.view._big_enough():
+            # hidden or tiny (e.g. a dock behind another tab): fitting now would zoom far out –
+            # frame when the editor gets its real size
+            self._frame_pending = True
+            return
+        self._frame_pending = False
         self.view.fitInView(rect.adjusted(-60, -60, 60, 60), QtCore.Qt.KeepAspectRatio)
-        if self.view.transform().m11() > 1.2:
-            s = 1.2 / self.view.transform().m11()
-            self.view.scale(s, s)
+        m = self.view.transform().m11()
+        target = min(max(m, NodeView.ZOOM_MIN), 1.2)
+        if abs(target / m - 1.0) > 1e-4:
+            self.view.scale(target / m, target / m)
+        self.view.centerOn(rect.center())
 
     def new_tree(self):
         mode = self.source.currentData()
