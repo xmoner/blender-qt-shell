@@ -592,6 +592,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.restoreDockWidget(sb):
             self.addDockWidget(QtCore.Qt.RightDockWidgetArea, sb, QtCore.Qt.Horizontal)
             sb.hide()
+        # Floating docks restored from the saved layout crash Qt on Windows (access violation when
+        # the floating window is first shown – both in show() and right after it). Floating at run
+        # time works, so restored floating docks are docked back into their area instead.
+        for key, d in self.docks.items():
+            if d.isFloating():
+                d.setFloating(False)
+                bridge.log(f"The '{d.windowTitle()}' window was floating – docked back on start "
+                           "(double-click its title to float it again).", "INFO")
         # dock sizes are stored in pixels → follow a change of the interface size
         self._size_factor = theme.ui_scale * theme.font_scale ** 0.5
         ratio = self._size_factor / old if old > 0 else 1.0
@@ -1226,6 +1234,15 @@ class MainWindow(QtWidgets.QMainWindow):
         ev.ignore()
 
     def shutdown(self):
+        # A saved layout with a floating dock crashes Qt on Windows on the next start (access
+        # violation in show(), even when the dock is docked again before that). Floating works at
+        # run time, so floating docks are docked before the layout is saved.
+        for d in list(self.docks.values()) + list(getattr(self, "api_docks", {}).values()):
+            try:
+                if d.isFloating():
+                    d.setFloating(False)
+            except RuntimeError:
+                pass
         try:
             self._settings.setValue("geometry", self.saveGeometry())
             self._settings.setValue("state", self.saveState())

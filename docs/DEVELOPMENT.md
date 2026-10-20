@@ -4,8 +4,8 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.9.4 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
-- **Last updated:** 2026-10-19
+- **Current version:** 0.10.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
 ---
@@ -34,6 +34,7 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
 | **Public API** | `api.py` (`import qt_shell.api as qs`), version 1.2. Registry lives in `api.state_store()` = a module `_qt_shell_state` in `sys.modules` (survives add-on reloads and loading other .blend files). Full reference: `docs/API.md`. |
 | **Script manager** | `scripts.py`: runs scripts, records what they register (API items, `bpy` classes, `bpy.app.handlers`), Unload / Reload, auto-load (files in `config/qt_shell/scripts.json`, texts with custom prop `qtshell_autoload`). No PySide in this module. |
 | **Text editor** | `text_editor.py`: `CodeEditor` (QPlainTextEdit) + `TextEditor` dock on `bpy.data.texts`. Auto-completion logic in `completion.py` (pure Python, no code execution) – popup = `QCompleter`, names in `Qt.UserRole`. |
+| **Transform tools / gizmo** | `gizmo.py`: `ToolState` (shared tool + toolbar visibility, QSettings `viewport/tool`, `viewport/toolbar`, stored on `hub._tool_state`), `Toolbar` (child of each `Viewport`), `handles()` / `hit()` / `paint()` in screen space, `start_drag()` → `Viewport.start_modal()` with the axis set and `m['drag']=True` (mouse release confirms). Pivot = median of selected origins / selected verts (edit-mode pivot cached, invalidated on data / selection change). Constrained G follows the projected axis on screen. |
 | **Theme** | `theme.py`: `qss()` app stylesheet, `px()` / `fs()` scaling, `HOVER` colours + `hover_qss()` / `field_hover_qss()` (append them to any widget stylesheet that sets a button / field background, otherwise the hover effect is hidden). |
 | **Logs** | `%TEMP%\qtshell.log` (errors/warnings), `%TEMP%\qtshell_crash.log` (faulthandler – note: it also logs harmless first-chance access violations, e.g. inside the Windows file dialog). |
 | **Safe start** | `app.start()` writes `%TEMP%\qtshell_starting` before building the window and removes it 3 s after `show()`. If it exists on the next start, the saved window layout (`QSettings("QtShell","QtShell")` → `state`, `geometry`) is discarded. |
@@ -49,6 +50,11 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
 - **Zoom limits must clamp, not refuse** (Node editor wheel bug). Don't frame/fit a view while it is
   hidden or tiny – defer until it is visible (`NodeView._big_enough()`, `_frame_pending`).
 - **Styling `QMenu::item` disables the default selection highlight** – style `:selected` explicitly.
+- **Never save a layout with a floating dock.** Restoring a `QMainWindow` state that contains a floating
+  `QDockWidget` crashes Qt on Windows in `show()` (execute access violation at a bogus address), even if the
+  dock is docked again right after `restoreState()`. Floating at run time is fine. `MainWindow.shutdown()`
+  docks floating docks before `saveState()`; restored floating docks are docked too (`api._install_dock` as well).
+  This was the cause of the recurring "previous start did not finish" crashes (2026-10-19/20).
 
 ---
 
@@ -134,7 +140,7 @@ add-on folder there is connected:
 | 0.9.2 | 2026-10-19 | Text editor auto-completion; API reference `docs/API.md` |
 | 0.9.3 | 2026-10-19 | Light-blue hover / pressed highlight for buttons, fields, lists, menus |
 | 0.9.4 | 2026-10-19 | Node editor: Tab node search, Ctrl+Tab groups, wheel zoom fix, F / Home / Numpad . framing |
-| – | not released | Docs: buttons over the viewport, `examples/viewport_button.py` (mention in the next release) |
+| 0.10.0 | not released yet | Transform tools: toolbar (T) + Move / Rotate / Scale gizmos in every view; fix: crash on start after closing with a floating window; docs: buttons over the viewport, `examples/viewport_button.py` |
 
 ---
 
@@ -156,6 +162,9 @@ crashed Blender with an access violation in `_win.show()`. Bisect results (2026-
 
 Until then, scripts are managed from the Text editor and the Console (`qt_shell.scripts`, see `docs/API.md` §11).
 
+- Note: the Scripts dock crash happened at the same place (`show()`) as the floating-dock crash found on
+  2026-10-20 – the saved layouts during the 2026-10-18 debugging may have contained floating docks.
+
 ### 6.2 Ideas / not done
 - Make Links (Blender's F in the Node editor) – F is now "frame all" as the owner asked.
 - `examples/viewport_button.py` was written but **not run in Blender yet** – test it.
@@ -163,8 +172,8 @@ Until then, scripts are managed from the Text editor and the Console (`qt_shell.
 - Known harmless log noise: `AttributeError: 'ActionSlot' object has no attribute 'name'` in old log
   entries (fixed in 0.5.0, still in the log file).
 
-### 6.3 State of the owner's PC (2026-10-19)
-- Add-on folder has the current `main` (0.9.4 + docs).
+### 6.3 State of the owner's PC (2026-10-20)
+- Add-on folder has the current `main` (0.10.0).
 - Auto-load file was configured: `C:\Users\uzivatel\Documents\qt_start.py` (switches to Four Views);
   the owner asked how to remove it, so it may have been removed since – check with `qt_shell.scripts.managed_files()`.
 - Test file left in `%TEMP%\qs_viewport_button.py` (same as the example; deleting files on the device

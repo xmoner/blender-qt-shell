@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, theme
+from . import bridge, editmesh, gizmo, theme
 
 DEG = math.pi / 180.0
 
@@ -94,6 +94,12 @@ class Viewport(QtWidgets.QWidget):
         self._modal = None
         self._numeric = ""
         self.area = None            # ViewportArea when the viewport is one of several views
+        # transform tools (toolbar + gizmo)
+        self._gz_hover = None
+        self._gizmo_pivot_cache = None
+        self.tools = gizmo.tool_state(hub)
+        self.toolbar = gizmo.Toolbar(self)
+        self.tools.changed.connect(self.update)
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -101,6 +107,9 @@ class Viewport(QtWidgets.QWidget):
         hub.data_changed.connect(self.request_redraw)
         hub.frame_changed.connect(lambda _f: self.request_redraw())
         hub.selection_changed.connect(self.update)
+        hub.selection_changed.connect(lambda: gizmo.invalidate(self))
+        hub.data_changed.connect(lambda: gizmo.invalidate(self))
+        self.selection_edited.connect(lambda: (gizmo.invalidate(self), self.update()))
         hub.file_loaded.connect(self._on_file_loaded)
 
     # ------------------------------------------------------------ helpers
@@ -326,6 +335,11 @@ class Viewport(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         if self.show_boxes:
             self._paint_selection(p, mats)
+        if self._modal is None and not getattr(self.hub, "playing", False):
+            try:
+                gizmo.paint(self, p, self.tools.tool, self._gz_hover)
+            except Exception as ex:          # never break the viewport because of the gizmo
+                bridge.log(f"Gizmo: {ex}", "WARNING")
         self._paint_gizmo(p)
         self._paint_text(p)
         try:
@@ -735,7 +749,20 @@ class Viewport(QtWidgets.QWidget):
                 d = pos - start
                 delta = (right * d.x() - up * d.y()) * s
                 if axis_vec is not None:
-                    delta = axis_vec * delta.dot(axis_vec)
+                    # move along the axis so that the point follows the mouse along the axis'
+                    # direction on screen (works also when the axis is foreshortened)
+                    ps0 = self.project(pivot)
+                    L = max(s * 80, 1e-6)
+                    ps1 = self.project(pivot + axis_vec * L)
+                    if ps0 is not None and ps1 is not None:
+                        ax, ay = ps1.x() - ps0.x(), ps1.y() - ps0.y()
+                        l2 = ax * ax + ay * ay
+                        if l2 > 4:
+                            delta = axis_vec * (L * (d.x() * ax + d.y() * ay) / l2)
+                        else:
+                            delta = axis_vec * delta.dot(axis_vec)
+                    else:
+                        delta = axis_vec * delta.dot(axis_vec)
             m["value"] = delta
             X = Matrix.Translation(delta)
         elif m["kind"] == "R":
@@ -772,6 +799,7 @@ class Viewport(QtWidgets.QWidget):
     def _modal_end(self, confirm):
         m = self._modal
         self._modal = None
+        gizmo.invalidate(self)
         self.releaseMouse()
         if not confirm:
             if m.get("edit") is not None:
@@ -834,6 +862,12 @@ class Viewport(QtWidgets.QWidget):
             self._last = pos
             self.setCursor(QtCore.Qt.ClosedHandCursor)
         elif b == QtCore.Qt.LeftButton:
+            tool = self.tools.tool
+            if tool != "SELECT":
+                hid = gizmo.hit(gizmo.handles(self, tool), pos)
+                if hid is not None and gizmo.start_drag(self, hid, tool):
+                    self._gz_hover = None
+                    return
             self._press_pos = pos
         elif b == QtCore.Qt.RightButton:
             self._context_menu(ev.globalPosition().toPoint())
@@ -857,9 +891,17 @@ class Viewport(QtWidgets.QWidget):
             if (pos - self._press_pos).manhattanLength() > 5:
                 self._box = (self._press_pos, pos)
                 self.update()
+        elif self.tools.tool != "SELECT":
+            hov = gizmo.hit(gizmo.handles(self, self.tools.tool), pos)
+            if hov != self._gz_hover:
+                self._gz_hover = hov
+                self.update()
 
     def mouseReleaseEvent(self, ev):
         pos = ev.position()
+        if self._modal and self._modal.get("drag") and ev.button() == QtCore.Qt.LeftButton:
+            self._modal_end(True)          # gizmo drag: releasing the button confirms
+            return
         if self._nav:
             self._nav = None
             self.unsetCursor()
@@ -927,6 +969,9 @@ class Viewport(QtWidgets.QWidget):
         digit = digit_of(ev)
         if digit is not None:
             key = int(K.Key_0) + digit   # unify with the number row
+        if key == K.Key_T and not (ctrl or shift or alt):
+            self.tools.toggle_toolbar()      # like Blender: T shows/hides the toolbar
+            return
         if key == K.Key_N and not (ctrl or shift or alt):
             mw = getattr(self.hub, "main_window", None)
             if mw is not None:

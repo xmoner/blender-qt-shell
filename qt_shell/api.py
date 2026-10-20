@@ -268,6 +268,8 @@ def _install_dock(win, dock_id):
     win.addDockWidget(getattr(QtCore.Qt, _AREAS[spec["area"]]), d)
     if not win.restoreDockWidget(d) and not spec["visible"]:   # no saved position → default
         d.hide()
+    if d.isFloating():        # restoring a floating dock crashes Qt on Windows (see main_window)
+        d.setFloating(False)
     win.api_docks[dock_id] = d
     wm = getattr(win, "window_menu", None)
     if wm is not None:
