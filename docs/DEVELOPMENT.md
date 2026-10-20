@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.17.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.18.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -107,6 +107,7 @@ qt_shell/            the add-on (zip this folder for a release)
   scripts.py         script manager core (no Qt)
   scripts_dock.py    Scripts dock UI – NOT USED (disabled, see 6.1)
   shelf.py           Shelf (dock 'shelf' at the top, floatable) – buttons run code via scripts._execute; config/qt_shell/shelves.json
+  blicons.py         icons for Blender's icon names (has / icon); TAB_ICONS, DATA_ICONS; theme.type_icon uses it for the Outliner
   icons.py           own SVG icon set (icons.icon / pixmap / set_icon); falls back to the old text glyphs when QtSvg is missing
   pytips.py          Python tooltips: widgets/actions carry the command in Qt property "qtshell_python" (tag / tag_op / tag_prop); app._notify_with_context calls pytips.handle() for QEvent.ToolTip; QSettings interface/python_tooltips; Shift+MMB → pytips.copy_on_click() (also from app.notify) copies the command
   graph_editor.py    Graph editor (Maya-like): channel tree + GraphView; selection = Blender's key select flags; Blender 4.4+ channelbags via bpy_extras.anim_utils
@@ -187,6 +188,7 @@ add-on folder there is connected:
 | 0.15.2 | not released yet | Fix: crash on start – the saved dock layout is restored after the first show() (MainWindow._restore_saved_layout) |
 | 0.16.0 | not released yet | 3D view header like Blender 5.2 (menus per mode from VIEW3D_MT_editor_menus, orientation, pivot, snap, proportional, object types, gizmo, overlays, X-ray; mode menu per object type; wheel-scroll); navigation gizmo like Blender (± axes, click to align / flip, drag to orbit, zoom / pan / camera / persp buttons) |
 | 0.17.0 | not released yet | Own icon set (qt_shell/icons.py, SVG rendered with QtSvg; text glyph fallback) in the 3D view header, mode menu, toolbar, nav gizmo and Timeline; window icon = logo; logo files in docs/logo |
+| 0.18.0 | not released yet | Icons for Blender icon names (blicons.py: 347 names / 177 drawings – objects orange, data green, modifiers & constraints blue): menus, submenus, operator buttons, popovers, Properties tabs, Outliner; FakeLayout.menu / popover / operator_menu_enum now record `icon` |
 
 ---
 

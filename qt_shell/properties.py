@@ -7,6 +7,7 @@ import bpy
 from PySide6 import QtCore, QtWidgets
 
 from . import bridge, fake_ui, qt_ui, rna_widgets as rw, theme
+from . import blicons
 from .bridge import tr
 
 TABS = [
@@ -388,9 +389,11 @@ class TabColumn(QtWidgets.QWidget):
             self.stack.setCurrentIndex(row)
             self.currentChanged.emit(row)
 
-    def addTab(self, widget, label):
+    def addTab(self, widget, label, icon=None):
         self.stack.addWidget(widget)
         self.nav.addItem(label)
+        if icon is not None and not icon.isNull():
+            self.nav.item(self.nav.count() - 1).setIcon(icon)
 
     def clear(self):
         """Removes all tabs; the page widgets are kept (not deleted) so they can be added again."""
@@ -430,7 +433,7 @@ class PropertiesEditor(QtWidgets.QWidget):
             else:
                 page = PanelPage(key, self._changed, self.state)
             self.pages[key] = page
-            self.tabs.addTab(page, label)
+            self.tabs.addTab(page, label, blicons.icon(blicons.TAB_ICONS.get(key, "")))
         self.tabs.setCurrentIndex([k for k, _ in TABS].index("object"))
         self.tabs.currentChanged.connect(lambda _i: self.refresh(force=True))
         lay.addWidget(self.tabs)
@@ -491,6 +494,14 @@ class PropertiesEditor(QtWidgets.QWidget):
             return
         for i, (key, _label) in enumerate(TABS):
             self.tabs.setTabVisible(i, key in vis)
+        try:   # the Data tab shows the active object's data type (mesh, camera, light, …) like Blender
+            ob = bpy.context.view_layer.objects.active
+            name = blicons.DATA_ICONS.get(ob.type if ob else "", "MESH_DATA")
+            if name != getattr(self, "_data_icon", None):
+                self._data_icon = name
+                self.tabs.nav.item([k for k, _ in TABS].index("data")).setIcon(blicons.icon(name))
+        except Exception:
+            pass
         cur = TABS[self.tabs.currentIndex()][0]
         if cur not in vis:
             self.tabs.setCurrentIndex([k for k, _ in TABS].index("object" if "object" in vis else "render"))

@@ -146,6 +146,15 @@ def type_icon(kind):
     """Small round icon with a letter (no external images)."""
     if kind in _icon_cache:
         return _icon_cache[kind]
+    try:
+        from . import blicons
+        name = {"COLLECTION": "OUTLINER_COLLECTION", "SCENE": "SCENE_DATA",
+                "LIGHT_PROBE": "OUTLINER_OB_LIGHTPROBE"}.get(kind, f"OUTLINER_OB_{kind}")
+        if blicons.has(name):
+            _icon_cache[kind] = blicons.icon(name)
+            return _icon_cache[kind]
+    except Exception:
+        pass
     table = {
         "MESH": ("M", "#e8a04c"), "CURVE": ("C", "#7fc77f"), "SURFACE": ("S", "#7fc77f"),
         "FONT": ("T", "#7fc77f"), "META": ("B", "#7fc77f"), "ARMATURE": ("A", "#6fb5e8"),

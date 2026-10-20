@@ -203,12 +203,12 @@ class FakeLayout:
 
     def operator_menu_enum(self, operator, property, text=None, text_ctxt="", translate=True, icon="NONE"):
         props = {}
-        self._item("operator_menu_enum", idname=operator, prop=property, props=props,
+        self._item("operator_menu_enum", idname=operator, prop=property, props=props, icon=icon,
                    text=(tr(text) if translate else text) if text is not None else None)
         return OpProps(props)
 
     def menu(self, menu, text=None, text_ctxt="", translate=True, icon="NONE", icon_value=0):
-        self._item("menu", menu=menu,
+        self._item("menu", menu=menu, icon=icon,
                    text=(tr(text) if translate else text) if text is not None else None)
 
     def menu_contents(self, menu):
@@ -217,7 +217,7 @@ class FakeLayout:
             run_draw(cls, self, bpy.context)
 
     def popover(self, panel, text="", text_ctxt="", translate=True, icon="NONE", icon_value=0, **_kw):
-        self._item("popover", panel=panel, text=tr(text) if translate else text)
+        self._item("popover", panel=panel, icon=icon, text=tr(text) if translate else text)
 
     def popover_group(self, *a, **kw):
         pass

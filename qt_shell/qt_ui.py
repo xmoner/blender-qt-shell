@@ -3,6 +3,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import fake_ui, rna_widgets as rw, theme
+from . import blicons
 from . import pytips
 from .bridge import op_label, op_poll, op_rna_props, run_op, tr
 from .bridge import undo_push as bridge_undo
@@ -410,6 +411,9 @@ class Builder:
             btn.setText((text or "") + " ▾")
             btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
             btn.setMenu(LazyMenu(a["menu"], btn))
+            if blicons.has(a.get("icon")):
+                btn.setIcon(blicons.icon(a["icon"]))
+                btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
             pytips.tag(btn, f'bpy.ops.wm.call_menu(name="{a["menu"]}")')
             w = btn
         elif k == "popover":
@@ -419,6 +423,9 @@ class Builder:
             btn.setText((text or "") + " ▾")
             btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
             btn.setMenu(PopoverMenu(a["panel"], btn, self.on_change))
+            if blicons.has(a.get("icon")):
+                btn.setIcon(blicons.icon(a["icon"]))
+                btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
             pytips.tag(btn, f'bpy.ops.wm.call_panel(name="{a["panel"]}")')
             w = btn
         elif k == "template_list":
@@ -511,6 +518,10 @@ class Builder:
         text = a.get("text")
         label = op_label(idname)
         btn = QtWidgets.QPushButton(_glyph(a.get("icon"), text if text is not None else label))
+        if blicons.has(a.get("icon")):
+            btn.setIcon(blicons.icon(a["icon"]))
+            if text == "":
+                btn.setText("")
         desc = _op_desc(idname)
         btn.setToolTip(f"{label}\n{desc}" if desc and desc != label else label)
         pytips.tag_op(btn, idname, a.get("props") or {})
@@ -598,6 +609,8 @@ def fill_operator_enum_menu(menu, idname, prop, base_props=None, ctx=None):
         return
     for e in items:
         act = menu.addAction(tr(e.name))
+        if blicons.has(getattr(e, "icon", None)):
+            act.setIcon(blicons.icon(e.icon))
         act.setToolTip(e.description)
         props = dict(base_props or {})
         props[prop] = e.identifier
@@ -640,6 +653,8 @@ def _fill(menu, node, top=False):
         idname = a["idname"]
         text = a.get("text")
         act = menu.addAction(text if text else op_label(idname))
+        if blicons.has(a.get("icon")):
+            act.setIcon(blicons.icon(a["icon"]))
         props = dict(a.get("props") or {})
         pytips.tag_op(act, idname, props)
         ctx = f.get("ctx_ptrs")
@@ -650,6 +665,8 @@ def _fill(menu, node, top=False):
         fill_operator_enum_menu(menu, a["idname"], a["prop"], None, f.get("ctx_ptrs"))
     elif k == "operator_menu_enum":
         sub = menu.addMenu(a.get("text") or op_label(a["idname"]))
+        if blicons.has(a.get("icon")):
+            sub.setIcon(blicons.icon(a["icon"]))
         fill_operator_enum_menu(sub, a["idname"], a["prop"], a.get("props"), f.get("ctx_ptrs"))
     elif k == "menu":
         cls = fake_ui.find_menu_class(a["menu"])
@@ -657,6 +674,8 @@ def _fill(menu, node, top=False):
             return
         text = a.get("text") or tr(getattr(cls, "bl_label", a["menu"]))
         sub = LazyMenu(a["menu"], menu, title=text)
+        if blicons.has(a.get("icon")):
+            sub.setIcon(blicons.icon(a["icon"]))
         menu.addMenu(sub)
         pytips.tag(sub.menuAction(), f'bpy.ops.wm.call_menu(name="{a["menu"]}")')
     elif k == "prop":
