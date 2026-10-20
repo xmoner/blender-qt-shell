@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.10.1 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.11.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -51,6 +51,8 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
 - **Zoom limits must clamp, not refuse** (Node editor wheel bug). Don't frame/fit a view while it is
   hidden or tiny – defer until it is visible (`NodeView._big_enough()`, `_frame_pending`).
 - **Styling `QMenu::item` disables the default selection highlight** – style `:selected` explicitly.
+- **Dropping text dragged from a QPlainTextEdit: force `Qt.CopyAction`** – the default is Move, which deletes the
+  text from the editor.
 - **Never save a layout with a floating dock.** Restoring a `QMainWindow` state that contains a floating
   `QDockWidget` crashes Qt on Windows in `show()` (execute access violation at a bogus address), even if the
   dock is docked again right after `restoreState()`. Floating at run time is fine. `MainWindow.shutdown()`
@@ -77,6 +79,7 @@ qt_shell/            the add-on (zip this folder for a release)
   completion.py      auto-completion logic (no Qt)
   scripts.py         script manager core (no Qt)
   scripts_dock.py    Scripts dock UI – NOT USED (disabled, see 6.1)
+  shelf.py           Shelf toolbar (QToolBar 'toolbar_shelf', not floatable) – buttons run code via scripts._execute; config/qt_shell/shelves.json
   prefs_window.py    Edit → Qt Preferences… (Qt Shell settings; Scripts page replaces the disabled Scripts dock for startup files)
   api.py             public API (qt_shell.api)
   fake_ui.py, qt_ui.py, rna_widgets.py   Blender UI code → Qt widgets
@@ -143,7 +146,8 @@ add-on folder there is connected:
 | 0.9.3 | 2026-10-19 | Light-blue hover / pressed highlight for buttons, fields, lists, menus |
 | 0.9.4 | 2026-10-19 | Node editor: Tab node search, Ctrl+Tab groups, wheel zoom fix, F / Home / Numpad . framing |
 | 0.10.0 | 2026-10-20 | Transform tools: toolbar (T) + Select / Move / Rotate / Scale / Transform gizmos in every view, Shift+Space tool menu, W = Select; fix: crash on start after closing with a floating window; docs: buttons over the viewport, `examples/viewport_button.py` |
-| 0.10.1 | not released yet | Edit → Qt Preferences… (Qt Shell settings window; startup scripts list replaces the Scripts dock for files) |
+| 0.10.1 | 2026-10-20 | Edit → Qt Preferences… (Qt Shell settings window; startup scripts list replaces the Scripts dock for files) |
+| 0.11.0 | not released yet | Shelf (Maya-like script buttons: drag code from the Text editor, → Shelf, drop .py files; tabs; edit dialog) |
 
 ---
 
@@ -176,7 +180,7 @@ Until then, scripts are managed from the Text editor and the Console (`qt_shell.
   entries (fixed in 0.5.0, still in the log file).
 
 ### 6.3 State of the owner's PC (2026-10-20)
-- Add-on folder has the current `main` (0.10.1). Qt Preferences not yet tested in Blender (owner was working).
+- Add-on folder has the current `main` (0.11.0). Shelf tested (Cube button, drag code → new Monkey button – left on the owner's shelf as an example). Qt Preferences window still not opened in a test.
 - Auto-load file was configured: `C:\Users\uzivatel\Documents\qt_start.py` (switches to Four Views);
   the owner asked how to remove it, so it may have been removed since – check with `qt_shell.scripts.managed_files()`.
 - Test file left in `%TEMP%\qs_viewport_button.py` (same as the example; deleting files on the device

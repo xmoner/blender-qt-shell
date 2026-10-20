@@ -130,6 +130,12 @@ class QtPreferences(QtWidgets.QDialog):
         if act is not None:
             c = self._check(page, lay, "Show the Blender window now", act.isChecked(), act.setChecked)
             act.toggled.connect(_safe(lambda on, c=c: c.isChecked() != on and c.setChecked(on)))
+        bar = getattr(self.win, "shelf_bar", None)
+        if bar is not None:
+            _section(lay, "Shelf", page)
+            sc = self._check(page, lay, "Show the Shelf (script buttons below the menu)", not bar.isHidden(),
+                             bar.setVisible)
+            bar.visibilityChanged.connect(_safe(lambda on, c=sc: c.isChecked() != on and c.setChecked(on)))
         _section(lay, "Window layout", page)
         row = QtWidgets.QHBoxLayout()
         b = QtWidgets.QPushButton("Reset Window Layout", page)

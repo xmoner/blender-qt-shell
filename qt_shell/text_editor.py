@@ -472,6 +472,8 @@ class TextEditor(QtWidgets.QWidget):
         bar.addWidget(self.ac_check)
         self.state_lab = QtWidgets.QLabel()
         bar.addWidget(self.state_lab)
+        tool("→ Shelf", "Add the selected code – or the whole text – as a button to the Shelf "
+             "(you can also drag selected code onto the Shelf)", self.to_shelf)
         tool("Run Selection", "Run the selected lines, or the current line, in the script's namespace "
              "(Ctrl+Enter). A single expression prints its value.", self.run_selection)
         self.unload_btn = tool("■ Unload", "Call the script's unregister() and remove everything it "
@@ -781,6 +783,18 @@ class TextEditor(QtWidgets.QWidget):
             self.editor.mark_error(r.error_line)
         self._update_state()
         self._undo_push("Run Selection")
+
+    def to_shelf(self):
+        mw = getattr(self.hub, "main_window", None)
+        shelf = getattr(mw, "shelf", None)
+        if shelf is None:
+            return
+        cur = self.editor.textCursor()
+        code = cur.selectedText().replace("\u2029", "\n") if cur.hasSelection() else self.editor.toPlainText()
+        t = self._text()
+        name = os.path.splitext(t.name)[0] if t is not None and not cur.hasSelection() else None
+        mw.shelf_bar.show()
+        shelf.add_code(code, name)
 
     def unload_script(self):
         key = self._key()

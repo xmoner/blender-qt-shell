@@ -536,6 +536,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resizeDocks([self.docks["properties"]], [400], QtCore.Qt.Horizontal)
         self.resizeDocks([self.docks["last_op"]], [230], QtCore.Qt.Horizontal)
 
+        # Shelf (like Maya): a bar of script buttons at the top; not floatable (a saved floating
+        # bar / dock crashes Qt on the next start)
+        from .shelf import ShelfBar
+        self.shelf_bar = QtWidgets.QToolBar("Shelf", self)
+        self.shelf_bar.setObjectName("toolbar_shelf")
+        self.shelf_bar.setFloatable(False)
+        self.shelf_bar.setAllowedAreas(QtCore.Qt.TopToolBarArea | QtCore.Qt.BottomToolBarArea)
+        self.shelf = ShelfBar(hub, self.shelf_bar)
+        self.shelf_bar.addWidget(self.shelf)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, self.shelf_bar)
+
         self.render_window = RenderWindow(self)
         self._build_menus()
         self._build_shortcuts()
@@ -775,6 +786,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if key == "sidebar":
                 act.setText("Sidebar (N)")
             win.addAction(act)
+        shelf_act = self.shelf_bar.toggleViewAction()
+        shelf_act.setText("Shelf")
+        win.addAction(shelf_act)
         self.window_menu = win
         self.window_menu_docks_end = win.addSeparator()
         self.blender_visible_act = win.addAction("Show Blender Window")

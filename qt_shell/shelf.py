@@ -1,0 +1,420 @@
+"""Shelf – a bar of script buttons like Maya's shelf.
+
+- Tabs (shelves) with buttons; a button runs Python code (or a .py file) with one click.
+- Add buttons: drag selected code from the Text editor onto the shelf, "→ Shelf" in the Text editor,
+  drop a .py file from the file manager, or right click → New Button….
+- Right click a button: Edit… (label, icon, tooltip, code), Duplicate, Move Left / Right, Delete.
+- Right click the tabs / empty space: New Shelf…, Rename Shelf…, Delete Shelf.
+- Stored in Blender's config folder: config/qt_shell/shelves.json.
+"""
+import copy
+import json
+import os
+import re
+import time
+import traceback
+
+import bpy
+from PySide6 import QtCore, QtGui, QtWidgets
+
+from . import api, bridge, scripts, theme
+
+DEFAULT = {
+    "current": 0,
+    "shelves": [{
+        "name": "Custom",
+        "buttons": [
+            {"label": "Cube", "icon": "🧊", "tooltip": "Add a cube at the 3D cursor",
+             "command": "import bpy\nbpy.ops.mesh.primitive_cube_add("
+                        "location=bpy.context.scene.cursor.location)\n"},
+            {"label": "Smooth", "icon": "◍", "tooltip": "Shade the selected objects smooth",
+             "command": "import bpy\nbpy.ops.object.shade_smooth()\n"},
+            {"label": "Views", "icon": "▦", "tooltip": "Four views ↔ one view",
+             "command": "import qt_shell.api as qs\n"
+                        "qs.set_viewport_layout('single' if qs.viewport_layout() == 'quad' else 'quad')\n"},
+        ],
+    }],
+}
+
+
+# ---------------------------------------------------------------- storage
+def _path():
+    d = bpy.utils.user_resource("CONFIG", path="qt_shell", create=True)
+    return os.path.join(d, "shelves.json")
+
+
+def load():
+    try:
+        with open(_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and isinstance(data.get("shelves"), list) and data["shelves"]:
+            return data
+    except FileNotFoundError:
+        pass
+    except Exception:
+        bridge.log(f"Shelf: cannot read {_path()}:\n{traceback.format_exc()}", "WARNING")
+    return copy.deepcopy(DEFAULT)
+
+
+def save(data):
+    try:
+        with open(_path(), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        bridge.log(f"Shelf: cannot save {_path()}:\n{traceback.format_exc()}", "ERROR")
+
+
+# ---------------------------------------------------------------- running
+def run_button(btn):
+    """Runs the code / file of a button in Blender's context; output goes to the Console."""
+    label = btn.get("label") or "Button"
+    path = btn.get("file")
+    try:
+        if path:
+            with open(path, encoding="utf-8") as f:
+                src = f.read()
+            filename = path
+        else:
+            src = btn.get("command", "")
+            filename = f"<shelf {label}>"
+    except Exception as ex:
+        scripts.show_console()
+        scripts.report(f"\n▶ Shelf: {label}\n{ex}\n", "#ff7070")
+        api.status(f"Shelf '{label}': {ex}")
+        return
+    ns = {"__name__": "__main__", "__file__": filename, "bpy": bpy}
+    info = {"ns": ns, "handlers": [], "classes": [], "status": "ran", "time": time.time(),
+            "filename": filename}
+    ok, output, line = scripts._execute(f"shelf:{label}", src, filename, ns, info)
+    if output:
+        scripts.report(f"\n▶ Shelf: {label}\n", "#8fb3ff")
+        scripts.report(output if output.endswith("\n") else output + "\n", "#e5e5e5" if ok else "#ff7070")
+    if not ok:
+        scripts.show_console()
+        api.status(f"Shelf '{label}': error{f' on line {line}' if line else ''} – see the Console")
+    bridge.undo_push(f"Shelf: {label}")
+
+
+def label_for_code(code, fallback="Script"):
+    """A short button label from code: first def / class name, or the first word of a comment."""
+    m = re.search(r"^\s*(?:def|class)\s+(\w+)", code, re.M)
+    if m and m.group(1) not in ("register", "unregister", "main"):
+        return m.group(1)[:12]
+    m = re.search(r"^\s*#\s*(\w[\w ]{0,20})", code, re.M)
+    if m:
+        return m.group(1).strip()[:12]
+    return fallback[:12]
+
+
+# ---------------------------------------------------------------- edit dialog
+class ButtonDialog(QtWidgets.QDialog):
+    def __init__(self, parent, btn, title="Edit Shelf Button"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(theme.px(620), theme.px(460))
+        self.btn = dict(btn)
+        lay = QtWidgets.QVBoxLayout(self)
+        form = QtWidgets.QFormLayout()
+        lay.addLayout(form)
+        self.label = QtWidgets.QLineEdit(self.btn.get("label", ""), self)
+        self.label.setPlaceholderText("Text on the button")
+        form.addRow("Label", self.label)
+        icon_row = QtWidgets.QHBoxLayout()
+        self.icon = QtWidgets.QLineEdit(self.btn.get("icon", ""), self)
+        self.icon.setPlaceholderText("emoji / symbol (🧊 ◍ ★) or an image file (.png .svg)")
+        icon_row.addWidget(self.icon, 1)
+        browse = QtWidgets.QPushButton("Image…", self)
+        browse.clicked.connect(self._browse_icon)
+        icon_row.addWidget(browse)
+        form.addRow("Icon", icon_row)
+        self.tip = QtWidgets.QLineEdit(self.btn.get("tooltip", ""), self)
+        self.tip.setPlaceholderText("Shown when the mouse is over the button")
+        form.addRow("Tooltip", self.tip)
+        file_row = QtWidgets.QHBoxLayout()
+        self.file = QtWidgets.QLineEdit(self.btn.get("file", "") or "", self)
+        self.file.setPlaceholderText("optional – run this .py file instead of the code below")
+        file_row.addWidget(self.file, 1)
+        fb = QtWidgets.QPushButton("File…", self)
+        fb.clicked.connect(self._browse_file)
+        file_row.addWidget(fb)
+        form.addRow("Script file", file_row)
+        from .text_editor import CodeEditor
+        self.code = CodeEditor(self)
+        self.code.setPlainText(self.btn.get("command", ""))
+        self.code.setPlaceholderText("Python code, e.g.\nimport bpy\nbpy.ops.mesh.primitive_monkey_add()")
+        lay.addWidget(QtWidgets.QLabel("Command (Python)", self))
+        lay.addWidget(self.code, 1)
+        row = QtWidgets.QHBoxLayout()
+        test = QtWidgets.QPushButton("▶ Test", self)
+        test.setToolTip("Run the command now")
+        test.clicked.connect(lambda: run_button(self.result_button()))
+        row.addWidget(test)
+        row.addStretch(1)
+        ok = QtWidgets.QPushButton("Save", self)
+        ok.setDefault(True)
+        ok.clicked.connect(self.accept)
+        cancel = QtWidgets.QPushButton("Cancel", self)
+        cancel.clicked.connect(self.reject)
+        row.addWidget(ok)
+        row.addWidget(cancel)
+        lay.addLayout(row)
+
+    def _browse_icon(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Button Image", os.path.expanduser("~"),
+                                                        "Images (*.png *.svg *.jpg *.ico)")
+        if path:
+            self.icon.setText(path)
+
+    def _browse_file(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Script File", os.path.expanduser("~"),
+                                                        "Python (*.py)")
+        if path:
+            self.file.setText(path)
+
+    def result_button(self):
+        b = dict(self.btn)
+        b["label"] = self.label.text().strip() or "Button"
+        b["icon"] = self.icon.text().strip()
+        b["tooltip"] = self.tip.text().strip()
+        b["command"] = self.code.toPlainText()
+        f = self.file.text().strip()
+        if f:
+            b["file"] = f
+        else:
+            b.pop("file", None)
+        return b
+
+
+# ---------------------------------------------------------------- the bar
+class ShelfBar(QtWidgets.QWidget):
+    """Tabs + a row of buttons. Lives in a QToolBar at the top of the main window."""
+
+    def __init__(self, hub, parent=None):
+        super().__init__(parent)
+        self.hub = hub
+        self.data = load()
+        self.setAcceptDrops(True)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(theme.px(2), 0, theme.px(2), theme.px(2))
+        lay.setSpacing(0)
+        self.tabs = QtWidgets.QTabBar(self)
+        self.tabs.setExpanding(False)
+        self.tabs.setDrawBase(False)
+        self.tabs.setStyleSheet(f"QTabBar::tab {{ padding: {theme.px(2)}px {theme.px(10)}px; }}")
+        self.tabs.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tabs.customContextMenuRequested.connect(lambda pos: self._shelf_menu(self.tabs.mapToGlobal(pos)))
+        self.tabs.currentChanged.connect(self._tab_changed)
+        lay.addWidget(self.tabs)
+        self.row_widget = QtWidgets.QWidget(self)
+        self.row = QtWidgets.QHBoxLayout(self.row_widget)
+        self.row.setContentsMargins(0, theme.px(2), 0, 0)
+        self.row.setSpacing(theme.px(3))
+        self.row_widget.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.row_widget.customContextMenuRequested.connect(
+            lambda pos: self._shelf_menu(self.row_widget.mapToGlobal(pos)))
+        lay.addWidget(self.row_widget)
+        self._fill_tabs()
+
+    # --- data helpers
+    def _shelf(self):
+        i = max(0, min(self.data.get("current", 0), len(self.data["shelves"]) - 1))
+        return self.data["shelves"][i]
+
+    def _save(self):
+        save(self.data)
+
+    # --- building
+    def _fill_tabs(self):
+        self.tabs.blockSignals(True)
+        while self.tabs.count():
+            self.tabs.removeTab(0)
+        for s in self.data["shelves"]:
+            self.tabs.addTab(s.get("name", "Shelf"))
+        self.tabs.setCurrentIndex(max(0, min(self.data.get("current", 0), self.tabs.count() - 1)))
+        self.tabs.blockSignals(False)
+        self._fill_buttons()
+
+    def _tab_changed(self, i):
+        self.data["current"] = i
+        self._save()
+        self._fill_buttons()
+
+    def _fill_buttons(self):
+        while self.row.count():
+            it = self.row.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+        size = theme.px(40)
+        for idx, b in enumerate(self._shelf().get("buttons", [])):
+            tb = QtWidgets.QToolButton(self.row_widget)
+            tb.setFixedSize(theme.px(52), size + theme.px(4))
+            icon = b.get("icon", "")
+            label = b.get("label", "")
+            if icon and os.path.isfile(icon):
+                tb.setIcon(QtGui.QIcon(icon))
+                tb.setIconSize(QtCore.QSize(theme.px(22), theme.px(22)))
+                tb.setText(label)
+                tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+            else:
+                tb.setText(f"{icon}\n{label}" if icon else label)
+                tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+            f = tb.font()
+            f.setPixelSize(theme.fs(10))
+            tb.setFont(f)
+            tip = b.get("tooltip") or label
+            src = b.get("file") or (b.get("command", "").strip().splitlines() or [""])[0]
+            tb.setToolTip(f"{tip}\n{src[:80]}\n(right click: edit, delete…)")
+            tb.clicked.connect(lambda _c=False, i=idx: self._run(i))
+            tb.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            tb.customContextMenuRequested.connect(
+                lambda pos, i=idx, w=tb: self._button_menu(i, w.mapToGlobal(pos)))
+            self.row.addWidget(tb)
+        if not self._shelf().get("buttons"):
+            hint = QtWidgets.QLabel("Drag code from the Text editor here, or right click → New Button…",
+                                    self.row_widget)
+            hint.setProperty("dim", True)
+            self.row.addWidget(hint)
+        self.row.addStretch(1)
+
+    # --- actions
+    def _run(self, i):
+        btns = self._shelf().get("buttons", [])
+        if 0 <= i < len(btns):
+            run_button(btns[i])
+
+    def add_button(self, btn, edit=False):
+        """Adds a button to the current shelf (edit=True opens the edit dialog first)."""
+        if edit:
+            dlg = ButtonDialog(self.window(), btn, "New Shelf Button")
+            if dlg.exec() != QtWidgets.QDialog.Accepted:
+                return
+            btn = dlg.result_button()
+        self._shelf().setdefault("buttons", []).append(btn)
+        self._save()
+        self._fill_buttons()
+        api.status(f"Added '{btn.get('label', '')}' to the shelf '{self._shelf().get('name', '')}'")
+
+    def add_code(self, code, label=None):
+        if not code.strip():
+            return
+        self.add_button({"label": label or label_for_code(code), "icon": "", "tooltip": "",
+                         "command": code if code.endswith("\n") else code + "\n"}, edit=True)
+
+    def _edit(self, i):
+        btns = self._shelf()["buttons"]
+        dlg = ButtonDialog(self.window(), btns[i])
+        if dlg.exec() == QtWidgets.QDialog.Accepted:
+            btns[i] = dlg.result_button()
+            self._save()
+            self._fill_buttons()
+
+    def _button_menu(self, i, gpos):
+        btns = self._shelf()["buttons"]
+        m = QtWidgets.QMenu(self)
+        m.addAction("Edit…", lambda: self._edit(i))
+        m.addAction("Duplicate", lambda: (btns.insert(i + 1, copy.deepcopy(btns[i])), self._changed()))
+        m.addSeparator()
+        a = m.addAction("Move Left", lambda: (btns.insert(i - 1, btns.pop(i)), self._changed()))
+        a.setEnabled(i > 0)
+        a = m.addAction("Move Right", lambda: (btns.insert(i + 1, btns.pop(i)), self._changed()))
+        a.setEnabled(i < len(btns) - 1)
+        if len(self.data["shelves"]) > 1:
+            mv = m.addMenu("Move to Shelf")
+            for j, s in enumerate(self.data["shelves"]):
+                if s is not self._shelf():
+                    mv.addAction(s.get("name", "Shelf"),
+                                 lambda s=s: (s.setdefault("buttons", []).append(btns.pop(i)), self._changed()))
+        m.addSeparator()
+        m.addAction("Delete", lambda: self._delete(i))
+        m.exec(gpos)
+
+    def _delete(self, i):
+        btns = self._shelf()["buttons"]
+        r = QtWidgets.QMessageBox.question(self.window(), "Delete Shelf Button",
+                                           f"Delete the button “{btns[i].get('label', '')}”?")
+        if r == QtWidgets.QMessageBox.Yes:
+            btns.pop(i)
+            self._changed()
+
+    def _changed(self):
+        self._save()
+        self._fill_buttons()
+
+    def _shelf_menu(self, gpos):
+        m = QtWidgets.QMenu(self)
+        m.addAction("New Button…", lambda: self.add_button(
+            {"label": "Button", "icon": "", "tooltip": "", "command": "import bpy\n"}, edit=True))
+        m.addSeparator()
+        m.addAction("New Shelf…", self._new_shelf)
+        m.addAction("Rename Shelf…", self._rename_shelf)
+        a = m.addAction("Delete Shelf", self._delete_shelf)
+        a.setEnabled(len(self.data["shelves"]) > 1)
+        m.addSeparator()
+        m.addAction("Open the Shelf File Folder",
+                    lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(os.path.dirname(_path()))))
+        m.exec(gpos)
+
+    def _new_shelf(self):
+        name, ok = QtWidgets.QInputDialog.getText(self.window(), "New Shelf", "Name:")
+        if ok and name.strip():
+            self.data["shelves"].append({"name": name.strip(), "buttons": []})
+            self.data["current"] = len(self.data["shelves"]) - 1
+            self._save()
+            self._fill_tabs()
+
+    def _rename_shelf(self):
+        s = self._shelf()
+        name, ok = QtWidgets.QInputDialog.getText(self.window(), "Rename Shelf", "Name:", text=s.get("name", ""))
+        if ok and name.strip():
+            s["name"] = name.strip()
+            self._save()
+            self._fill_tabs()
+
+    def _delete_shelf(self):
+        s = self._shelf()
+        r = QtWidgets.QMessageBox.question(
+            self.window(), "Delete Shelf",
+            f"Delete the shelf “{s.get('name', '')}” with {len(s.get('buttons', []))} button(s)?")
+        if r == QtWidgets.QMessageBox.Yes:
+            self.data["shelves"].remove(s)
+            self.data["current"] = 0
+            self._save()
+            self._fill_tabs()
+
+    # --- drag & drop (code from the Text editor, .py files)
+    @staticmethod
+    def _accept_copy(ev):
+        # always copy: the default for text dragged out of an editor is "move", which would
+        # delete the code from the Text editor
+        ev.setDropAction(QtCore.Qt.CopyAction)
+        ev.accept()
+
+    def dragEnterEvent(self, ev):
+        md = ev.mimeData()
+        if md.hasUrls() and any(u.toLocalFile().lower().endswith(".py") for u in md.urls()):
+            self._accept_copy(ev)
+        elif md.hasText() and md.text().strip():
+            self._accept_copy(ev)
+        else:
+            ev.ignore()
+
+    def dragMoveEvent(self, ev):
+        self._accept_copy(ev)
+
+    def dropEvent(self, ev):
+        md = ev.mimeData()
+        files = [u.toLocalFile() for u in md.urls()] if md.hasUrls() else []
+        files = [f for f in files if f.lower().endswith(".py")]
+        self._accept_copy(ev)
+        # the edit dialog is modal – open it after the drop has finished
+        if files:
+            def add_files():
+                for f in files:
+                    self.add_button({"label": os.path.splitext(os.path.basename(f))[0][:12], "icon": "",
+                                     "tooltip": f, "file": f, "command": ""})
+            QtCore.QTimer.singleShot(0, add_files)
+        else:
+            code = md.text().replace(" ", "\n")
+            QtCore.QTimer.singleShot(0, lambda: self.add_code(code))
