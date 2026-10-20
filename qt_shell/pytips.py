@@ -10,6 +10,8 @@ event filter adds that command to the tooltip:
     Location
     Python: bpy.data.objects["Cube"].location
 
+Shift + middle click on a button / field / menu item copies its command to the clipboard (always on).
+
 Usage in code:  pytips.tag(widget_or_action, "bpy.ops.object.delete()")
                 pytips.tag_op(widget, "mesh.primitive_cube_add", {"size": 2})
                 pytips.tag_prop(widget, data, "location", index=-1)
@@ -138,7 +140,8 @@ def _compose(tip, py):
     sep = "<br>" if body else ""
     return (f"<div style='white-space:pre-wrap'>{body}{sep}"
             f"<b>Python:</b> "
-            f"<span style=\"font-family:Consolas,'DejaVu Sans Mono',monospace\">{code}</span></div>")
+            f"<span style=\"font-family:Consolas,'DejaVu Sans Mono',monospace\">{code}</span>"
+            f"<br><span style='font-size:small'><i>Shift + middle click: copy</i></span></div>")
 
 
 def handle(obj, ev):
@@ -177,6 +180,47 @@ def handle(obj, ev):
         msg = f"{type(ex).__name__}: {ex}"
     from . import bridge
     bridge.log("Python tooltip: " + msg, "WARNING")
+    return False
+
+
+def _command_at(obj, pos):
+    """Python command of the widget / menu item at pos (widget coordinates), or None."""
+    if isinstance(obj, QtWidgets.QMenu):
+        act = obj.actionAt(pos)
+        return _get(act) if act is not None else None
+    if not isinstance(obj, QtWidgets.QWidget):
+        return None
+    w, depth = obj, 0
+    while w is not None and depth < 4:
+        py = _get(w)
+        if py:
+            return py
+        if w.isWindow():
+            return None
+        w, depth = w.parentWidget(), depth + 1
+    return None
+
+
+def copy_on_click(obj, ev):
+    """Shift + middle click copies the command (called by app._notify_with_context).
+    Returns True when something was copied (the click is then consumed)."""
+    try:
+        py = _command_at(obj, ev.position().toPoint())
+        if not py:
+            return False
+        QtWidgets.QApplication.clipboard().setText(py)
+        short = py if len(py) < 90 else py[:87] + "…"
+        QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), "Copied to the clipboard:\n" + short)
+        try:
+            from . import api
+            api.status("Copied: " + short.replace("\n", "  "))
+        except Exception:
+            pass
+        return True
+    except Exception as ex:
+        msg = f"{type(ex).__name__}: {ex}"
+    from . import bridge
+    bridge.log("Copy Python command: " + msg, "WARNING")
     return False
 
 

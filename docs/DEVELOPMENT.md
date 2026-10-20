@@ -100,7 +100,7 @@ qt_shell/            the add-on (zip this folder for a release)
   scripts.py         script manager core (no Qt)
   scripts_dock.py    Scripts dock UI – NOT USED (disabled, see 6.1)
   shelf.py           Shelf (dock 'shelf' at the top, floatable) – buttons run code via scripts._execute; config/qt_shell/shelves.json
-  pytips.py          Python tooltips: widgets/actions carry the command in Qt property "qtshell_python" (tag / tag_op / tag_prop); app._notify_with_context calls pytips.handle() for QEvent.ToolTip; QSettings interface/python_tooltips
+  pytips.py          Python tooltips: widgets/actions carry the command in Qt property "qtshell_python" (tag / tag_op / tag_prop); app._notify_with_context calls pytips.handle() for QEvent.ToolTip; QSettings interface/python_tooltips; Shift+MMB → pytips.copy_on_click() (also from app.notify) copies the command
   graph_editor.py    Graph editor (Maya-like): channel tree + GraphView; selection = Blender's key select flags; Blender 4.4+ channelbags via bpy_extras.anim_utils
   workspaces.py      Workspaces (tabs = menu bar corner widget; manager captures/restores saveState per workspace; templates; config/qt_shell/workspaces.json)
   prefs_window.py    Edit → Qt Preferences… (Qt Shell settings; Scripts page replaces the disabled Scripts dock for startup files)

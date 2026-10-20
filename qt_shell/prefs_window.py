@@ -120,7 +120,9 @@ class QtPreferences(QtWidgets.QDialog):
         pytips.tag(c, 'QtCore.QSettings("QtShell", "QtShell").setValue("interface/python_tooltips", "true")')
         _hint(lay, "Like Blender's Python Tooltips: hover a button, field or menu item to see the command that runs it, "
                    "e.g. bpy.ops.mesh.primitive_cube_add() or bpy.data.objects[\"Cube\"].location – ready to paste "
-                   "into the Text editor or the Console.", page)
+                   "into the Text editor or the Console.\n"
+                   "Shift + middle click on a button, field or menu item copies its command to the clipboard "
+                   "(also when this option is off).", page)
 
     def _interface_size(self):
         self.close()                          # the window is rebuilt after a size change
