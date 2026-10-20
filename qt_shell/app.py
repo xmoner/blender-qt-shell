@@ -252,6 +252,7 @@ def start(addon_prefs=None):
             st = QtCore.QSettings("QtShell", "QtShell")
             st.remove("state")
             st.remove("geometry")
+            st.remove("floating_docks")
             st.sync()
         except Exception:
             pass

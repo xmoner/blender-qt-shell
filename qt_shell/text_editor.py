@@ -793,7 +793,10 @@ class TextEditor(QtWidgets.QWidget):
         code = cur.selectedText().replace("\u2029", "\n") if cur.hasSelection() else self.editor.toPlainText()
         t = self._text()
         name = os.path.splitext(t.name)[0] if t is not None and not cur.hasSelection() else None
-        mw.shelf_bar.show()
+        d = getattr(mw, "docks", {}).get("shelf")
+        if d is not None:
+            d.show()
+            d.raise_()
         shelf.add_code(code, name)
 
     def unload_script(self):

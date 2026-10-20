@@ -58,6 +58,9 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
   dock is docked again right after `restoreState()`. Floating at run time is fine. `MainWindow.shutdown()`
   docks floating docks before `saveState()`; restored floating docks are docked too (`api._install_dock` as well).
   This was the cause of the recurring "previous start did not finish" crashes (2026-10-19/20).
+  To keep floating windows across restarts, `shutdown()` stores their geometry in QSettings `floating_docks`
+  (JSON) before docking them, and `MainWindow._float_saved_docks()` floats them again **1.5 s after the start**
+  (tested OK; re-floating right after `show()` crashed). Safe start also clears `floating_docks`.
 
 ---
 
@@ -79,7 +82,7 @@ qt_shell/            the add-on (zip this folder for a release)
   completion.py      auto-completion logic (no Qt)
   scripts.py         script manager core (no Qt)
   scripts_dock.py    Scripts dock UI – NOT USED (disabled, see 6.1)
-  shelf.py           Shelf toolbar (QToolBar 'toolbar_shelf', not floatable) – buttons run code via scripts._execute; config/qt_shell/shelves.json
+  shelf.py           Shelf (dock 'shelf' at the top, floatable) – buttons run code via scripts._execute; config/qt_shell/shelves.json
   prefs_window.py    Edit → Qt Preferences… (Qt Shell settings; Scripts page replaces the disabled Scripts dock for startup files)
   api.py             public API (qt_shell.api)
   fake_ui.py, qt_ui.py, rna_widgets.py   Blender UI code → Qt widgets
@@ -147,7 +150,7 @@ add-on folder there is connected:
 | 0.9.4 | 2026-10-19 | Node editor: Tab node search, Ctrl+Tab groups, wheel zoom fix, F / Home / Numpad . framing |
 | 0.10.0 | 2026-10-20 | Transform tools: toolbar (T) + Select / Move / Rotate / Scale / Transform gizmos in every view, Shift+Space tool menu, W = Select; fix: crash on start after closing with a floating window; docs: buttons over the viewport, `examples/viewport_button.py` |
 | 0.10.1 | 2026-10-20 | Edit → Qt Preferences… (Qt Shell settings window; startup scripts list replaces the Scripts dock for files) |
-| 0.11.0 | not released yet | Shelf (Maya-like script buttons: drag code from the Text editor, → Shelf, drop .py files; tabs; edit dialog) |
+| 0.11.0 | not released yet | Shelf (Maya-like script buttons: drag code from the Text editor, → Shelf, drop .py files; tabs with +, floatable dock; non-modal edit dialog with ▶ Test); floating windows restored after restart |
 
 ---
 

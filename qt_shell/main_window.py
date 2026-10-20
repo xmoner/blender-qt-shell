@@ -536,16 +536,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resizeDocks([self.docks["properties"]], [400], QtCore.Qt.Horizontal)
         self.resizeDocks([self.docks["last_op"]], [230], QtCore.Qt.Horizontal)
 
-        # Shelf (like Maya): a bar of script buttons at the top; not floatable (a saved floating
-        # bar / dock crashes Qt on the next start)
+        # Shelf (like Maya): script buttons; a dock at the top – can float as its own window
         from .shelf import ShelfBar
-        self.shelf_bar = QtWidgets.QToolBar("Shelf", self)
-        self.shelf_bar.setObjectName("toolbar_shelf")
-        self.shelf_bar.setFloatable(False)
-        self.shelf_bar.setAllowedAreas(QtCore.Qt.TopToolBarArea | QtCore.Qt.BottomToolBarArea)
-        self.shelf = ShelfBar(hub, self.shelf_bar)
-        self.shelf_bar.addWidget(self.shelf)
-        self.addToolBar(QtCore.Qt.TopToolBarArea, self.shelf_bar)
+        self.shelf = ShelfBar(hub)
+        self._dock("shelf", "Shelf", self.shelf, QtCore.Qt.TopDockWidgetArea)
 
         self.render_window = RenderWindow(self)
         self._build_menus()
@@ -598,6 +592,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.viewports.set_layout(mode)
             except Exception:
                 bridge.log("Viewport layout: " + __import__("traceback").format_exc(), "ERROR")
+        # a layout saved before the Shelf dock existed: put it at the top
+        if not self.restoreDockWidget(self.docks["shelf"]):
+            self.addDockWidget(QtCore.Qt.TopDockWidgetArea, self.docks["shelf"])
+            self.docks["shelf"].show()
         # a layout saved before the sidebar existed: give it its own full-height column
         sb = self.docks["sidebar"]
         if not self.restoreDockWidget(sb):
@@ -609,8 +607,15 @@ class MainWindow(QtWidgets.QMainWindow):
         for key, d in self.docks.items():
             if d.isFloating():
                 d.setFloating(False)
-                bridge.log(f"The '{d.windowTitle()}' window was floating – docked back on start "
-                           "(double-click its title to float it again).", "INFO")
+        # windows that were floating when Qt Shell closed float again a moment after the start
+        # (shutdown() docks them before saving the layout and remembers them here)
+        try:
+            import json
+            self._float_later = json.loads(self._settings.value("floating_docks", "{}") or "{}")
+        except Exception:
+            self._float_later = {}
+        if self._float_later:
+            QtCore.QTimer.singleShot(1500, self._float_saved_docks)
         # dock sizes are stored in pixels → follow a change of the interface size
         self._size_factor = theme.ui_scale * theme.font_scale ** 0.5
         ratio = self._size_factor / old if old > 0 else 1.0
@@ -627,6 +632,19 @@ class MainWindow(QtWidgets.QMainWindow):
             bridge.log("Qt Shell API: " + __import__("traceback").format_exc(), "ERROR")
         # auto-load scripts (files: once per session, texts of the .blend: once per file)
         QtCore.QTimer.singleShot(0, self._scripts_startup)
+
+    def _float_saved_docks(self):
+        for key, geo in getattr(self, "_float_later", {}).items():
+            d = self.docks.get(key)
+            if d is None or d.isHidden():
+                continue
+            try:
+                d.setFloating(True)
+                if isinstance(geo, list) and len(geo) == 4:
+                    d.setGeometry(*[int(v) for v in geo])
+            except RuntimeError:
+                pass
+        self._float_later = {}
 
     def _scripts_startup(self):
         try:
@@ -786,9 +804,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if key == "sidebar":
                 act.setText("Sidebar (N)")
             win.addAction(act)
-        shelf_act = self.shelf_bar.toggleViewAction()
-        shelf_act.setText("Shelf")
-        win.addAction(shelf_act)
         self.window_menu = win
         self.window_menu_docks_end = win.addSeparator()
         self.blender_visible_act = win.addAction("Show Blender Window")
@@ -1164,7 +1179,8 @@ class MainWindow(QtWidgets.QMainWindow):
                           ("last_op", QtCore.Qt.LeftDockWidgetArea),
                           ("node_editor", QtCore.Qt.BottomDockWidgetArea),
                           ("uv_editor", QtCore.Qt.BottomDockWidgetArea),
-                          ("text_editor", QtCore.Qt.BottomDockWidgetArea)):
+                          ("text_editor", QtCore.Qt.BottomDockWidgetArea),
+                          ("shelf", QtCore.Qt.TopDockWidgetArea)):
             d = self.docks[key]
             d.setFloating(False)
             self.addDockWidget(area, d)
@@ -1272,6 +1288,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # A saved layout with a floating dock crashes Qt on Windows on the next start (access
         # violation in show(), even when the dock is docked again before that). Floating works at
         # run time, so floating docks are docked before the layout is saved.
+        floating = {}
+        for key, d in self.docks.items():
+            try:
+                if d.isFloating() and not d.isHidden():
+                    g = d.geometry()
+                    floating[key] = [g.x(), g.y(), g.width(), g.height()]
+            except RuntimeError:
+                pass
+        try:
+            import json
+            self._settings.setValue("floating_docks", json.dumps(floating))
+        except Exception:
+            pass
         for d in list(self.docks.values()) + list(getattr(self, "api_docks", {}).values()):
             try:
                 if d.isFloating():
