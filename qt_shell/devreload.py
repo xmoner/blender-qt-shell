@@ -31,6 +31,14 @@ def go(delay=0.3):
             app._hub.playing = False      # stop playback before tearing the window down
         if app is not None:
             app.stop(show_blender=False)
+            # Blender's event pump (processEvents) never handles deleteLater → the old window would stay
+            # alive (hidden) next to the new one, and showing the new window after a reload crashed
+            # (access violation in show(), 2026-10-20). Delete it now.
+            try:
+                from PySide6 import QtCore
+                QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.DeferredDelete)
+            except Exception:
+                pass
             import bpy
             try:
                 if bpy.app.timers.is_registered(app._pump):

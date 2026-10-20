@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.12.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.13.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -63,10 +63,12 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
   (tested OK; re-floating right after `show()` crashed). Safe start also clears `floating_docks`.
   Workspaces follow the same rule: `Workspaces.capture()` docks floating docks, saves the state, then floats
   them again; `_apply()` docks everything, restores, and re-floats 50 ms later.
-- **`devreload` leaves the old MainWindow alive** (hidden; `deleteLater` is not processed by Blender's
-  `processEvents` pump). When poking at the window from the Console after a reload, pick the *visible* one
-  (`[w for w in QApplication.topLevelWidgets() if hasattr(w, "workspaces") and w.isVisible()]`). Changing the
-  old window crashed the next reload (2026-10-20). For a clean test, quit Blender and start it again.
+- **`deleteLater` is never processed by Blender's `processEvents` pump** – a closed MainWindow stays alive
+  (hidden). After the workspaces were added, `devreload` crashed in the new window's `show()` (access violation,
+  2026-10-20, twice). Fix: `devreload` calls `QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)`
+  right after `app.stop()` → the old window is deleted before the new one is built (3 reloads in a row OK).
+  Plain close (*Return to the Blender UI*) + *Window → Open Qt Shell* worked without it. When poking at the
+  window from the Console, pick the *visible* one (`... if hasattr(w, "workspaces") and w.isVisible()`).
 - **Re-adding docks (`_reset_layout`) can grow the window** past the screen. Workspace switches remember the
   window geometry and put it back (`workspaces.fit_to_screen`); templates set dock widths with `resizeDocks`.
 - **Computer-use note:** the top-right corner of the screen (x > ~1070 in screenshots) belongs to the Claude
@@ -163,6 +165,7 @@ add-on folder there is connected:
 | 0.10.1 | 2026-10-20 | Edit → Qt Preferences… (Qt Shell settings window; startup scripts list replaces the Scripts dock for files) |
 | 0.11.0 | 2026-10-20 | Shelf (Maya-like script buttons: drag code from the Text editor, → Shelf, drop .py files; tabs with +, floatable dock; non-modal edit dialog with ▶ Test); floating windows restored after restart |
 | 0.12.0 | not released yet | Workspaces like Blender (tabs in the menu bar; add from template / duplicate, rename, reorder, delete, reset; each remembers docks, floating windows, view layout and shading) |
+| 0.13.0 | not released yet | Movable viewport toolbar (grip, snaps to edges, horizontal / vertical, Flip, Reset; QSettings `viewport/toolbar_pos`); no saved layout → current workspace's layout is applied; dev reload deletes the old window (fixes reload crash) |
 
 ---
 
@@ -195,7 +198,9 @@ Until then, scripts are managed from the Text editor and the Console (`qt_shell.
   entries (fixed in 0.5.0, still in the log file).
 
 ### 6.3 State of the owner's PC (2026-10-20)
-- Add-on folder has the current `main` (0.12.0). Workspaces tested by clicks: Modeling, Shading, Scripting,
+- Add-on folder has the current `main` (0.13.0). Movable toolbar tested: drag to the middle, snap to the top
+  (horizontal), snap to the right (vertical), tool buttons still work, right click → Reset Position.
+- 0.12.0: Workspaces tested by clicks: Modeling, Shading, Scripting,
   Layout, + → UV Editing, right click → Delete; quit + restart restores the current workspace. Animation tab not clicked (overlay).
 - Add-on folder had 0.11.0 before. Shelf tested (Cube button, drag code → new Monkey button – left on the owner's shelf as an example). Qt Preferences window still not opened in a test.
 - Auto-load file was configured: `C:\Users\uzivatel\Documents\qt_start.py` (switches to Four Views);

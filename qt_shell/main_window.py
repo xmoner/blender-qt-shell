@@ -576,6 +576,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rendering = False
 
         self._settings = QtCore.QSettings("QtShell", "QtShell")
+        st = None
         try:
             geo = self._settings.value("geometry")
             st = self._settings.value("state")
@@ -631,6 +632,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.workspaces = Workspaces(self)
             self.workspace_tabs = WorkspaceTabs(self.workspaces, self.menuBar())
             self.menuBar().setCornerWidget(self.workspace_tabs, QtCore.Qt.TopRightCorner)
+            if st is None:
+                # no saved window layout (first start / safe start): use the current workspace's one
+                QtCore.QTimer.singleShot(0, lambda: self.workspaces.current() and
+                                         self.workspaces._apply(self.workspaces.current()))
         except Exception:
             self.workspaces = None
             bridge.log("Workspaces: " + __import__("traceback").format_exc(), "ERROR")

@@ -59,12 +59,35 @@ class ToolState(QtCore.QObject):
         tool = str(s.value("viewport/tool", "SELECT"))
         self.tool = tool if tool in [t[0] for t in TOOLS] else "SELECT"
         self.toolbar_visible = str(s.value("viewport/toolbar", "true")).lower() == "true"
+        # toolbar position shared by all views: (fx, fy) = fraction of the free space, None = default
+        self.toolbar_pos = None
+        self.toolbar_horizontal = False
+        try:
+            raw = str(s.value("viewport/toolbar_pos", "") or "")
+            if raw:
+                fx, fy, h = raw.split(",")
+                self.toolbar_pos = (min(1.0, max(0.0, float(fx))), min(1.0, max(0.0, float(fy))))
+                self.toolbar_horizontal = h == "h"
+        except Exception:
+            self.toolbar_pos = None
 
     def set_tool(self, tool):
         if tool not in [t[0] for t in TOOLS] or tool == self.tool:
             return
         self.tool = tool
         QtCore.QSettings("QtShell", "QtShell").setValue("viewport/tool", tool)
+        self.changed.emit()
+
+    def set_toolbar_pos(self, pos, horizontal=None):
+        self.toolbar_pos = pos
+        if horizontal is not None:
+            self.toolbar_horizontal = bool(horizontal)
+        val = "" if pos is None else \
+            f"{pos[0]:.4f},{pos[1]:.4f},{'h' if self.toolbar_horizontal else 'v'}"
+        if pos is None and self.toolbar_horizontal:
+            val = "0,0.0,h"           # keep the orientation even at the default place
+            self.toolbar_pos = (0.0, 0.0)
+        QtCore.QSettings("QtShell", "QtShell").setValue("viewport/toolbar_pos", val)
         self.changed.emit()
 
     def toggle_toolbar(self):
@@ -82,8 +105,44 @@ def tool_state(hub):
 
 
 # ---------------------------------------------------------------- toolbar
+class _Grip(QtWidgets.QWidget):
+    """The dotted handle of the toolbar – drag it to move the toolbar."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setCursor(QtCore.Qt.SizeAllCursor)
+        self.setToolTip("Drag to move the toolbar (it snaps to the edges of the view)\n"
+                        "Double-click: back to the default place · Right click: more")
+        self.horizontal = False
+
+    def sizeHint(self):
+        return QtCore.QSize(theme.px(10), theme.px(30)) if self.horizontal else \
+            QtCore.QSize(theme.px(30), theme.px(10))
+
+    def paintEvent(self, ev):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(235, 235, 235) if self.underMouse() else QtGui.QColor(175, 175, 175))
+        r = max(1.2, theme.px(1.6))
+        c = QtCore.QPointF(self.rect().center())
+        step = theme.px(5)
+        for i in (-1, 0, 1):
+            for j in (-0.5, 0.5):
+                dx, dy = (j * step, i * step) if self.horizontal else (i * step, j * step)
+                p.drawEllipse(c + QtCore.QPointF(dx, dy), r, r)
+
+    def enterEvent(self, ev):
+        self.update()
+
+    def leaveEvent(self, ev):
+        self.update()
+
+
 class Toolbar(QtWidgets.QFrame):
-    """Column of tool buttons floating over the left side of a 3D view."""
+    """Tool buttons floating over a 3D view – movable by its grip, snaps to the edges."""
+
+    SNAP = 28          # unscaled px: closer than this to an edge → stick to it
 
     def __init__(self, viewport):
         super().__init__(viewport)
@@ -95,10 +154,17 @@ class Toolbar(QtWidgets.QFrame):
             f" border-radius: {theme.px(5)}px; }}"
             "QToolButton { background: transparent; border: 1px solid transparent; }"
             f"QToolButton:checked {{ background: {theme.C['highlight']}; }}\n" + theme.hover_qss())
-        lay = QtWidgets.QVBoxLayout(self)
+        lay = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.TopToBottom, self)
         m = theme.px(3)
         lay.setContentsMargins(m, m, m, m)
         lay.setSpacing(theme.px(2))
+        self._lay = lay
+        self._drag = None              # (press pos in the viewport, toolbar pos at press)
+        self.grip = _Grip(self)
+        self.grip.installEventFilter(self)
+        lay.addWidget(self.grip, 0, QtCore.Qt.AlignCenter)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._menu)
         self.buttons = {}
         group = QtWidgets.QButtonGroup(self)
         group.setExclusive(True)
@@ -117,18 +183,153 @@ class Toolbar(QtWidgets.QFrame):
             lay.addWidget(b)
             self.buttons[tool] = b
         self.state.changed.connect(self.sync)
-        self.move(theme.px(6), theme.px(46))
+        viewport.installEventFilter(self)          # keep the place when the view is resized
         self.sync()
+
+    # --- placement
+    def _free(self):
+        """Space the toolbar's top-left corner can move in (x0, y0, x1, y1)."""
+        m = theme.px(4)
+        top = theme.px(4)
+        return m, top, max(m, self.vp.width() - self.width() - m), max(top, self.vp.height() - self.height() - m)
+
+    def place(self):
+        pos = self.state.toolbar_pos
+        if pos is None:
+            x, y = theme.px(6), theme.px(46)
+        else:
+            x0, y0, x1, y1 = self._free()
+            x, y = x0 + pos[0] * (x1 - x0), y0 + pos[1] * (y1 - y0)
+        x0, y0, x1, y1 = self._free()
+        self.move(int(min(max(x, x0), x1)), int(min(max(y, y0), y1)))
+
+    def _set_orientation(self, horizontal):
+        self._lay.setDirection(QtWidgets.QBoxLayout.LeftToRight if horizontal
+                               else QtWidgets.QBoxLayout.TopToBottom)
+        self.grip.horizontal = horizontal
+        self.grip.updateGeometry()
+        self._lay.invalidate()
+        self.adjustSize()
 
     def sync(self):
         try:
             for tool, b in self.buttons.items():
                 b.setChecked(tool == self.state.tool)
+            if self.grip.horizontal != self.state.toolbar_horizontal:
+                self._set_orientation(self.state.toolbar_horizontal)
             self.setVisible(self.state.toolbar_visible)
             self.adjustSize()
+            if self._drag is None:
+                self.place()
             self.vp.update()
         except RuntimeError:          # deleted together with its viewport
             pass
+
+    # --- dragging (grip or the toolbar's margins)
+    def eventFilter(self, obj, ev):
+        try:
+            if obj is self.vp:
+                if ev.type() == QtCore.QEvent.Resize and self._drag is None:
+                    self.place()
+                return False
+            if obj is self.grip:
+                t = ev.type()
+                if t == QtCore.QEvent.MouseButtonDblClick and ev.button() == QtCore.Qt.LeftButton:
+                    self.state.set_toolbar_pos(None, False)
+                    return True
+                if t in (QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseMove,
+                         QtCore.QEvent.MouseButtonRelease):
+                    return self._drag_event(ev)
+        except RuntimeError:
+            pass
+        return False
+
+    def mousePressEvent(self, ev):
+        if not self._drag_event(ev):
+            ev.accept()               # never let a click on the toolbar reach the 3D view
+
+    def mouseMoveEvent(self, ev):
+        self._drag_event(ev)
+        ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        self._drag_event(ev)
+        ev.accept()
+
+    def _drag_event(self, ev):
+        t = ev.type()
+        gp = self.vp.mapFromGlobal(ev.globalPosition().toPoint())
+        if t == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.LeftButton:
+            self._drag = (gp, self.pos())
+            self.raise_()
+            return True
+        if self._drag is None:
+            return False
+        if t == QtCore.QEvent.MouseMove:
+            start, orig = self._drag
+            x0, y0, x1, y1 = self._free()
+            p = orig + (gp - start)
+            self.move(min(max(p.x(), x0), x1), min(max(p.y(), y0), y1))
+            return True
+        if t == QtCore.QEvent.MouseButtonRelease:
+            self._drag = None
+            self._drop()
+            return True
+        return False
+
+    def _drop(self):
+        """Snap to the nearest edges, pick the orientation, store the place for all views."""
+        snap = theme.px(self.SNAP)
+        x0, y0, x1, y1 = self._free()
+        x, y = self.x(), self.y()
+        left, right = x - x0 < snap, x1 - x < snap
+        top, bottom = y - y0 < snap, y1 - y < snap
+        horizontal = self.state.toolbar_horizontal
+        if (top or bottom) and not (left or right):
+            horizontal = True            # along the top / bottom edge
+        elif (left or right) and not (top or bottom):
+            horizontal = False           # along the left / right edge
+        if horizontal != self.state.toolbar_horizontal:
+            # keep the toolbar's centre where it was dropped while it turns
+            c = self.geometry().center()
+            self._set_orientation(horizontal)
+            x0, y0, x1, y1 = self._free()
+            x, y = c.x() - self.width() // 2, c.y() - self.height() // 2
+            if left:
+                x = x0
+            if right:
+                x = x1
+            if top:
+                y = y0
+            if bottom:
+                y = y1
+        else:
+            x = x0 if left else (x1 if right else x)
+            y = y0 if top else (y1 if bottom else y)
+        x, y = min(max(x, x0), x1), min(max(y, y0), y1)
+        fx = (x - x0) / (x1 - x0) if x1 > x0 else 0.0
+        fy = (y - y0) / (y1 - y0) if y1 > y0 else 0.0
+        self.state.set_toolbar_pos((fx, fy), horizontal)
+
+    def _menu(self, pos):
+        m = QtWidgets.QMenu(self)
+        h = self.state.toolbar_horizontal
+        m.addAction("Vertical" if h else "Horizontal",
+                    lambda: self.state.set_toolbar_pos(self.state.toolbar_pos or (0.0, 0.0), not h))
+        m.addAction("Flip to Right" if (self.state.toolbar_pos or (0, 0))[0] < 0.5 else "Flip to Left",
+                    self._flip)
+        m.addAction("Reset Position", lambda: self.state.set_toolbar_pos(None, False))
+        m.addSeparator()
+        m.addAction("Hide Toolbar\tT", self.state.toggle_toolbar)
+        m.exec(self.mapToGlobal(pos))
+        m.deleteLater()
+
+    def _flip(self):
+        fx, fy = self.state.toolbar_pos or (0.0, 0.0)
+        if self.state.toolbar_pos is None:
+            x0, y0, x1, y1 = self._free()
+            fy = (self.y() - y0) / (y1 - y0) if y1 > y0 else 0.0
+        self.state.set_toolbar_pos((1.0 - fx if 0 < fx < 1 else (1.0 if fx < 0.5 else 0.0), fy))
 
 
 # ---------------------------------------------------------------- Shift+Space tool menu
