@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.13.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.14.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -95,6 +95,7 @@ qt_shell/            the add-on (zip this folder for a release)
   scripts.py         script manager core (no Qt)
   scripts_dock.py    Scripts dock UI – NOT USED (disabled, see 6.1)
   shelf.py           Shelf (dock 'shelf' at the top, floatable) – buttons run code via scripts._execute; config/qt_shell/shelves.json
+  graph_editor.py    Graph editor (Maya-like): channel tree + GraphView; selection = Blender's key select flags; Blender 4.4+ channelbags via bpy_extras.anim_utils
   workspaces.py      Workspaces (tabs = menu bar corner widget; manager captures/restores saveState per workspace; templates; config/qt_shell/workspaces.json)
   prefs_window.py    Edit → Qt Preferences… (Qt Shell settings; Scripts page replaces the disabled Scripts dock for startup files)
   api.py             public API (qt_shell.api)
@@ -166,6 +167,7 @@ add-on folder there is connected:
 | 0.11.0 | 2026-10-20 | Shelf (Maya-like script buttons: drag code from the Text editor, → Shelf, drop .py files; tabs with +, floatable dock; non-modal edit dialog with ▶ Test); floating windows restored after restart |
 | 0.12.0 | not released yet | Workspaces like Blender (tabs in the menu bar; add from template / duplicate, rename, reorder, delete, reset; each remembers docks, floating windows, view layout and shading) |
 | 0.13.0 | not released yet | Movable viewport toolbar (grip, snaps to edges, horizontal / vertical, Flip, Reset; QSettings `viewport/toolbar_pos`); no saved layout → current workspace's layout is applied; dev reload deletes the old window (fixes reload crash) |
+| 0.14.0 | not released yet | Graph editor like Maya (curves, keys, tangents, box select, move, tangent types, infinity, stats boxes, insert / delete keys, scrub); Animation workspace = Graph editor above the Timeline |
 
 ---
 
@@ -198,7 +200,12 @@ Until then, scripts are managed from the Text editor and the Console (`qt_shell.
   entries (fixed in 0.5.0, still in the log file).
 
 ### 6.3 State of the owner's PC (2026-10-20)
-- Add-on folder has the current `main` (0.13.0). Movable toolbar tested: drag to the middle, snap to the top
+- Add-on folder has the current `main` (0.14.0). Graph editor tested on the owner's animated Cube: channels, A framing,
+  S insert key, drag key (snapped to frame 40), Linear / Stepped tangents, 4× Ctrl+Z back to the original, box select,
+  Animation workspace (Reset to Template) = Graph editor above the Timeline. Not tested yet: tangent handle drag,
+  MMB move, Alt pan/zoom, Infinity, Frame/Value boxes, Delete keys. Existing Animation workspaces keep their saved
+  layout – *Reset to Template* (right click the tab) shows the Graph editor.
+- 0.13.0: Movable toolbar tested: drag to the middle, snap to the top
   (horizontal), snap to the right (vertical), tool buttons still work, right click → Reset Position.
 - 0.12.0: Workspaces tested by clicks: Modeling, Shading, Scripting,
   Layout, + → UV Editing, right click → Delete; quit + restart restores the current workspace. Animation tab not clicked (overlay).

@@ -74,6 +74,8 @@ def apply_template(win, name):
     show = lambda *keys: [d[k].show() for k in keys if k in d]
     hide = lambda *keys: [d[k].hide() for k in keys if k in d]
     shading, layout = "SOLID", "single"
+    if name != "Animation":
+        hide("graph_editor")
     if name == "Layout":
         hide("sidebar")
         d["timeline"].raise_()
@@ -89,9 +91,13 @@ def apply_template(win, name):
         win.resizeDocks([d["node_editor"]], [theme.px(330)], QtCore.Qt.Vertical)
     elif name == "Animation":
         hide("sidebar", "console", "node_editor", "uv_editor", "text_editor", "last_op")
-        show("timeline")
-        d["timeline"].raise_()
-        win.resizeDocks([d["timeline"]], [theme.px(260)], QtCore.Qt.Vertical)
+        # like Maya: the Graph Editor above the Timeline
+        ge, tl = d["graph_editor"], d["timeline"]
+        win.addDockWidget(BOTTOM, ge)
+        win.splitDockWidget(ge, tl, QtCore.Qt.Vertical)
+        ge.show()
+        tl.show()
+        win.resizeDocks([ge, tl], [theme.px(330), theme.px(120)], QtCore.Qt.Vertical)
     elif name == "Scripting":
         hide("sidebar", "timeline", "node_editor", "uv_editor", "last_op")
         # Text editor on the left, Console at the bottom (like Blender's Scripting workspace)
