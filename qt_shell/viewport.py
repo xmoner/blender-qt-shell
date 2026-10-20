@@ -88,6 +88,8 @@ class Viewport(QtWidgets.QWidget):
         self.show_grid = False
         # interaction
         self._nav = None
+        self._navg = None          # press on the navigation gizmo (axis ball / its buttons)
+        self._nav_hover = None
         self._last = None
         self._press_pos = None
         self._box = None
@@ -426,33 +428,124 @@ class Viewport(QtWidgets.QWidget):
                 p.drawEllipse(o, 3.5, 3.5)
                 p.setBrush(QtCore.Qt.NoBrush)
 
-    def _paint_gizmo(self, p):
-        c = QtCore.QPointF(self.width() - 50, 50)
+    # ------------------------------------------------------------ navigation gizmo (like Blender 5.2)
+    # axis → view shown when the axis ball is clicked (Blender: click X = look from +X = Right)
+    _AXIS_VIEW = {"X": "RIGHT", "-X": "LEFT", "Y": "BACK", "-Y": "FRONT", "Z": "TOP", "-Z": "BOTTOM"}
+    _OPPOSITE = {"RIGHT": "LEFT", "LEFT": "RIGHT", "BACK": "FRONT", "FRONT": "BACK", "TOP": "BOTTOM",
+                 "BOTTOM": "TOP"}
+
+    def _nav_geom(self):
+        R = theme.px(40)
+        c = QtCore.QPointF(self.width() - R - theme.px(12), R + theme.px(10))
+        return c, R
+
+    def _nav_items(self):
+        """[(kind, id, centre, radius, depth)] – axis balls (back to front) and the buttons below."""
+        c, R = self._nav_geom()
         right, up, fwd = self.view_vectors()
-        axes = [(Vector((1, 0, 0)), "X", QtGui.QColor("#ff3352")),
-                (Vector((0, 1, 0)), "Y", QtGui.QColor("#8bdc00")),
-                (Vector((0, 0, 1)), "Z", QtGui.QColor("#2890ff"))]
+        arm = R * 0.78
         items = []
-        for v, name, col in axes:
-            sx, sy, depth = v.dot(right), -v.dot(up), v.dot(fwd)
-            items.append((depth, sx, sy, name, col))
-        items.sort(key=lambda t: -t[0])  # farther first
-        p.setBrush(QtGui.QColor(0, 0, 0, 40))
-        p.setPen(QtCore.Qt.NoPen)
-        p.drawEllipse(c, 42, 42)
+        for name, v in (("X", Vector((1, 0, 0))), ("Y", Vector((0, 1, 0))), ("Z", Vector((0, 0, 1)))):
+            for sign in (1, -1):
+                w = v * sign
+                pc = c + QtCore.QPointF(w.dot(right) * arm, -w.dot(up) * arm)
+                key = name if sign > 0 else "-" + name
+                items.append(("axis", key, pc, theme.px(9) if sign > 0 else theme.px(8), w.dot(fwd)))
+        items.sort(key=lambda t: -t[4])            # farther first
+        r = theme.px(12)
+        y = c.y() + R + theme.px(8) + r
+        for k in ("zoom", "pan", "camera", "persp"):
+            items.append(("button", k, QtCore.QPointF(c.x(), y), r, 0.0))
+            y += 2 * r + theme.px(5)
+        return items
+
+    def _nav_hit(self, pos):
+        """('axis', 'X' | '-Y' …) / ('button', 'zoom' | 'pan' | 'camera' | 'persp') / ('ball', None) / None"""
+        for kind, key, pc, r, _d in reversed(self._nav_items()):        # front-most first
+            d = pc - pos
+            if d.x() * d.x() + d.y() * d.y() <= (r * 1.25) ** 2:
+                return kind, key
+        c, R = self._nav_geom()
+        d = pos - c
+        if d.x() * d.x() + d.y() * d.y() <= (R + theme.px(4)) ** 2:
+            return "ball", None
+        return None
+
+    def _paint_gizmo(self, p):
+        c, R = self._nav_geom()
+        hov = self._nav_hover
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        pressed = self._navg["hit"] if self._navg else None
+        if (hov is not None and hov[0] in ("ball", "axis")) or (pressed and pressed[0] in ("ball", "axis")):
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(255, 255, 255, 38))       # Blender shows the circle on hover
+            p.drawEllipse(c, R + theme.px(4), R + theme.px(4))
+        colors = {"X": QtGui.QColor("#ff3352"), "Y": QtGui.QColor("#8bdc00"), "Z": QtGui.QColor("#2890ff")}
         f = p.font()
         f.setBold(True)
-        f.setPixelSize(10)
+        f.setPixelSize(theme.fs(10))
         p.setFont(f)
-        for _depth, sx, sy, name, col in items:
-            end = c + QtCore.QPointF(sx * 32, sy * 32)
-            p.setPen(QtGui.QPen(col, 2))
-            p.drawLine(c, end)
-            p.setPen(QtCore.Qt.NoPen)
-            p.setBrush(col)
-            p.drawEllipse(end, 8, 8)
-            p.setPen(QtGui.QColor("#111"))
-            p.drawText(QtCore.QRectF(end.x() - 8, end.y() - 8, 16, 16), QtCore.Qt.AlignCenter, name)
+        for kind, key, pc, r, _depth in self._nav_items():
+            if kind == "axis":
+                col = colors[key[-1]]
+                neg = key.startswith("-")
+                hot = hov == ("axis", key)
+                if not neg:
+                    p.setPen(QtGui.QPen(col, theme.px(2)))
+                    p.drawLine(c, pc)
+                p.setPen(QtGui.QPen(col.lighter(130) if hot else col, max(1, theme.px(1.5))))
+                if neg:
+                    fill = QtGui.QColor(col)
+                    fill.setAlpha(170 if hot else 70)
+                    p.setBrush(fill)
+                else:
+                    p.setBrush(col.lighter(125) if hot else col)
+                p.drawEllipse(pc, r, r)
+                if not neg or hot:                   # negative axes show their name on hover
+                    p.setPen(QtGui.QColor("#000000") if not neg else QtGui.QColor("#ffffff"))
+                    p.drawText(QtCore.QRectF(pc.x() - r - 4, pc.y() - r, 2 * r + 8, 2 * r),
+                               QtCore.Qt.AlignCenter, key)
+            else:
+                hot = hov == ("button", key) or pressed == ("button", key)
+                active = (key == "camera" and self.camera_view) or (key == "persp" and not self.ortho)
+                p.setPen(QtCore.Qt.NoPen)
+                p.setBrush(QtGui.QColor(255, 255, 255, 70) if hot else QtGui.QColor(0, 0, 0, 90))
+                p.drawEllipse(pc, r, r)
+                p.setPen(QtGui.QColor("#ffffff") if (hot or active) else QtGui.QColor("#cfcfcf"))
+                glyph = {"zoom": "🔍", "pan": "✋", "camera": "🎥", "persp": "▦" if self.ortho else "⬚"}[key]
+                gf = QtGui.QFont(f)
+                gf.setBold(False)
+                gf.setPixelSize(theme.fs(12))
+                p.setFont(gf)
+                p.drawText(QtCore.QRectF(pc.x() - r, pc.y() - r, 2 * r, 2 * r), QtCore.Qt.AlignCenter, glyph)
+                p.setFont(f)
+
+    def _nav_tooltip(self, hit):
+        if hit is None:
+            return ""
+        kind, key = hit
+        if kind == "axis":
+            return (f"Click: {self._AXIS_VIEW[key].title()} view (click the aligned axis again: opposite side)"
+                    " · drag: orbit")
+        if kind == "ball":
+            return "Drag to orbit the view · click an axis to look along it"
+        return {"zoom": "Drag up / down to zoom", "pan": "Drag to pan the view",
+                "camera": "Toggle the camera view (Numpad 0)",
+                "persp": "Toggle perspective / orthographic (Numpad 5)"}[key]
+
+    def _nav_click(self, hit):
+        kind, key = hit
+        if kind == "axis":
+            view = self._AXIS_VIEW[key]
+            cur = self.view_name.split(" ")[0].upper()
+            if cur == view and not self.camera_view:
+                view = self._OPPOSITE[view]          # like Blender: clicking the aligned axis flips the view
+            self.set_view(view)
+        elif key == "camera":
+            self.set_view("CAMERA")
+        elif key == "persp":
+            self.toggle_ortho()
+        self.update()
 
     # ------------------------------------------------------------ playback FPS (like Blender)
     def playback_changed(self, playing):
@@ -852,6 +945,16 @@ class Viewport(QtWidgets.QWidget):
         if self._modal:
             self._modal_end(b == QtCore.Qt.LeftButton)
             return
+        if b == QtCore.Qt.LeftButton and not mods & QtCore.Qt.AltModifier:
+            hit = self._nav_hit(pos)
+            if hit is not None:
+                self._navg = {"hit": hit, "start": pos, "moved": False}
+                if hit[0] == "button" and hit[1] in ("zoom", "pan"):
+                    self._nav = hit[1]
+                    self._last = pos
+                    self.setCursor(QtCore.Qt.SizeVerCursor if hit[1] == "zoom" else QtCore.Qt.ClosedHandCursor)
+                self.update()
+                return
         if b == QtCore.Qt.MiddleButton or (b == QtCore.Qt.LeftButton and mods & QtCore.Qt.AltModifier):
             if mods & QtCore.Qt.ShiftModifier:
                 self._nav = "pan"
@@ -877,6 +980,14 @@ class Viewport(QtWidgets.QWidget):
         if self._modal:
             self._modal_update(pos)
             return
+        g = self._navg
+        if g is not None and not self._nav:
+            if (pos - g["start"]).manhattanLength() > 3 and g["hit"][0] in ("axis", "ball"):
+                g["moved"] = True                   # dragging the axis ball orbits (like Blender)
+                self._nav = "orbit"
+                self._last = pos
+                self.setCursor(QtCore.Qt.ClosedHandCursor)
+            return
         if self._nav and self._last is not None:
             d = pos - self._last
             self._last = pos
@@ -891,6 +1002,15 @@ class Viewport(QtWidgets.QWidget):
             if (pos - self._press_pos).manhattanLength() > 5:
                 self._box = (self._press_pos, pos)
                 self.update()
+        elif (nh := self._nav_hit(pos)) is not None or self._nav_hover is not None:
+            if nh != self._nav_hover:
+                self._nav_hover = nh
+                self.setToolTip(self._nav_tooltip(nh))
+                if nh is None:
+                    self.unsetCursor()
+                else:
+                    self.setCursor(QtCore.Qt.PointingHandCursor if nh[0] != "ball" else QtCore.Qt.OpenHandCursor)
+                self.update()
         elif self.tools.tool != "SELECT":
             hov = gizmo.hit(gizmo.handles(self, self.tools.tool), pos)
             if hov != self._gz_hover:
@@ -901,6 +1021,14 @@ class Viewport(QtWidgets.QWidget):
         pos = ev.position()
         if self._modal and self._modal.get("drag") and ev.button() == QtCore.Qt.LeftButton:
             self._modal_end(True)          # gizmo drag: releasing the button confirms
+            return
+        if self._navg is not None and ev.button() == QtCore.Qt.LeftButton:
+            g, self._navg = self._navg, None
+            self._nav = None
+            self.unsetCursor()
+            if not g["moved"] and g["hit"][0] in ("axis", "button") and g["hit"][1] not in ("zoom", "pan"):
+                self._nav_click(g["hit"])
+            self.update()
             return
         if self._nav:
             self._nav = None

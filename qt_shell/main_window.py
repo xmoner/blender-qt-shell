@@ -9,7 +9,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import app as shell_app
 from . import pytips
-from . import api, bridge, rna_widgets as rw, theme
+from . import api, bridge, fake_ui, rna_widgets as rw, theme
 from .bridge import run_op, tr
 from .console import Console
 from .node_editor import NodeEditor
@@ -47,6 +47,19 @@ def _mode_menu(kind):
         table = MODE_MENUS[kind]
         return table.get(mode, table["OBJECT"])
     return resolve
+
+
+class _HeaderScroll(QtWidgets.QScrollArea):
+    """The 3D view header: when it is wider than the view, the mouse wheel scrolls it (like Blender)."""
+
+    def wheelEvent(self, ev):
+        sb = self.horizontalScrollBar()
+        if sb.maximum() <= 0:
+            return super().wheelEvent(ev)
+        d = ev.angleDelta()
+        step = d.y() if abs(d.y()) >= abs(d.x()) else d.x()
+        sb.setValue(sb.value() - int(step / 2))
+        ev.accept()
 
 
 # ---------------------------------------------------------------- render window
@@ -573,6 +586,7 @@ class MainWindow(QtWidgets.QMainWindow):
         hub.data_changed.connect(self._update_status)
         hub.data_changed.connect(self._sync_shading)
         hub.selection_changed.connect(lambda: self._sync_selmode())
+        hub.selection_changed.connect(lambda: self._sync_mode_combo())
         self.viewports.selection_edited.connect(self._sync_selmode)
         hub.mode_changed.connect(self._on_mode)
         hub.render_done.connect(self._on_render_done)
@@ -681,13 +695,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mode_combo.addItem(tr(label), ident)
         self.mode_combo.activated.connect(self._set_mode)
         lay.addWidget(self.mode_combo)
-        for title, kind in (("View", None), ("Select", "select"), ("Add", "add"), ("Object", "object")):
-            b = QtWidgets.QToolButton()
-            b.setText(tr(title))
-            b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-            b.setAutoRaise(True)
-            b.setMenu(self._view_menu(b) if kind is None else LazyMenu(None, b, resolver=_mode_menu(kind)))
-            lay.addWidget(b)
+        # the menus Blender shows for the current mode (View, Select, Add, Object / Mesh, Vertex, Edge, …)
+        self.menu_box = QtWidgets.QWidget(bar)
+        mb = QtWidgets.QHBoxLayout(self.menu_box)
+        mb.setContentsMargins(0, 0, 0, 0)
+        mb.setSpacing(0)
+        lay.addWidget(self.menu_box)
+        self._menus_mode = None
         self.selmode_buttons = []
         for i, (txt, tip) in enumerate((("•", "Vertices (1)"), ("╱", "Edges (2)"), ("■", "Faces (3)"))):
             b = QtWidgets.QToolButton()
@@ -699,14 +713,11 @@ class MainWindow(QtWidgets.QMainWindow):
             lay.addWidget(b)
             self.selmode_buttons.append(b)
         lay.addStretch(1)
-        for txt, tip, kind in (("G", "Move (G)", "G"), ("R", "Rotate (R)", "R"), ("S", "Scale (S)", "S")):
-            b = QtWidgets.QToolButton()
-            b.setText(txt)
-            b.setToolTip(tip)
-            pytips.tag_op(b, {"G": "transform.translate", "R": "transform.rotate", "S": "transform.resize"}[kind])
-            b.clicked.connect(lambda _=False, k=kind: self.viewport.start_modal(k))
-            lay.addWidget(b)
-        lay.addSpacing(10)
+        self._hdr_syncs = []
+        self._build_tool_settings(bar, lay)          # orientation, pivot, snapping, proportional editing
+        lay.addStretch(1)
+        self._build_view_toggles(bar, lay)           # object types, gizmos, overlays, X-ray
+        lay.addSpacing(theme.px(6))
         self.shading_group = QtWidgets.QButtonGroup(bar)
         self.shading_buttons = {}
         for kind, txt, tip in (("WIREFRAME", "◇", "Wireframe"), ("SOLID", "●", "Solid"),
@@ -727,12 +738,6 @@ class MainWindow(QtWidgets.QMainWindow):
         sb.setMenu(PopoverMenu("VIEW3D_PT_shading", sb))
         pytips.tag(sb, 'bpy.ops.wm.call_panel(name="VIEW3D_PT_shading")')
         lay.addWidget(sb)
-        ov = QtWidgets.QToolButton()
-        ov.setText("Overlays ▾")
-        ov.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        ov.setMenu(PopoverMenu("VIEW3D_PT_overlay", ov))
-        pytips.tag(ov, 'bpy.ops.wm.call_panel(name="VIEW3D_PT_overlay")')
-        lay.addWidget(ov)
         lb = QtWidgets.QToolButton(bar)
         lb.setText("▦ Layout ▾")
         lb.setToolTip("Split the 3D view: one, two or four views (Ctrl+Alt+Q = Four Views)")
@@ -741,7 +746,185 @@ class MainWindow(QtWidgets.QMainWindow):
         pytips.tag(lb, 'import qt_shell\nqt_shell.api.set_viewport_layout("quad")   # "single", "side", "stacked", "quad"')
         lay.addWidget(lb)
         QtCore.QTimer.singleShot(0, self._sync_shading)
-        return bar
+        QtCore.QTimer.singleShot(0, self._rebuild_editor_menus)
+        QtCore.QTimer.singleShot(0, self._sync_header)
+        # like Blender's header: scrolls instead of making the window wider
+        area = _HeaderScroll()
+        area.setToolTip("")
+        area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        area.setWidgetResizable(True)
+        area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        area.setWidget(bar)
+        area.setFixedHeight(bar.sizeHint().height())
+        area.setStyleSheet("QScrollArea { background: #303030; border: none; }")
+        return area
+
+    # ------------------------------------------------------------ 3D view header (like Blender 5.2)
+    def _hdr_button(self, parent, text, tip, py=None, checkable=False):
+        b = QtWidgets.QToolButton(parent)
+        b.setText(text)
+        b.setToolTip(tip)
+        b.setAutoRaise(True)
+        b.setCheckable(checkable)
+        pytips.tag(b, py)
+        return b
+
+    def _hdr_popover(self, parent, lay, text, panel, tip):
+        b = self._hdr_button(parent, text, tip, f'bpy.ops.wm.call_panel(name="{panel}")')
+        b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        b.setMenu(PopoverMenu(panel, b))
+        b.menu().aboutToHide.connect(self._sync_header)
+        lay.addWidget(b)
+        return b
+
+    def _hdr_toggle(self, parent, lay, text, tip, get, put, py):
+        """Checkable button bound to a Blender setting (get() / put(on))."""
+        b = self._hdr_button(parent, text, tip, py, checkable=True)
+
+        def clicked(on):
+            try:
+                put(bool(on))
+            except Exception as ex:
+                bridge.log(f"{tip.splitlines()[0]}: {ex}", "ERROR")
+            self._after_header_change()
+
+        def sync():
+            try:
+                b.setChecked(bool(get()))
+                b.setEnabled(True)
+            except Exception:
+                b.setEnabled(False)
+        b.clicked.connect(clicked)
+        self._hdr_syncs.append(sync)
+        lay.addWidget(b)
+        return b
+
+    def _after_header_change(self):
+        try:
+            self.viewport.redraw_scene()
+        except Exception:
+            pass
+        self._sync_header()
+
+    def _space3d(self):
+        sp, _r = self.viewport.space()
+        return sp
+
+    def _build_tool_settings(self, bar, lay):
+        ts = lambda: bpy.context.scene.tool_settings
+        # Transform orientation
+        self.orient_btn = self._hdr_popover(bar, lay, "⤧ Global ▾", "VIEW3D_PT_transform_orientations",
+                                            "Transform Orientation")
+        pytips.tag(self.orient_btn, "bpy.context.scene.transform_orientation_slots[0].type = 'GLOBAL'")
+        self._hdr_syncs.append(lambda: self.orient_btn.setText(
+            "⤧ " + tr(bpy.context.scene.transform_orientation_slots[0].type.title().replace("_", " ")) + " ▾"))
+        # Pivot point
+        self.pivot_btn = self._hdr_button(bar, "⊙ ▾", "Transform Pivot Point",
+                                          "bpy.context.scene.tool_settings.transform_pivot_point = 'MEDIAN_POINT'")
+        self.pivot_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        pm = QtWidgets.QMenu(self.pivot_btn)
+        pm.aboutToShow.connect(lambda m=pm: self._fill_enum_menu(m, ts(), "transform_pivot_point"))
+        self.pivot_btn.setMenu(pm)
+        lay.addWidget(self.pivot_btn)
+        lay.addSpacing(theme.px(4))
+        # Snapping
+        self._hdr_toggle(bar, lay, "🧲", "Snap (Shift+Tab)", lambda: ts().use_snap,
+                         lambda on: setattr(ts(), "use_snap", on),
+                         "bpy.context.scene.tool_settings.use_snap = True")
+        self._hdr_popover(bar, lay, "▾", "VIEW3D_PT_snapping", "Snapping")
+        lay.addSpacing(theme.px(4))
+        # Proportional editing (objects in Object Mode, elements in Edit Mode – like Blender)
+        def prop_attr():
+            return "use_proportional_edit_objects" if bpy.context.mode == "OBJECT" else "use_proportional_edit"
+        self._hdr_toggle(bar, lay, "◎", "Proportional Editing (O)", lambda: getattr(ts(), prop_attr()),
+                         lambda on: setattr(ts(), prop_attr(), on),
+                         "bpy.context.scene.tool_settings.use_proportional_edit_objects = True   "
+                         "# use_proportional_edit in Edit Mode")
+        self._hdr_popover(bar, lay, "▾", "VIEW3D_PT_proportional_edit", "Proportional Editing Falloff")
+
+    def _build_view_toggles(self, bar, lay):
+        sp = self._space3d
+        self._hdr_popover(bar, lay, "👁 ▾", "VIEW3D_PT_object_type_visibility",
+                          "Selectability & Visibility of object types")
+        lay.addSpacing(theme.px(4))
+        self._hdr_toggle(bar, lay, "✥", "Show Gizmo", lambda: sp().show_gizmo,
+                         lambda on: setattr(sp(), "show_gizmo", on),
+                         "bpy.context.space_data.show_gizmo = True")
+        self._hdr_popover(bar, lay, "▾", "VIEW3D_PT_gizmo_display", "Gizmos")
+        lay.addSpacing(theme.px(4))
+        self._hdr_toggle(bar, lay, "◫", "Show Overlays (Shift+Alt+Z)", lambda: sp().overlay.show_overlays,
+                         lambda on: setattr(sp().overlay, "show_overlays", on),
+                         "bpy.context.space_data.overlay.show_overlays = True")
+        self._hdr_popover(bar, lay, "Overlays ▾", "VIEW3D_PT_overlay", "Overlays")
+        lay.addSpacing(theme.px(4))
+
+        def xray_attr():
+            return "show_xray_wireframe" if sp().shading.type == "WIREFRAME" else "show_xray"
+        self._hdr_toggle(bar, lay, "▣", "Toggle X-Ray (Alt+Z)", lambda: getattr(sp().shading, xray_attr()),
+                         lambda on: setattr(sp().shading, xray_attr(), on),
+                         "bpy.ops.view3d.toggle_xray()   # bpy.context.space_data.shading.show_xray = True")
+
+    def _fill_enum_menu(self, menu, data, prop):
+        menu.clear()
+        grp = QtGui.QActionGroup(menu)
+        cur = getattr(data, prop)
+        for ident, name, desc in rw.enum_items(data, prop):
+            a = menu.addAction(name)
+            a.setCheckable(True)
+            a.setChecked(ident == cur)
+            a.setToolTip(desc)
+            pytips.tag(a, f"{pytips.prop_text(data, prop)} = {ident!r}")
+            grp.addAction(a)
+            a.triggered.connect(lambda _c=False, i=ident: (setattr(data, prop, i), self._after_header_change()))
+
+    def _sync_header(self):
+        for fn in getattr(self, "_hdr_syncs", []):
+            try:
+                fn()
+            except Exception:
+                pass
+
+    def _rebuild_editor_menus(self):
+        """Fills the header with the menus Blender's VIEW3D_MT_editor_menus draws for the current mode."""
+        mode = bpy.context.mode
+        if mode == self._menus_mode:
+            return
+        self._menus_mode = mode
+        lay = self.menu_box.layout()
+        while lay.count():
+            w = lay.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        menus = []
+        try:
+            with bridge.blender_context():
+                node, _label = fake_ui.record_menu("VIEW3D_MT_editor_menus")
+
+            def walk(n):
+                if n is None:
+                    return
+                if n.kind == "menu" and n.args.get("menu"):
+                    menus.append((n.args["menu"], n.args.get("text")))
+                for ch in getattr(n, "children", []):
+                    walk(ch)
+            walk(node)
+        except Exception:
+            bridge.log("3D view header menus:\n" + __import__("traceback").format_exc(), "WARNING")
+        if not menus:
+            menus = [("VIEW3D_MT_view", None), (_mode_menu("select")(), None), (_mode_menu("add")(), None),
+                     (_mode_menu("object")(), None)]
+        for mid, text in menus:
+            cls = fake_ui.find_menu_class(mid)
+            label = text if text else tr(getattr(cls, "bl_label", mid)) if cls else mid
+            b = QtWidgets.QToolButton(self.menu_box)
+            b.setText(label)
+            b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+            b.setAutoRaise(True)
+            # View keeps Qt Shell's own menu: Blender's view3d.* operators would move the hidden Blender view
+            b.setMenu(self._view_menu(b) if mid == "VIEW3D_MT_view" else LazyMenu(mid, b))
+            pytips.tag(b, f'bpy.ops.wm.call_menu(name="{mid}")')
+            lay.addWidget(b)
 
     @property
     def viewport(self):
@@ -1111,12 +1294,46 @@ class MainWindow(QtWidgets.QMainWindow):
         for m in getattr(self, "mesh_menus", []):
             m.menuAction().setVisible(mode == "EDIT_MESH")
         self._sync_selmode()
+        self._sync_mode_combo()
+        try:
+            self._rebuild_editor_menus()
+            self._sync_header()
+        except Exception:
+            bridge.log("3D view header:\n" + __import__("traceback").format_exc(), "WARNING")
         self.viewports.request_redraw()
+
+    # modes offered by the mode menu, per object type (like Blender)
+    _TYPE_MODES = {
+        "MESH": ("OBJECT", "EDIT", "SCULPT", "VERTEX_PAINT", "WEIGHT_PAINT", "TEXTURE_PAINT"),
+        "ARMATURE": ("OBJECT", "EDIT", "POSE"),
+        "CURVE": ("OBJECT", "EDIT"), "SURFACE": ("OBJECT", "EDIT"), "META": ("OBJECT", "EDIT"),
+        "FONT": ("OBJECT", "EDIT"), "LATTICE": ("OBJECT", "EDIT"),
+        "CURVES": ("OBJECT", "EDIT", "SCULPT_CURVES"),
+        "GREASEPENCIL": ("OBJECT", "EDIT", "SCULPT_GREASE_PENCIL", "PAINT_GREASE_PENCIL",
+                         "WEIGHT_GREASE_PENCIL", "VERTEX_GREASE_PENCIL"),
+    }
+
+    def _sync_mode_combo(self):
+        ob = bpy.context.view_layer.objects.active
+        modes = self._TYPE_MODES.get(ob.type if ob else "", ("OBJECT",))
+        if tuple(self.mode_combo.itemData(i) for i in range(self.mode_combo.count())) != modes:
+            items = bpy.types.Object.bl_rna.properties["mode"].enum_items
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.clear()
+            for m in modes:
+                it = items.get(m)
+                self.mode_combo.addItem(tr(it.name) if it else m.title(), m)
+            self.mode_combo.blockSignals(False)
+        cur = ob.mode if ob else "OBJECT"
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(max(0, self.mode_combo.findData(cur)))
+        self.mode_combo.blockSignals(False)
 
     def _sync_shading(self):
         b = self.shading_buttons.get(self.viewport.shading())
         if b:
             b.setChecked(True)
+        self._sync_header()
 
     def _camera_to_view(self):
         cam = bpy.context.scene.camera

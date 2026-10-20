@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.15.2 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.16.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -184,6 +184,7 @@ add-on folder there is connected:
 | 0.15.0 | 2026-10-20 | Python tooltips (Qt Preferences → Interface): command of operators, properties, menu items and Qt Shell's own buttons in the tooltip |
 | 0.15.1 | not released yet | Fix: crash on start after closing with a floating window (workspaces re-floated docks during shutdown); Graph editor scripting API `qt_shell.api.graph_editor()` with working tooltip commands; Shift + middle click copies commands |
 | 0.15.2 | not released yet | Fix: crash on start – the saved dock layout is restored after the first show() (MainWindow._restore_saved_layout) |
+| 0.16.0 | not released yet | 3D view header like Blender 5.2 (menus per mode from VIEW3D_MT_editor_menus, orientation, pivot, snap, proportional, object types, gizmo, overlays, X-ray; mode menu per object type; wheel-scroll); navigation gizmo like Blender (± axes, click to align / flip, drag to orbit, zoom / pan / camera / persp buttons) |
 
 ---
 
