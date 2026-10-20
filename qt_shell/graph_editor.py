@@ -23,6 +23,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, theme
+from . import pytips
 
 AXIS_COLORS = ["#ff5a6e", "#7ddc3a", "#4aa3ff", "#f0c446"]          # X Y Z W
 OTHER_COLORS = ["#e98bd8", "#5fd3c8", "#f29a52", "#b59cff", "#c8d65c", "#ff8f8f"]
@@ -632,6 +633,20 @@ class GraphEditor(QtWidgets.QWidget):
         ("Flat", "FLAT", "Horizontal tangents"),
         ("Stepped", "CONSTANT", "Hold the value until the next key"),
     ]
+    TANGENT_PY = {
+        "AUTO": "bpy.ops.graph.handle_type(type='AUTO')",
+        "AUTO_CLAMPED": "bpy.ops.graph.handle_type(type='AUTO_CLAMPED')",
+        "LINEAR": "bpy.ops.graph.interpolation_type(type='LINEAR')",
+        "FLAT": "bpy.ops.graph.handle_type(type='ALIGNED')\n# + handles level with the key: kp.handle_left.y = kp.handle_right.y = kp.co.y",
+        "CONSTANT": "bpy.ops.graph.interpolation_type(type='CONSTANT')",
+    }
+    INFINITY_PY = {
+        "CONSTANT": "bpy.ops.graph.extrapolation_type(type='CONSTANT')",
+        "LINEAR": "bpy.ops.graph.extrapolation_type(type='LINEAR')",
+        "REPEAT": "fcurve.modifiers.new('CYCLES')   # mode_before = mode_after = 'REPEAT'",
+        "REPEAT_OFFSET": "fcurve.modifiers.new('CYCLES')   # mode_before = mode_after = 'REPEAT_OFFSET'",
+        "MIRROR": "fcurve.modifiers.new('CYCLES')   # mode_before = mode_after = 'MIRROR'",
+    }
     INFINITY = [("Constant", "CONSTANT"), ("Linear", "LINEAR"), ("Cycle", "REPEAT"),
                 ("Cycle with Offset", "REPEAT_OFFSET"), ("Oscillate", "MIRROR")]
 
@@ -657,10 +672,11 @@ class GraphEditor(QtWidgets.QWidget):
         row.setContentsMargins(theme.px(4), theme.px(2), theme.px(4), theme.px(2))
         row.setSpacing(theme.px(3))
 
-        def btn(text, tip, fn, checkable=False):
+        def btn(text, tip, fn, checkable=False, py=None):
             b = QtWidgets.QToolButton(bar)
             b.setText(text)
             b.setToolTip(tip)
+            pytips.tag(b, py)
             b.setCheckable(checkable)
             b.clicked.connect(fn)
             row.addWidget(b)
@@ -672,13 +688,16 @@ class GraphEditor(QtWidgets.QWidget):
             f.setStyleSheet("color: #454545;")
             row.addWidget(f)
 
-        btn("⤢ All", "Frame all curves (A)", lambda: self.view.frame(False))
-        btn("⤢ Sel", "Frame the selected keys (F)", lambda: self.view.frame(True))
+        btn("⤢ All", "Frame all curves (A)", lambda: self.view.frame(False), py="bpy.ops.graph.view_all()")
+        btn("⤢ Sel", "Frame the selected keys (F)", lambda: self.view.frame(True), py="bpy.ops.graph.view_selected()")
         sep()
         for label, kind, tip in self.TANGENTS:
-            btn(label, f"{label} tangents – {tip}", lambda _c=False, k=kind: self.set_tangents(k))
-        btn("Break", "Break tangents – move the in and out tangent separately", lambda: self.set_handle_type("FREE"))
-        btn("Unify", "Unify tangents – in and out tangent stay in line", lambda: self.set_handle_type("ALIGNED"))
+            btn(label, f"{label} tangents – {tip}", lambda _c=False, k=kind: self.set_tangents(k),
+                py=self.TANGENT_PY[kind])
+        btn("Break", "Break tangents – move the in and out tangent separately", lambda: self.set_handle_type("FREE"),
+            py="bpy.ops.graph.handle_type(type='FREE')")
+        btn("Unify", "Unify tangents – in and out tangent stay in line", lambda: self.set_handle_type("ALIGNED"),
+            py="bpy.ops.graph.handle_type(type='ALIGNED')")
         sep()
         inf = QtWidgets.QToolButton(bar)
         inf.setText("Infinity")
@@ -686,13 +705,16 @@ class GraphEditor(QtWidgets.QWidget):
         inf.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         inf_menu = QtWidgets.QMenu(inf)
         for label, mode in self.INFINITY:
-            inf_menu.addAction(label, lambda m=mode: self.set_infinity(m))
+            a = inf_menu.addAction(label, lambda m=mode: self.set_infinity(m))
+            pytips.tag(a, self.INFINITY_PY[mode])
         inf.setMenu(inf_menu)
         row.addWidget(inf)
         sep()
-        btn("+◆", "Key the shown curves at the current frame (S)", self.insert_keys)
-        btn("−◆", "Delete the selected keys (Delete)", self.delete_keys)
-        self.snap_btn = btn("⌗ Snap", "Snap key times to whole frames while moving", self._toggle_snap, True)
+        btn("+◆", "Key the shown curves at the current frame (S)", self.insert_keys,
+            py="bpy.ops.graph.keyframe_insert(type='ALL')   # fcurve.keyframe_points.insert(frame, value)")
+        btn("−◆", "Delete the selected keys (Delete)", self.delete_keys, py="bpy.ops.graph.delete()")
+        self.snap_btn = btn("⌗ Snap", "Snap key times to whole frames while moving", self._toggle_snap, True,
+                            py="bpy.context.space_data.auto_snap = 'FRAME'   # in Blender's Graph Editor")
         self.snap_btn.setChecked(True)
         sep()
         row.addWidget(QtWidgets.QLabel("Frame", bar))

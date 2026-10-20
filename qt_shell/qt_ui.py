@@ -3,6 +3,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import fake_ui, rna_widgets as rw, theme
+from . import pytips
 from .bridge import op_label, op_poll, op_rna_props, run_op, tr
 from .bridge import undo_push as bridge_undo
 
@@ -36,6 +37,7 @@ class EnumValueButton(rw.Binding):
         b = QtWidgets.QPushButton(text)
         b.setCheckable(True)
         b.clicked.connect(self._click)
+        pytips.tag(b, f"{pytips.prop_text(data, prop_id)} = {value!r}")
         self.widget = b
         self.refresh()
 
@@ -387,6 +389,7 @@ class Builder:
             rp = op_rna_props(a["idname"]).get(a["prop"])
             for e in (rp.enum_items if rp else []):
                 b = QtWidgets.QPushButton(tr(e.name))
+                pytips.tag_op(b, a["idname"], {a["prop"]: e.identifier})
                 b.clicked.connect(lambda _=False, i=e.identifier: run_op(a["idname"], {a["prop"]: i},
                                                                            f.get("ctx_ptrs")))
                 lay.addWidget(b)
@@ -407,6 +410,7 @@ class Builder:
             btn.setText((text or "") + " ▾")
             btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
             btn.setMenu(LazyMenu(a["menu"], btn))
+            pytips.tag(btn, f'bpy.ops.wm.call_menu(name="{a["menu"]}")')
             w = btn
         elif k == "popover":
             btn = QtWidgets.QToolButton()
@@ -415,6 +419,7 @@ class Builder:
             btn.setText((text or "") + " ▾")
             btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
             btn.setMenu(PopoverMenu(a["panel"], btn, self.on_change))
+            pytips.tag(btn, f'bpy.ops.wm.call_panel(name="{a["panel"]}")')
             w = btn
         elif k == "template_list":
             try:
@@ -506,7 +511,9 @@ class Builder:
         text = a.get("text")
         label = op_label(idname)
         btn = QtWidgets.QPushButton(_glyph(a.get("icon"), text if text is not None else label))
-        btn.setToolTip(f"{label}\n{idname}")
+        desc = _op_desc(idname)
+        btn.setToolTip(f"{label}\n{desc}" if desc and desc != label else label)
+        pytips.tag_op(btn, idname, a.get("props") or {})
         if a.get("depress"):
             btn.setCheckable(True)
             btn.setChecked(True)
@@ -568,6 +575,14 @@ class Builder:
         return w
 
 
+def _op_desc(idname):
+    try:
+        mod, name = idname.split(".", 1)
+        return getattr(getattr(bpy.ops, mod), name).get_rna_type().description or ""
+    except Exception:
+        return ""
+
+
 def _dim(w):
     """Inactive element (layout.active = False): only dimmed text, still editable."""
     w.setStyleSheet(w.styleSheet() + "color:#8a8a8a;")
@@ -586,6 +601,7 @@ def fill_operator_enum_menu(menu, idname, prop, base_props=None, ctx=None):
         act.setToolTip(e.description)
         props = dict(base_props or {})
         props[prop] = e.identifier
+        pytips.tag_op(act, idname, props)
         act.triggered.connect(lambda _=False, p=props: run_op(idname, p, ctx))
 
 
@@ -625,6 +641,7 @@ def _fill(menu, node, top=False):
         text = a.get("text")
         act = menu.addAction(text if text else op_label(idname))
         props = dict(a.get("props") or {})
+        pytips.tag_op(act, idname, props)
         ctx = f.get("ctx_ptrs")
         act.triggered.connect(lambda _=False: run_op(idname, dict(props), ctx))
         if not op_poll(idname, ctx):
@@ -641,6 +658,7 @@ def _fill(menu, node, top=False):
         text = a.get("text") or tr(getattr(cls, "bl_label", a["menu"]))
         sub = LazyMenu(a["menu"], menu, title=text)
         menu.addMenu(sub)
+        pytips.tag(sub.menuAction(), f'bpy.ops.wm.call_menu(name="{a["menu"]}")')
     elif k == "prop":
         data, pid = a["data"], a["prop"]
         rp = rw.rna_prop(data, pid)
@@ -649,6 +667,7 @@ def _fill(menu, node, top=False):
         label = a.get("text") if a.get("text") else tr(rp.name)
         if rp.type == "BOOLEAN" and not getattr(rp, "array_length", 0):
             act = menu.addAction(label)
+            pytips.tag_prop(act, data, pid)
             act.setCheckable(True)
             act.setChecked(bool(getattr(data, pid)))
             act.toggled.connect(lambda on, d=data, p=pid: _set_quiet(d, p, on))
@@ -658,6 +677,7 @@ def _fill(menu, node, top=False):
             cur = getattr(data, pid)
             for ident, name, _desc in rw.enum_items(data, pid):
                 ea = target.addAction(name)
+                pytips.tag(ea, f"{pytips.prop_text(data, pid)} = {ident!r}")
                 ea.setCheckable(True)
                 ea.setChecked(ident == cur or (isinstance(cur, set) and ident in cur))
                 if not rp.is_enum_flag:
@@ -666,6 +686,7 @@ def _fill(menu, node, top=False):
     elif k == "prop_enum":
         data, pid, value = a["data"], a["prop"], a["value"]
         act = menu.addAction(a.get("text") or value)
+        pytips.tag(act, f"{pytips.prop_text(data, pid)} = {value!r}")
         act.setCheckable(True)
         act.setChecked(getattr(data, pid) == value)
         act.triggered.connect(lambda _=False: _set_quiet(data, pid, value))

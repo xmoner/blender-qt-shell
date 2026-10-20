@@ -23,6 +23,7 @@ from mathutils import Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import theme
+from . import pytips
 
 # (tool, glyph, tooltip, key in the Shift+Space tool menu)
 TOOLS = [
@@ -33,6 +34,8 @@ TOOLS = [
     ("TRANSFORM", "❖", "Transform – arrows move, rings rotate, boxes scale", "T"),
 ]
 _KIND = {"MOVE": "G", "ROTATE": "R", "SCALE": "S", "TRANSFORM": "T"}
+_BUILTIN = {"SELECT": "select_box", "MOVE": "move", "ROTATE": "rotate", "SCALE": "scale",
+            "TRANSFORM": "transform"}
 TOOL_NAMES = {"SELECT": "Select Box", "MOVE": "Move", "ROTATE": "Rotate", "SCALE": "Scale",
               "TRANSFORM": "Transform"}
 
@@ -177,6 +180,7 @@ class Toolbar(QtWidgets.QFrame):
             extra = "W, or " if tool == "SELECT" else ""
             b.setToolTip(f"{tip}\nShortcut: {extra}Shift+Space → {key}\nT shows / hides the toolbar")
             b.setCheckable(True)
+            pytips.tag(b, f'bpy.ops.wm.tool_set_by_id(name="builtin.{_BUILTIN[tool]}")')
             b.setFixedSize(theme.px(30), theme.px(30))
             b.clicked.connect(lambda _c=False, t=tool: self.state.set_tool(t))
             group.addButton(b)

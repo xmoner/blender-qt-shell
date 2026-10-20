@@ -672,6 +672,18 @@ class ReadOnlyBinding(Binding):
 def make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, invert=False,
                  on_change=None, search=None):
     """Returns (binding, label_text). label_text is None if the widget carries its own label."""
+    b, name = _make_binding(data, prop_id, text, expand, toggle, index, invert, on_change, search)
+    if b is not None:
+        try:
+            from . import pytips
+            pytips.tag_prop(getattr(b, "widget", None), data, prop_id, index)
+        except Exception:
+            pass
+    return b, name
+
+
+def _make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, invert=False,
+                  on_change=None, search=None):
     rp = rna_prop(data, prop_id)
     if rp is None:
         return None, None

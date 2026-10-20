@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.14.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.15.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -69,6 +69,11 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
   right after `app.stop()` → the old window is deleted before the new one is built (3 reloads in a row OK).
   Plain close (*Return to the Blender UI*) + *Window → Open Qt Shell* worked without it. When poking at the
   window from the Console, pick the *visible* one (`... if hasattr(w, "workspaces") and w.isVisible()`).
+- **No Python event filter on the QApplication.** The first Python-tooltip version installed one; after a dev
+  reload `notify()` received a `QMoveEvent` as the *receiver* (stale PySide wrappers, hundreds of
+  "Error calling Python override of QApplication::notify()") and key events stopped working. Hook into the
+  existing `app._notify_with_context` instead (it already runs for every event) and never keep events alive
+  in tracebacks. Also: `QtGui.Qt.mightBeRichText`, not `QtCore.Qt`.
 - **Re-adding docks (`_reset_layout`) can grow the window** past the screen. Workspace switches remember the
   window geometry and put it back (`workspaces.fit_to_screen`); templates set dock widths with `resizeDocks`.
 - **Computer-use note:** the top-right corner of the screen (x > ~1070 in screenshots) belongs to the Claude
@@ -95,6 +100,7 @@ qt_shell/            the add-on (zip this folder for a release)
   scripts.py         script manager core (no Qt)
   scripts_dock.py    Scripts dock UI – NOT USED (disabled, see 6.1)
   shelf.py           Shelf (dock 'shelf' at the top, floatable) – buttons run code via scripts._execute; config/qt_shell/shelves.json
+  pytips.py          Python tooltips: widgets/actions carry the command in Qt property "qtshell_python" (tag / tag_op / tag_prop); app._notify_with_context calls pytips.handle() for QEvent.ToolTip; QSettings interface/python_tooltips
   graph_editor.py    Graph editor (Maya-like): channel tree + GraphView; selection = Blender's key select flags; Blender 4.4+ channelbags via bpy_extras.anim_utils
   workspaces.py      Workspaces (tabs = menu bar corner widget; manager captures/restores saveState per workspace; templates; config/qt_shell/workspaces.json)
   prefs_window.py    Edit → Qt Preferences… (Qt Shell settings; Scripts page replaces the disabled Scripts dock for startup files)
@@ -168,6 +174,7 @@ add-on folder there is connected:
 | 0.12.0 | not released yet | Workspaces like Blender (tabs in the menu bar; add from template / duplicate, rename, reorder, delete, reset; each remembers docks, floating windows, view layout and shading) |
 | 0.13.0 | not released yet | Movable viewport toolbar (grip, snaps to edges, horizontal / vertical, Flip, Reset; QSettings `viewport/toolbar_pos`); no saved layout → current workspace's layout is applied; dev reload deletes the old window (fixes reload crash) |
 | 0.14.0 | not released yet | Graph editor like Maya (curves, keys, tangents, box select, move, tangent types, infinity, stats boxes, insert / delete keys, scrub); Animation workspace = Graph editor above the Timeline |
+| 0.15.0 | not released yet | Python tooltips (Qt Preferences → Interface): command of operators, properties, menu items and Qt Shell's own buttons in the tooltip |
 
 ---
 
@@ -200,7 +207,10 @@ Until then, scripts are managed from the Text editor and the Console (`qt_shell.
   entries (fixed in 0.5.0, still in the log file).
 
 ### 6.3 State of the owner's PC (2026-10-20)
-- Add-on folder has the current `main` (0.14.0). Graph editor tested on the owner's animated Cube: channels, A framing,
+- Add-on folder has the current `main` (0.15.0). Python tooltips tested after a clean Blender restart: Graph editor
+  Linear button, Add → Camera menu item. The owner's scene was saved to `%TEMP%\20644_autosave.blend`
+  (copy: `%TEMP%\qtshell_saved_2026-10-20_1517.blend`) before the restart.
+- 0.14.0: Graph editor tested on the owner's animated Cube: channels, A framing,
   S insert key, drag key (snapped to frame 40), Linear / Stepped tangents, 4× Ctrl+Z back to the original, box select,
   Animation workspace (Reset to Template) = Graph editor above the Timeline. Not tested yet: tangent handle drag,
   MMB move, Alt pan/zoom, Infinity, Frame/Value boxes, Delete keys. Existing Animation workspaces keep their saved

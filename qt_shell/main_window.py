@@ -8,6 +8,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import app as shell_app
+from . import pytips
 from . import api, bridge, rna_widgets as rw, theme
 from .bridge import run_op, tr
 from .console import Console
@@ -579,6 +580,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.viewports.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self._rendering = False
 
+        pytips.install()        # Python tooltips (Edit → Qt Preferences… → Interface)
         self._settings = QtCore.QSettings("QtShell", "QtShell")
         st = None
         try:
@@ -702,6 +704,7 @@ class MainWindow(QtWidgets.QMainWindow):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
+            pytips.tag(b, f"bpy.ops.mesh.select_mode(type={('VERT', 'EDGE', 'FACE')[i]!r})")
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, i=i: self._set_selmode(i))
             lay.addWidget(b)
@@ -711,6 +714,7 @@ class MainWindow(QtWidgets.QMainWindow):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
+            pytips.tag_op(b, {"G": "transform.translate", "R": "transform.rotate", "S": "transform.resize"}[kind])
             b.clicked.connect(lambda _=False, k=kind: self.viewport.start_modal(k))
             lay.addWidget(b)
         lay.addSpacing(10)
@@ -721,6 +725,7 @@ class MainWindow(QtWidgets.QMainWindow):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
+            pytips.tag(b, f"bpy.context.space_data.shading.type = {kind!r}")
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, k=kind: self.viewport.set_shading(k))
             self.shading_group.addButton(b)
@@ -731,17 +736,20 @@ class MainWindow(QtWidgets.QMainWindow):
         sb.setToolTip("Shading settings")
         sb.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         sb.setMenu(PopoverMenu("VIEW3D_PT_shading", sb))
+        pytips.tag(sb, 'bpy.ops.wm.call_panel(name="VIEW3D_PT_shading")')
         lay.addWidget(sb)
         ov = QtWidgets.QToolButton()
         ov.setText("Overlays ▾")
         ov.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         ov.setMenu(PopoverMenu("VIEW3D_PT_overlay", ov))
+        pytips.tag(ov, 'bpy.ops.wm.call_panel(name="VIEW3D_PT_overlay")')
         lay.addWidget(ov)
         lb = QtWidgets.QToolButton(bar)
         lb.setText("▦ Layout ▾")
         lb.setToolTip("Split the 3D view: one, two or four views (Ctrl+Alt+Q = Four Views)")
         lb.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         lb.setMenu(self._layout_menu(lb))
+        pytips.tag(lb, 'import qt_shell\nqt_shell.api.set_viewport_layout("quad")   # "single", "side", "stacked", "quad"')
         lay.addWidget(lb)
         QtCore.QTimer.singleShot(0, self._sync_shading)
         return bar
@@ -759,6 +767,7 @@ class MainWindow(QtWidgets.QMainWindow):
             a = m.addAction(label + ("   Ctrl+Alt+Q" if key == "quad" else ""),
                             lambda k=key: self.viewports.set_layout(k))
             a.setCheckable(True)
+            pytips.tag(a, f"qt_shell.api.set_viewport_layout({key!r})")
             group.addAction(a)
             acts[key] = a
         m.aboutToShow.connect(lambda: acts[self.viewports.mode].setChecked(True))

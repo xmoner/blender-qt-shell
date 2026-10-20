@@ -5,6 +5,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, theme
+from . import pytips
 from .rna_widgets import DragSpin
 
 
@@ -92,39 +93,48 @@ class Timeline(QtWidgets.QWidget):
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(3)
 
-        def btn(text, tip, fn):
+        def btn(text, tip, fn, py=None):
             b = QtWidgets.QToolButton()
             b.setText(text)
             b.setToolTip(tip)
+            pytips.tag(b, py)
             b.clicked.connect(fn)
             row.addWidget(b)
             return b
 
-        btn("⏮", "Jump to Start", lambda: self._jump("start"))
-        btn("◆◀", "Previous Keyframe", lambda: self._jump("prev_key"))
-        self.play_btn = btn("▶", "Play / Pause (Space)", self.toggle_play)
-        btn("▶◆", "Next Keyframe", lambda: self._jump("next_key"))
-        btn("⏭", "Jump to End", lambda: self._jump("end"))
+        btn("⏮", "Jump to Start", lambda: self._jump("start"), "bpy.ops.screen.frame_jump(end=False)")
+        btn("◆◀", "Previous Keyframe", lambda: self._jump("prev_key"), "bpy.ops.screen.keyframe_jump(next=False)")
+        self.play_btn = btn("▶", "Play / Pause (Space)", self.toggle_play, "bpy.ops.screen.animation_play()")
+        btn("▶◆", "Next Keyframe", lambda: self._jump("next_key"), "bpy.ops.screen.keyframe_jump(next=True)")
+        btn("⏭", "Jump to End", lambda: self._jump("end"), "bpy.ops.screen.frame_jump(end=True)")
         row.addSpacing(12)
         self.auto_key = QtWidgets.QToolButton()
         self.auto_key.setText("● Auto Key")
         self.auto_key.setCheckable(True)
+        pytips.tag(self.auto_key, "bpy.context.scene.tool_settings.use_keyframe_insert_auto = True")
         self.auto_key.toggled.connect(self._set_auto_key)
         row.addWidget(self.auto_key)
-        btn("+◆ Key", "Insert a location/rotation/scale keyframe for the active object", self.insert_key)
-        btn("−◆", "Delete the keyframe on the current frame", self.delete_key)
+        btn("+◆ Key", "Insert a location/rotation/scale keyframe for the active object", self.insert_key,
+            'for ob in bpy.context.selected_objects:\n    for path in ("location", "rotation_euler", "scale"):\n'
+            '        ob.keyframe_insert(data_path=path)')
+        btn("−◆", "Delete the keyframe on the current frame", self.delete_key,
+            'for ob in bpy.context.selected_objects:\n    for path in ("location", "rotation_euler", "scale"):\n'
+            '        ob.keyframe_delete(data_path=path)')
         row.addStretch(1)
         row.addWidget(QtWidgets.QLabel("Frame"))
         self.cur = self._spin(-1048574, 1048574)
+        pytips.tag(self.cur, "bpy.context.scene.frame_set(1)   # bpy.context.scene.frame_current")
         self.cur.valueChanged.connect(lambda v: (bpy.context.scene.frame_set(int(v)), self.bar.update()))
         row.addWidget(self.cur)
         row.addWidget(QtWidgets.QLabel("Start"))
         self.start = self._spin(0, 1048574)
+        pytips.tag(self.start, "bpy.context.scene.frame_start")
         self.start.valueChanged.connect(lambda v: self._set("frame_start", v))
         self.start.editingFinished.connect(lambda: bridge.undo_push("Frame Range"))
         row.addWidget(self.start)
         row.addWidget(QtWidgets.QLabel("End"))
         self.end = self._spin(0, 1048574)
+        pytips.tag(self.end, "bpy.context.scene.frame_end")
         self.end.valueChanged.connect(lambda v: self._set("frame_end", v))
         self.end.editingFinished.connect(lambda: bridge.undo_push("Frame Range"))
         row.addWidget(self.end)

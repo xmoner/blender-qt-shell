@@ -109,6 +109,11 @@ def _notify_with_context(app, obj, ev):
     *old* ShellApp class, so this must not rely on super() or on the class – it looks up the current
     module state through sys.modules every time."""
     base = QtWidgets.QApplication.notify
+    if ev.type() == QtCore.QEvent.ToolTip:
+        # Python tooltips (Edit → Qt Preferences… → Interface)
+        pt = sys.modules.get(__name__.rsplit(".", 1)[0] + ".pytips")
+        if pt is not None and pt.enabled() and pt.handle(obj, ev):
+            return True
     mod = sys.modules.get(__name__)
     win = getattr(mod, "_win", None) if mod is not None else None
     if win is not None:

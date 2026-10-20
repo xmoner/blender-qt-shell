@@ -113,6 +113,14 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addLayout(row)
         _hint(lay, "Also in Window → Interface Size… and in the add-on preferences. Applying a new size "
                    "rebuilds the Qt window.", page)
+        _section(lay, "Tooltips", page)
+        from . import pytips
+        c = self._check(page, lay, "Python Tooltips", pytips.enabled(), pytips.set_enabled,
+                        "Show the Python module and command of buttons, fields and menu items in their tooltips")
+        pytips.tag(c, 'QtCore.QSettings("QtShell", "QtShell").setValue("interface/python_tooltips", "true")')
+        _hint(lay, "Like Blender's Python Tooltips: hover a button, field or menu item to see the command that runs it, "
+                   "e.g. bpy.ops.mesh.primitive_cube_add() or bpy.data.objects[\"Cube\"].location – ready to paste "
+                   "into the Text editor or the Console.", page)
 
     def _interface_size(self):
         self.close()                          # the window is rebuilt after a size change

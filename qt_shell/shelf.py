@@ -18,6 +18,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import api, bridge, scripts, theme
+from . import pytips
 
 DEFAULT = {
     "current": 0,
@@ -304,6 +305,11 @@ class ShelfBar(QtWidgets.QWidget):
             tip = b.get("tooltip") or label
             src = b.get("file") or (b.get("command", "").strip().splitlines() or [""])[0]
             tb.setToolTip(f"{tip}\n{src[:80]}\n(right click: edit, delete…)")
+            if b.get("file"):
+                pytips.tag(tb, f'exec(open(r"{b["file"]}").read())')
+            else:
+                code = (b.get("command") or "").strip().splitlines()
+                pytips.tag(tb, "\n".join(code[:12]) + ("\n…" if len(code) > 12 else ""))
             tb.clicked.connect(lambda _c=False, i=idx: self._run(i))
             tb.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             tb.customContextMenuRequested.connect(
