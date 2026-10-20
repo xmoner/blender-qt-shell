@@ -35,6 +35,7 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
 | **Script manager** | `scripts.py`: runs scripts, records what they register (API items, `bpy` classes, `bpy.app.handlers`), Unload / Reload, auto-load (files in `config/qt_shell/scripts.json`, texts with custom prop `qtshell_autoload`). No PySide in this module. |
 | **Text editor** | `text_editor.py`: `CodeEditor` (QPlainTextEdit) + `TextEditor` dock on `bpy.data.texts`. Auto-completion logic in `completion.py` (pure Python, no code execution) – popup = `QCompleter`, names in `Qt.UserRole`. |
 | **Transform tools / gizmo** | `gizmo.py`: `ToolState` (shared tool + toolbar visibility, QSettings `viewport/tool`, `viewport/toolbar`, stored on `hub._tool_state`), `Toolbar` (child of each `Viewport`), `handles()` (ids "G:X", "R:VIEW", "S:UNIFORM", …) / `hit()` / `paint()` in screen space, `ToolMenu` (Shift+Space), `start_drag()` → `Viewport.start_modal()` with the axis set and `m['drag']=True` (mouse release confirms). Pivot = median of selected origins / selected verts (edit-mode pivot cached, invalidated on data / selection change). Constrained G follows the projected axis on screen. |
+| **Built-in items in Blender menus** | Menus generated from Blender call `api.extend_menu()` when they open; it calls `MainWindow.extend_builtin_menu(menu, key)` first (e.g. inserts *Qt Preferences…* after Blender's *Preferences…* in Edit), then the API items. |
 | **Theme** | `theme.py`: `qss()` app stylesheet, `px()` / `fs()` scaling, `HOVER` colours + `hover_qss()` / `field_hover_qss()` (append them to any widget stylesheet that sets a button / field background, otherwise the hover effect is hidden). |
 | **Logs** | `%TEMP%\qtshell.log` (errors/warnings), `%TEMP%\qtshell_crash.log` (faulthandler – note: it also logs harmless first-chance access violations, e.g. inside the Windows file dialog). |
 | **Safe start** | `app.start()` writes `%TEMP%\qtshell_starting` before building the window and removes it 3 s after `show()`. If it exists on the next start, the saved window layout (`QSettings("QtShell","QtShell")` → `state`, `geometry`) is discarded. |
@@ -76,6 +77,7 @@ qt_shell/            the add-on (zip this folder for a release)
   completion.py      auto-completion logic (no Qt)
   scripts.py         script manager core (no Qt)
   scripts_dock.py    Scripts dock UI – NOT USED (disabled, see 6.1)
+  prefs_window.py    Edit → Qt Preferences… (Qt Shell settings; Scripts page replaces the disabled Scripts dock for startup files)
   api.py             public API (qt_shell.api)
   fake_ui.py, qt_ui.py, rna_widgets.py   Blender UI code → Qt widgets
   theme.py           colours, stylesheet, scaling, hover styles
@@ -140,7 +142,7 @@ add-on folder there is connected:
 | 0.9.2 | 2026-10-19 | Text editor auto-completion; API reference `docs/API.md` |
 | 0.9.3 | 2026-10-19 | Light-blue hover / pressed highlight for buttons, fields, lists, menus |
 | 0.9.4 | 2026-10-19 | Node editor: Tab node search, Ctrl+Tab groups, wheel zoom fix, F / Home / Numpad . framing |
-| 0.10.0 | not released yet | Transform tools: toolbar (T) + Select / Move / Rotate / Scale / Transform gizmos in every view, Shift+Space tool menu, W = Select; fix: crash on start after closing with a floating window; docs: buttons over the viewport, `examples/viewport_button.py` |
+| 0.10.0 | not released yet | Transform tools: toolbar (T) + Select / Move / Rotate / Scale / Transform gizmos in every view, Shift+Space tool menu, W = Select; Edit → Qt Preferences… window; fix: crash on start after closing with a floating window; docs: buttons over the viewport, `examples/viewport_button.py` |
 
 ---
 

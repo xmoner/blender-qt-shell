@@ -1120,6 +1120,27 @@ class MainWindow(QtWidgets.QMainWindow):
             if not d.isFloating() and d.width() < theme.px(180):
                 self.resizeDocks([d], [theme.px(260)], QtCore.Qt.Horizontal)
 
+    def show_qt_preferences(self):
+        from . import prefs_window
+        prefs_window.show(self)
+
+    def extend_builtin_menu(self, menu, key):
+        """Adds Qt Shell's own items to menus generated from Blender (called when they open)."""
+        if key != "edit":
+            return
+        act = QtGui.QAction("Qt Preferences…", menu)
+        act.setToolTip("Settings of Qt Shell (Blender's own settings: Preferences…)")
+        act.triggered.connect(self.show_qt_preferences)
+        after = None
+        acts = menu.actions()
+        for i, a in enumerate(acts):
+            if a.text().replace("&", "").strip().lower().startswith("preferences"):
+                after = acts[i + 1] if i + 1 < len(acts) else None
+                menu.insertAction(after, act) if after is not None else menu.addAction(act)
+                return
+        menu.addSeparator()
+        menu.addAction(act)
+
     def _interface_size(self):
         InterfaceSizeDialog(self).exec()
 

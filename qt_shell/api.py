@@ -385,6 +385,12 @@ def _install_actions(win):
 def extend_menu(menu):
     """Called by menus generated from Blender after they are filled (internal)."""
     key = _menu_key(menu.property("qtshell_key") or menu.title())
+    w = main_window()
+    if w is not None and hasattr(w, "extend_builtin_menu"):
+        try:
+            w.extend_builtin_menu(menu, key)        # Qt Shell's own items (e.g. Edit → Qt Preferences…)
+        except Exception:
+            _log(traceback.format_exc())
     specs = [s for s in _reg()["actions"].values() if _menu_key(s["menu"]) == key]
     if not specs:
         return
