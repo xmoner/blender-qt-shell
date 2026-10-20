@@ -8,6 +8,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import app as shell_app
+from . import icons
 from . import pytips
 from . import api, bridge, fake_ui, rna_widgets as rw, theme
 from .bridge import run_op, tr
@@ -34,6 +35,8 @@ MODE_MENUS = {
                "EDIT_CURVE": "VIEW3D_MT_select_edit_curve", "POSE": "VIEW3D_MT_select_pose",
                "EDIT_ARMATURE": "VIEW3D_MT_select_edit_armature"},
 }
+MODE_ICONS = {"OBJECT": "object_mode", "EDIT": "edit_mode", "SCULPT": "sculpt_mode", "VERTEX_PAINT": "vertex_paint",
+              "WEIGHT_PAINT": "weight_paint", "TEXTURE_PAINT": "texture_paint", "POSE": "pose_mode"}
 MODES = [("OBJECT", "Object Mode"), ("EDIT", "Edit Mode"), ("SCULPT", "Sculpt Mode"),
          ("VERTEX_PAINT", "Vertex Paint"), ("WEIGHT_PAINT", "Weight Paint"),
          ("TEXTURE_PAINT", "Texture Paint"), ("POSE", "Pose Mode")]
@@ -700,7 +703,9 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.setSpacing(3)
         self.mode_combo = rw.NoWheelCombo()
         for ident, label in MODES:
-            self.mode_combo.addItem(tr(label), ident)
+            self.mode_combo.addItem(icons.icon(MODE_ICONS.get(ident, "")), tr(label), ident)
+        self.mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
+        self.mode_combo.setMinimumContentsLength(11)
         self.mode_combo.activated.connect(self._set_mode)
         lay.addWidget(self.mode_combo)
         # the menus Blender shows for the current mode (View, Select, Add, Object / Mesh, Vertex, Edge, …)
@@ -715,6 +720,7 @@ class MainWindow(QtWidgets.QMainWindow):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
+            icons.set_icon(b, ("select_vert", "select_edge", "select_face")[i])
             pytips.tag(b, f"bpy.ops.mesh.select_mode(type={('VERT', 'EDGE', 'FACE')[i]!r})")
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, i=i: self._set_selmode(i))
@@ -733,6 +739,8 @@ class MainWindow(QtWidgets.QMainWindow):
             b = QtWidgets.QToolButton()
             b.setText(txt)
             b.setToolTip(tip)
+            icons.set_icon(b, {"WIREFRAME": "shading_wire", "SOLID": "shading_solid", "MATERIAL": "shading_material",
+                               "RENDERED": "shading_rendered"}[kind])
             pytips.tag(b, f"bpy.context.space_data.shading.type = {kind!r}")
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, k=kind: self.viewport.set_shading(k))
@@ -748,6 +756,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addWidget(sb)
         lb = QtWidgets.QToolButton(bar)
         lb.setText("▦ Layout ▾")
+        icons.set_icon(lb, "layout", "Layout ▾")
         lb.setToolTip("Split the 3D view: one, two or four views (Ctrl+Alt+Q = Four Views)")
         lb.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         lb.setMenu(self._layout_menu(lb))
@@ -769,9 +778,17 @@ class MainWindow(QtWidgets.QMainWindow):
         return area
 
     # ------------------------------------------------------------ 3D view header (like Blender 5.2)
+    # glyph at the start of a header button's text → icon (the rest of the text stays beside it)
+    _HDR_ICONS = {"⤧": "orientation", "⊙": "pivot", "🧲": "snap", "◎": "proportional", "👁": "visibility",
+                  "✥": "gizmo", "◫": "overlays", "▣": "xray"}
+
     def _hdr_button(self, parent, text, tip, py=None, checkable=False):
         b = QtWidgets.QToolButton(parent)
         b.setText(text)
+        for g, name in self._HDR_ICONS.items():
+            if text.startswith(g):
+                icons.set_icon(b, name, text[len(g):].strip() or None)
+                break
         b.setToolTip(tip)
         b.setAutoRaise(True)
         b.setCheckable(checkable)
@@ -826,7 +843,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                             "Transform Orientation")
         pytips.tag(self.orient_btn, "bpy.context.scene.transform_orientation_slots[0].type = 'GLOBAL'")
         self._hdr_syncs.append(lambda: self.orient_btn.setText(
-            "⤧ " + tr(bpy.context.scene.transform_orientation_slots[0].type.title().replace("_", " ")) + " ▾"))
+            ("" if not self.orient_btn.icon().isNull() else "⤧ ")
+            + tr(bpy.context.scene.transform_orientation_slots[0].type.title().replace("_", " ")) + " ▾"))
         # Pivot point
         self.pivot_btn = self._hdr_button(bar, "⊙ ▾", "Transform Pivot Point",
                                           "bpy.context.scene.tool_settings.transform_pivot_point = 'MEDIAN_POINT'")
@@ -1330,7 +1348,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mode_combo.clear()
             for m in modes:
                 it = items.get(m)
-                self.mode_combo.addItem(tr(it.name) if it else m.title(), m)
+                self.mode_combo.addItem(icons.icon(MODE_ICONS.get(m, "")), tr(it.name) if it else m.title(), m)
             self.mode_combo.blockSignals(False)
         cur = ob.mode if ob else "OBJECT"
         self.mode_combo.blockSignals(True)

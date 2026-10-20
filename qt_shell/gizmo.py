@@ -23,6 +23,7 @@ from mathutils import Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import theme
+from . import icons
 from . import pytips
 
 # (tool, glyph, tooltip, key in the Shift+Space tool menu)
@@ -176,6 +177,7 @@ class Toolbar(QtWidgets.QFrame):
         for tool, glyph, tip, key in TOOLS:
             b = QtWidgets.QToolButton(self)
             b.setText(glyph)
+            icons.set_icon(b, f"tool_{tool.lower()}")
             b.setFont(f)
             extra = "W, or " if tool == "SELECT" else ""
             b.setToolTip(f"{tip}\nShortcut: {extra}Shift+Space → {key}\nT shows / hides the toolbar")
@@ -348,7 +350,9 @@ class ToolMenu(QtWidgets.QMenu):
         title.setEnabled(False)
         self.addSeparator()
         for tool, glyph, _tip, key in TOOLS:
-            a = self.addAction(f"{glyph}  {TOOL_NAMES[tool]}\t{key}")
+            ic = icons.icon(f"tool_{tool.lower()}")
+            a = self.addAction(ic, f"{TOOL_NAMES[tool]}\t{key}") if not ic.isNull() else \
+                self.addAction(f"{glyph}  {TOOL_NAMES[tool]}\t{key}")
             a.setCheckable(True)
             a.setChecked(tool == state.tool)
             a.triggered.connect(lambda _c=False, t=tool: state.set_tool(t))

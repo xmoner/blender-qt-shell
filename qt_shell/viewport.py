@@ -14,6 +14,7 @@ from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, editmesh, gizmo, theme
+from . import icons
 
 DEG = math.pi / 180.0
 
@@ -512,6 +513,13 @@ class Viewport(QtWidgets.QWidget):
                 p.setBrush(QtGui.QColor(255, 255, 255, 70) if hot else QtGui.QColor(0, 0, 0, 90))
                 p.drawEllipse(pc, r, r)
                 p.setPen(QtGui.QColor("#ffffff") if (hot or active) else QtGui.QColor("#cfcfcf"))
+                iname = {"zoom": "zoom", "pan": "pan", "camera": "camera",
+                         "persp": "orthographic" if self.ortho else "perspective"}[key]
+                pm = icons.pixmap(iname, theme.px(14), color="#ffffff" if (hot or active) else "#d0d0d0")
+                if pm is not None:
+                    s_ = theme.px(14)
+                    p.drawPixmap(QtCore.QRectF(pc.x() - s_ / 2, pc.y() - s_ / 2, s_, s_), pm, QtCore.QRectF(pm.rect()))
+                    continue
                 glyph = {"zoom": "🔍", "pan": "✋", "camera": "🎥", "persp": "▦" if self.ortho else "⬚"}[key]
                 gf = QtGui.QFont(f)
                 gf.setBold(False)

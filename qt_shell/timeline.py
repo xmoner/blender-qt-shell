@@ -5,6 +5,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, theme
+from . import icons
 from . import pytips
 from .rna_widgets import DragSpin
 
@@ -93,10 +94,16 @@ class Timeline(QtWidgets.QWidget):
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(3)
 
+        glyph_icons = {"⏮": ("jump_start", None), "◆◀": ("key_prev", None), "▶": ("play", None),
+                       "▶◆": ("key_next", None), "⏭": ("jump_end", None), "+◆ Key": ("keyframe", "Key"),
+                       "−◆": ("key_delete", None)}
+
         def btn(text, tip, fn, py=None):
             b = QtWidgets.QToolButton()
             b.setText(text)
             b.setToolTip(tip)
+            if text in glyph_icons:
+                icons.set_icon(b, *glyph_icons[text])
             pytips.tag(b, py)
             b.clicked.connect(fn)
             row.addWidget(b)
@@ -110,6 +117,7 @@ class Timeline(QtWidgets.QWidget):
         row.addSpacing(12)
         self.auto_key = QtWidgets.QToolButton()
         self.auto_key.setText("● Auto Key")
+        icons.set_icon(self.auto_key, "record", "Auto Key")
         self.auto_key.setCheckable(True)
         pytips.tag(self.auto_key, "bpy.context.scene.tool_settings.use_keyframe_insert_auto = True")
         self.auto_key.toggled.connect(self._set_auto_key)
@@ -217,7 +225,8 @@ class Timeline(QtWidgets.QWidget):
     def toggle_play(self):
         if self.is_playing():
             self._set_playing(False)
-            self.play_btn.setText("▶")
+            if not icons.set_icon(self.play_btn, "play"):
+                self.play_btn.setText("▶")
             self.sync()
         else:
             sc = bpy.context.scene
@@ -225,7 +234,8 @@ class Timeline(QtWidgets.QWidget):
             self._f0 = sc.frame_current
             self._next = self._t0
             self._set_playing(True)
-            self.play_btn.setText("⏸")
+            if not icons.set_icon(self.play_btn, "pause"):
+                self.play_btn.setText("⏸")
 
     def _fps(self):
         r = bpy.context.scene.render
