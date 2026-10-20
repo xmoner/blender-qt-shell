@@ -401,6 +401,7 @@ class TabColumn(QtWidgets.QWidget):
     def addTab(self, widget, label, icon=None):
         self.stack.addWidget(widget)
         self.nav.addItem(label)
+        self.nav.item(self.nav.count() - 1).setToolTip(label)   # names are cut off in the narrow column
         if icon is not None and not icon.isNull():
             self.nav.item(self.nav.count() - 1).setIcon(icon)
 

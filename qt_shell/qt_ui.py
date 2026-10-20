@@ -506,7 +506,9 @@ class Builder:
             lay = QtWidgets.QVBoxLayout(w)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(1)
-            lay.addWidget(QtWidgets.QLabel(label + ":"))
+            lab = QtWidgets.QLabel(label + ":")
+            lab.setToolTip(b.widget.toolTip())
+            lay.addWidget(lab)
             lay.addWidget(b.widget)
             return w
         if isinstance(b, rw.EnumBinding) and b.expand and not split:

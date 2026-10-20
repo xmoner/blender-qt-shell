@@ -679,11 +679,38 @@ class ReadOnlyBinding(Binding):
 
 
 # ---------------------------------------------------------------- factory
+def prop_tooltip(rp):
+    """Blender-like tooltip of an RNA property: bold name + description."""
+    import html
+    if rp is None:
+        return ""
+    name = html.escape(tr(rp.name) or rp.identifier)
+    desc = html.escape(tr(rp.description or ""))
+    return f"<b>{name}</b>" + (f"<br>{desc}" if desc else "")
+
+
+def set_prop_tooltip(widget, rp):
+    """Puts the property tooltip on the widget and on its child widgets that have none
+    (vector components, enum buttons keep their own item descriptions)."""
+    tip = prop_tooltip(rp)
+    if widget is None or not tip:
+        return
+    if not widget.toolTip():
+        widget.setToolTip(tip)
+    for ch in widget.findChildren(QtWidgets.QWidget):
+        if not ch.toolTip():
+            ch.setToolTip(tip)
+
+
 def make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, invert=False,
                  on_change=None, search=None):
     """Returns (binding, label_text). label_text is None if the widget carries its own label."""
     b, name = _make_binding(data, prop_id, text, expand, toggle, index, invert, on_change, search)
     if b is not None:
+        try:
+            set_prop_tooltip(getattr(b, "widget", None), rna_prop(data, prop_id))
+        except Exception:
+            pass
         try:
             from . import pytips
             pytips.tag_prop(getattr(b, "widget", None), data, prop_id, index)
@@ -737,6 +764,8 @@ def labeled_row(label, widget, split=True):
     lab.setObjectName("qtshell_split_label")   # a column/row heading can be placed here later
     lab.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignTop if split else QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
     lab.setContentsMargins(0, 3, 0, 0)
+    if label and widget.toolTip():
+        lab.setToolTip(widget.toolTip())      # hovering the label shows the property tooltip too
     lay.addWidget(lab, 2 if split else 0)
     lay.addWidget(widget, 3 if split else 1)
     return w
