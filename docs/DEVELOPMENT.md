@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.10.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.10.1 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -142,7 +142,8 @@ add-on folder there is connected:
 | 0.9.2 | 2026-10-19 | Text editor auto-completion; API reference `docs/API.md` |
 | 0.9.3 | 2026-10-19 | Light-blue hover / pressed highlight for buttons, fields, lists, menus |
 | 0.9.4 | 2026-10-19 | Node editor: Tab node search, Ctrl+Tab groups, wheel zoom fix, F / Home / Numpad . framing |
-| 0.10.0 | not released yet | Transform tools: toolbar (T) + Select / Move / Rotate / Scale / Transform gizmos in every view, Shift+Space tool menu, W = Select; Edit → Qt Preferences… window; fix: crash on start after closing with a floating window; docs: buttons over the viewport, `examples/viewport_button.py` |
+| 0.10.0 | 2026-10-20 | Transform tools: toolbar (T) + Select / Move / Rotate / Scale / Transform gizmos in every view, Shift+Space tool menu, W = Select; fix: crash on start after closing with a floating window; docs: buttons over the viewport, `examples/viewport_button.py` |
+| 0.10.1 | not released yet | Edit → Qt Preferences… (Qt Shell settings window; startup scripts list replaces the Scripts dock for files) |
 
 ---
 
@@ -175,7 +176,7 @@ Until then, scripts are managed from the Text editor and the Console (`qt_shell.
   entries (fixed in 0.5.0, still in the log file).
 
 ### 6.3 State of the owner's PC (2026-10-20)
-- Add-on folder has the current `main` (0.10.0).
+- Add-on folder has the current `main` (0.10.1). Qt Preferences not yet tested in Blender (owner was working).
 - Auto-load file was configured: `C:\Users\uzivatel\Documents\qt_start.py` (switches to Four Views);
   the owner asked how to remove it, so it may have been removed since – check with `qt_shell.scripts.managed_files()`.
 - Test file left in `%TEMP%\qs_viewport_button.py` (same as the example; deleting files on the device
