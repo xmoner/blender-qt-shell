@@ -588,8 +588,6 @@ class MainWindow(QtWidgets.QMainWindow):
             st = self._settings.value("state")
             if geo is not None:
                 self.restoreGeometry(geo)
-            if st is not None:
-                self.restoreState(st)
             old = float(self._settings.value("size_factor", 1.0) or 1.0)
         except Exception:
             old = 1.0
@@ -599,21 +597,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.viewports.set_layout(mode)
             except Exception:
                 bridge.log("Viewport layout: " + __import__("traceback").format_exc(), "ERROR")
-        # a layout saved before the Shelf dock existed: put it at the top
-        if not self.restoreDockWidget(self.docks["shelf"]):
-            self.addDockWidget(QtCore.Qt.TopDockWidgetArea, self.docks["shelf"])
-            self.docks["shelf"].show()
-        # a layout saved before the sidebar existed: give it its own full-height column
-        sb = self.docks["sidebar"]
-        if not self.restoreDockWidget(sb):
-            self.addDockWidget(QtCore.Qt.RightDockWidgetArea, sb, QtCore.Qt.Horizontal)
-            sb.hide()
-        # Floating docks restored from the saved layout crash Qt on Windows (access violation when
-        # the floating window is first shown – both in show() and right after it). Floating at run
-        # time works, so restored floating docks are docked back into their area instead.
-        for key, d in self.docks.items():
-            if d.isFloating():
-                d.setFloating(False)
+        # The saved dock layout is restored only AFTER the window has been shown. Restoring it before the
+        # first show() crashed Qt on Windows again and again (access violation in show(), 2026-10-18…20 –
+        # also without floating docks), while the same restoreState() at run time (workspace switch)
+        # never crashed. The window therefore appears with the default layout for a moment.
+        if st is not None:
+            QtCore.QTimer.singleShot(0, lambda s=st: self._restore_saved_layout(s))
         # windows that were floating when Qt Shell closed float again a moment after the start
         # (shutdown() docks them before saving the layout and remembers them here)
         try:
@@ -1199,6 +1188,28 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _interface_size(self):
         InterfaceSizeDialog(self).exec()
+
+    def _restore_saved_layout(self, st):
+        try:
+            self.restoreState(st)
+        except Exception:
+            bridge.log("Saved window layout: " + __import__("traceback").format_exc(), "WARNING")
+        try:
+            # a layout saved before the Shelf dock existed: put it at the top
+            if not self.restoreDockWidget(self.docks["shelf"]):
+                self.addDockWidget(QtCore.Qt.TopDockWidgetArea, self.docks["shelf"])
+                self.docks["shelf"].show()
+            # a layout saved before the sidebar existed: give it its own full-height column
+            sb = self.docks["sidebar"]
+            if not self.restoreDockWidget(sb):
+                self.addDockWidget(QtCore.Qt.RightDockWidgetArea, sb, QtCore.Qt.Horizontal)
+                sb.hide()
+            # never float from a restored state (floating docks float again later, see _float_saved_docks)
+            for d in self.docks.values():
+                if d.isFloating():
+                    d.setFloating(False)
+        except RuntimeError:
+            pass
 
     def _reset_layout(self):
         for key, area in (("outliner", QtCore.Qt.RightDockWidgetArea), ("properties", QtCore.Qt.RightDockWidgetArea),

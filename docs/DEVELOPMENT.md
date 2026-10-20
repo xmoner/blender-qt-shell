@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.15.1 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.15.2 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -69,6 +69,10 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
   right after `app.stop()` → the old window is deleted before the new one is built (3 reloads in a row OK).
   Plain close (*Return to the Blender UI*) + *Window → Open Qt Shell* worked without it. When poking at the
   window from the Console, pick the *visible* one (`... if hasattr(w, "workspaces") and w.isVisible()`).
+- **Restore the saved dock layout only after the window is shown.** Even with no floating docks, `restoreState()` before
+  the first `show()` crashed Qt on Windows (17:54, 2026-10-20), while the same call at run time (workspace switch)
+  never did. `MainWindow.__init__` now only restores the geometry; `_restore_saved_layout()` runs via
+  `QTimer.singleShot(0)` after `show()`. Tested: quit + start with a saved layout OK.
 - **Don't re-float docks during shutdown.** 2026-10-20 15:39: crash in `show()` at the next start after closing
   with a floating Text editor; `Workspaces.capture()` had docked + re-floated it while the window was closing.
   Now `shutdown()` collects floating geometry first and `workspaces.shutdown(floating)` captures without re-floating.
@@ -179,6 +183,7 @@ add-on folder there is connected:
 | 0.14.0 | not released yet | Graph editor like Maya (curves, keys, tangents, box select, move, tangent types, infinity, stats boxes, insert / delete keys, scrub); Animation workspace = Graph editor above the Timeline |
 | 0.15.0 | 2026-10-20 | Python tooltips (Qt Preferences → Interface): command of operators, properties, menu items and Qt Shell's own buttons in the tooltip |
 | 0.15.1 | not released yet | Fix: crash on start after closing with a floating window (workspaces re-floated docks during shutdown); Graph editor scripting API `qt_shell.api.graph_editor()` with working tooltip commands; Shift + middle click copies commands |
+| 0.15.2 | not released yet | Fix: crash on start – the saved dock layout is restored after the first show() (MainWindow._restore_saved_layout) |
 
 ---
 
