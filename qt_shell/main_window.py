@@ -1317,11 +1317,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # A saved layout with a floating dock crashes Qt on Windows on the next start (access
         # violation in show(), even when the dock is docked again before that). Floating works at
         # run time, so floating docks are docked before the layout is saved.
-        try:
-            if getattr(self, "workspaces", None) is not None:
-                self.workspaces.shutdown()        # the current workspace keeps the layout it was left with
-        except Exception:
-            pass
         floating = {}
         for key, d in self.docks.items():
             try:
@@ -1330,6 +1325,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     floating[key] = [g.x(), g.y(), g.width(), g.height()]
             except RuntimeError:
                 pass
+        try:
+            if getattr(self, "workspaces", None) is not None:
+                # the current workspace keeps the layout it was left with (docks are not re-floated here)
+                self.workspaces.shutdown(floating)
+        except Exception:
+            pass
         try:
             import json
             self._settings.setValue("floating_docks", json.dumps(floating))

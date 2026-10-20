@@ -69,6 +69,9 @@ Tested on **Blender 5.2.0 LTS, Windows 11** (Czech keyboard). Requires Blender 4
   right after `app.stop()` → the old window is deleted before the new one is built (3 reloads in a row OK).
   Plain close (*Return to the Blender UI*) + *Window → Open Qt Shell* worked without it. When poking at the
   window from the Console, pick the *visible* one (`... if hasattr(w, "workspaces") and w.isVisible()`).
+- **Don't re-float docks during shutdown.** 2026-10-20 15:39: crash in `show()` at the next start after closing
+  with a floating Text editor; `Workspaces.capture()` had docked + re-floated it while the window was closing.
+  Now `shutdown()` collects floating geometry first and `workspaces.shutdown(floating)` captures without re-floating.
 - **No Python event filter on the QApplication.** The first Python-tooltip version installed one; after a dev
   reload `notify()` received a `QMoveEvent` as the *receiver* (stale PySide wrappers, hundreds of
   "Error calling Python override of QApplication::notify()") and key events stopped working. Hook into the

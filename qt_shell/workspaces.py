@@ -180,8 +180,10 @@ class Workspaces(QtCore.QObject):
         save(self.data)
 
     # --- window state
-    def capture(self, ws=None):
-        """Stores the current window layout into a workspace (the current one by default)."""
+    def capture(self, ws=None, refloat=True):
+        """Stores the current window layout into a workspace (the current one by default).
+        refloat=False (shutdown): floating windows stay docked – re-creating their native windows while the
+        window is closing is risky; the main window's shutdown remembers them and floats them after the start."""
         ws = ws or self.current()
         if ws is None:
             return
@@ -198,7 +200,8 @@ class Workspaces(QtCore.QObject):
         try:
             ws["state"] = base64.b64encode(bytes(win.saveState())).decode("ascii")
         finally:
-            self._float(floating)
+            if refloat:
+                self._float(floating)
         ws["floating"] = floating
         try:
             ws["viewport_layout"] = win.viewports.mode
@@ -332,8 +335,12 @@ class Workspaces(QtCore.QObject):
             self._apply(ws)
         self.save()
 
-    def shutdown(self):
-        self.capture()
+    def shutdown(self, floating=None):
+        """floating: {dock key: geometry} of the windows that were floating (collected by MainWindow first)."""
+        self.capture(refloat=False)
+        ws = self.current()
+        if ws is not None and floating is not None:
+            ws["floating"] = floating
         self.save()
 
 
