@@ -486,6 +486,8 @@ class Builder:
         self.bindings.append(b)
         if a.get("icon_only") and isinstance(b, rw.BoolBinding):
             label = ""
+        if blicons.has(a.get("icon")) and isinstance(getattr(b, "widget", None), QtWidgets.QAbstractButton):
+            b.widget.setIcon(blicons.icon(a["icon"]))
         split = f.get("use_property_split", False) and bool(label)
         if isinstance(b, rw.BoolBinding):
             if label:

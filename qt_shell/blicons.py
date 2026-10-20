@@ -334,6 +334,13 @@ add("OBJECT_HIDDEN", f'<path {_s()} d="M8 2 L13.5 5 V11 L8 14 L2.5 11 V5 Z" opac
 add("PLUS", _I["ADD"])
 add("OUTLINER_OB_GROUP_INSTANCE OUTLINER_OB_COLLECTION_INSTANCE", collection(OB))
 
+# the rest of Blender 5.2's icon names (keys, colour sets, sockets, curves, editors, file browser, …)
+try:
+    from .blicons_more import extend as _extend
+except ImportError:          # loaded outside the package (preview scripts)
+    from blicons_more import extend as _extend
+_extend(add, _I, _s, W, OB, DA, MO, LI, RD)
+
 # ------------------------------------------------------------------ properties tabs (keys used by properties.py)
 TAB_ICONS = {"tool": "TOOL_SETTINGS", "render": "SCENE", "output": "OUTPUT", "view_layer": "RENDER_RESULT",
              "scene": "SCENE_DATA", "world": "WORLD", "collection": "OUTLINER_COLLECTION", "object": "OBJECT_DATA",

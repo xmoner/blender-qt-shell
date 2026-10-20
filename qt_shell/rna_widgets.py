@@ -515,6 +515,11 @@ class EnumBinding(Binding):
         super().__init__(data, prop_id, on_change)
         self.flag = rp.is_enum_flag
         self.items = enum_items(data, prop_id)
+        try:   # Blender icon of each item (static enums; dynamic ones have none here)
+            self._icons = {e.identifier: e.icon for e in rp.enum_items}
+        except Exception:
+            self._icons = {}
+        from . import blicons
         self.expand = expand or self.flag
         if self.expand:
             w = QtWidgets.QWidget()
@@ -525,6 +530,8 @@ class EnumBinding(Binding):
             group = None if self.flag else QtWidgets.QButtonGroup(w)
             for ident, name, desc in self.items:
                 b = QtWidgets.QPushButton(name)
+                if blicons.has(self._icons.get(ident)):
+                    b.setIcon(blicons.icon(self._icons[ident]))
                 b.setCheckable(True)
                 b.setToolTip(desc)
                 if group is not None:
@@ -536,7 +543,10 @@ class EnumBinding(Binding):
         else:
             w = NoWheelCombo()
             for ident, name, desc in self.items:
-                w.addItem(name, ident)
+                if blicons.has(self._icons.get(ident)):
+                    w.addItem(blicons.icon(self._icons[ident]), name, ident)
+                else:
+                    w.addItem(name, ident)
                 w.setItemData(w.count() - 1, desc, QtCore.Qt.ToolTipRole)
             w.activated.connect(self._activated)
         self.widget = w
