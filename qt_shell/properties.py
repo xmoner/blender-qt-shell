@@ -159,6 +159,12 @@ class StackPage(QtWidgets.QScrollArea):
         return ob.modifiers if self.kind == "modifier" else ob.constraints
 
     def refresh(self, force=False):
+        btn = getattr(self, "_add_btn", None)
+        try:
+            if btn is not None and btn.menu() is not None and btn.menu().isVisible():
+                return      # a rebuild now would delete the open Add menu under the cursor
+        except RuntimeError:
+            pass
         ob = bpy.context.view_layer.objects.active
         try:
             sig = (ob.name if ob else None,
@@ -189,7 +195,8 @@ class StackPage(QtWidgets.QScrollArea):
             lay.addStretch(1)
             self.setWidget(host)
             return
-        add = QtWidgets.QToolButton()
+        add = QtWidgets.QToolButton(host)
+        self._add_btn = add
         add.setText("+ " + (tr("Add Modifier") if self.kind == "modifier" else tr("Add Object Constraint")))
         add.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         if self.kind == "modifier" and fake_ui.find_menu_class("OBJECT_MT_modifier_add") is not None:
@@ -211,6 +218,8 @@ class StackPage(QtWidgets.QScrollArea):
         for e in base.bl_rna.properties["type"].enum_items:
             a = m.addAction(tr(e.name))
             a.setToolTip(e.description)
+            if e.icon and e.icon != "NONE" and blicons.has(e.icon):
+                a.setIcon(blicons.icon(e.icon))
             a.triggered.connect(lambda _=False, ident=e.identifier, name=e.name: self._add(ob, ident, name))
         return m
 

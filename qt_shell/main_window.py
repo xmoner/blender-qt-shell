@@ -352,6 +352,51 @@ class OperatorSearch(QtWidgets.QDialog):
             run_op(it.data(QtCore.Qt.UserRole))
 
 
+class MenuSearch(OperatorSearch):
+    """Search inside one Blender menu and its submenus (wm.search_single_menu), e.g. Add Modifier → Search…"""
+
+    def __init__(self, parent, menu_id):
+        self._menu = LazyMenu(menu_id)          # kept alive: the found actions belong to it
+        self._entries = []
+        self._collect(self._menu, "", set())
+        super().__init__(parent)
+        self.edit.setPlaceholderText("Search…")
+
+    def _collect(self, menu, path, seen):
+        if id(menu) in seen or len(seen) > 200:
+            return
+        seen.add(id(menu))
+        menu.aboutToShow.emit()                 # LazyMenu / PopoverMenu fill themselves on show
+        for act in menu.actions():
+            if act.isSeparator():
+                continue
+            text = act.text().replace("&", "").rstrip("…").strip()
+            sub = act.menu()
+            if sub is not None:
+                self._collect(sub, f"{path}{text} ▸ ", seen)
+            elif text and act.isEnabled() and not text.startswith("Search"):
+                self._entries.append((path + text, act))
+
+    def items(self):
+        return [(label, i) for i, (label, _a) in enumerate(self._entries)]
+
+    def _filter(self, text):
+        words = text.lower().split()
+        self.list.clear()
+        for label, act in self._entries:
+            if all(w in label.lower() for w in words):
+                it = QtWidgets.QListWidgetItem(act.icon(), label)
+                it.setData(QtCore.Qt.UserRole, act)
+                self.list.addItem(it)
+        self.list.setCurrentRow(0)
+
+    def _accept(self):
+        it = self.list.currentItem()
+        self.close()
+        if it is not None:
+            it.data(QtCore.Qt.UserRole).trigger()
+
+
 # ---------------------------------------------------------------- interface size
 class InterfaceSizeDialog(QtWidgets.QDialog):
     """Window → Interface Size…: scale of the whole Qt UI and of the text.
@@ -1090,6 +1135,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         if idname == "wm.quit_blender":
             self.close()
+            return True
+        if idname == "wm.search_single_menu" and props.get("menu_idname"):
+            dlg = MenuSearch(self, props["menu_idname"])
+            dlg.move(QtGui.QCursor.pos() - QtCore.QPoint(20, 10))
+            dlg.show()
+            dlg.edit.setFocus()
             return True
         if idname in ("wm.search_menu", "wm.search_operator", "wm.search_single_menu"):
             self.search()

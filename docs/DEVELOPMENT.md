@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.19.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.19.1 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -191,6 +191,7 @@ add-on folder there is connected:
 | 0.17.0 | not released yet | Own icon set (qt_shell/icons.py, SVG rendered with QtSvg; text glyph fallback) in the 3D view header, mode menu, toolbar, nav gizmo and Timeline; window icon = logo; logo files in docs/logo |
 | 0.18.0 | not released yet | Icons for Blender icon names (blicons.py: 347 names / 177 drawings – objects orange, data green, modifiers & constraints blue): menus, submenus, operator buttons, popovers, Properties tabs, Outliner; FakeLayout.menu / popover / operator_menu_enum now record `icon` |
 | 0.19.0 | not released yet | All 1,032 Blender 5.2 icon names covered (blicons_more.py: keys/events, colour tags & sets, node sockets, IPO & falloff curves, mouse, text alignment, key & handle types, editors, modes, file browser, sequencer…); icons on prop toggles and enum buttons / combos. Qt SVG Tiny: no dominant-baseline, no hsl(), defs before use |
+| 0.19.1 | not released yet | Add Modifier: the menu's Search… searches only modifiers (MenuSearch for wm.search_single_menu, flattens the menu tree, path labels like "Generate ▸ Subdivision Surface"); the Add button has a parent and the modifier/constraint stack is not rebuilt while its menu is open; constraint menu has icons. Lesson: Blender's Search… items in menus are wm.search_single_menu with menu_idname, not the global operator search |
 
 ---
 
