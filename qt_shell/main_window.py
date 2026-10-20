@@ -595,6 +595,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rendering = False
 
         pytips.install()        # Python tooltips (Edit → Qt Preferences… → Interface)
+        # window icon (the Hex Turtle logo, docs/logo/)
+        try:
+            icon = QtGui.QIcon(os.path.join(os.path.dirname(__file__), "qt_shell_icon.png"))
+            if not icon.isNull():
+                self.setWindowIcon(icon)
+                QtWidgets.QApplication.instance().setWindowIcon(icon)
+        except Exception:
+            pass
         self._settings = QtCore.QSettings("QtShell", "QtShell")
         st = None
         try:

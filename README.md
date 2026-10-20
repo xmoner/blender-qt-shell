@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo/qt_shell_banner.png" alt="Qt Shell" width="100%"></p>
+
 # Qt Shell – Blender UI in PySide6
 
 A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interface with a Qt window.
