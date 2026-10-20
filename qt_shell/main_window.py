@@ -625,6 +625,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_status()
         self._on_mode(bpy.context.mode)
         self.viewport.frame_all()
+        # workspaces (like Blender): tabs on the right of the menu bar, each with its own layout
+        try:
+            from .workspaces import Workspaces, WorkspaceTabs
+            self.workspaces = Workspaces(self)
+            self.workspace_tabs = WorkspaceTabs(self.workspaces, self.menuBar())
+            self.menuBar().setCornerWidget(self.workspace_tabs, QtCore.Qt.TopRightCorner)
+        except Exception:
+            self.workspaces = None
+            bridge.log("Workspaces: " + __import__("traceback").format_exc(), "ERROR")
         # docks, menu items, overlays and event handlers registered by add-ons (qt_shell.api)
         try:
             api.apply_to_window(self)
@@ -1288,6 +1297,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # A saved layout with a floating dock crashes Qt on Windows on the next start (access
         # violation in show(), even when the dock is docked again before that). Floating works at
         # run time, so floating docks are docked before the layout is saved.
+        try:
+            if getattr(self, "workspaces", None) is not None:
+                self.workspaces.shutdown()        # the current workspace keeps the layout it was left with
+        except Exception:
+            pass
         floating = {}
         for key, d in self.docks.items():
             try:
