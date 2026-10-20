@@ -1,5 +1,7 @@
 # Qt Shell – development notes and status
 
+> Start with `CLAUDE.md` in the repo root (workflow, owner's preferences, checklist, current state).
+
 Where the project is, how it is built, tested and released, and what is still open.
 Keep this file up to date at the end of every work session.
 
@@ -158,8 +160,8 @@ add-on folder there is connected:
   the release text (English) and the owner publishes it: tag `vX.Y.Z` on `main`, title
   `Qt Shell X.Y.Z – …`, attach `qt_shell.zip` (zip of the `qt_shell/` folder without `__pycache__`).
 - Bump `bl_info["version"]` before building the release zip.
-- Release text format: "## What's new since <prev>", sections, "### Known issue" (Scripts dock),
-  "## Installation" (4 steps + restart note + "Requires Blender 4.2 or newer. Tested on Blender 5.2.0 LTS, Windows 11.").
+- Release text format (current): tag + title in one code block; body with `## New` / `## Fixes` /
+  `## Improvements` and `## Install` – see `CLAUDE.md`.
 
 ---
 
@@ -227,6 +229,10 @@ Until then, scripts are managed from the Text editor and the Console (`qt_shell.
   entries (fixed in 0.5.0, still in the log file).
 
 ### 6.3 State of the owner's PC (2026-10-20)
+- **Latest (21:30):** add-on folder has 0.21.0 (Pose G/R/S tested on the TOAnimate robot rig in a separate
+  test instance, closed without saving). The owner keeps his own Blender open – test in a new instance.
+  Debug leftovers `qt_shell\_inspect.py` / `_inspect.json` in the add-on folder.
+- Older notes:
 - Add-on folder has the current `main` (0.15.0). Python tooltips tested after a clean Blender restart: Graph editor
   Linear button, Add → Camera menu item. The owner's scene was saved to `%TEMP%\20644_autosave.blend`
   (copy: `%TEMP%\qtshell_saved_2026-10-20_1517.blend`) before the restart.
