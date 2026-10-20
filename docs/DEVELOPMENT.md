@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.15.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.15.1 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -177,7 +177,8 @@ add-on folder there is connected:
 | 0.12.0 | not released yet | Workspaces like Blender (tabs in the menu bar; add from template / duplicate, rename, reorder, delete, reset; each remembers docks, floating windows, view layout and shading) |
 | 0.13.0 | not released yet | Movable viewport toolbar (grip, snaps to edges, horizontal / vertical, Flip, Reset; QSettings `viewport/toolbar_pos`); no saved layout → current workspace's layout is applied; dev reload deletes the old window (fixes reload crash) |
 | 0.14.0 | not released yet | Graph editor like Maya (curves, keys, tangents, box select, move, tangent types, infinity, stats boxes, insert / delete keys, scrub); Animation workspace = Graph editor above the Timeline |
-| 0.15.0 | not released yet | Python tooltips (Qt Preferences → Interface): command of operators, properties, menu items and Qt Shell's own buttons in the tooltip |
+| 0.15.0 | 2026-10-20 | Python tooltips (Qt Preferences → Interface): command of operators, properties, menu items and Qt Shell's own buttons in the tooltip |
+| 0.15.1 | not released yet | Fix: crash on start after closing with a floating window (workspaces re-floated docks during shutdown); Graph editor scripting API `qt_shell.api.graph_editor()` with working tooltip commands; Shift + middle click copies commands |
 
 ---
 
