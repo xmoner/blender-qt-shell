@@ -934,6 +934,10 @@ class Viewport(QtWidgets.QWidget):
         self.update()
 
     def event(self, ev):
+        if ev.type() == QtCore.QEvent.ShortcutOverride and ev.key() == QtCore.Qt.Key_Space \
+                and ev.modifiers() & QtCore.Qt.ShiftModifier:
+            ev.accept()          # Shift+Space = tool menu here, not the window's Space (play)
+            return True
         if ev.type() == QtCore.QEvent.NativeGesture:
             if ev.gestureType() == QtCore.Qt.ZoomNativeGesture:
                 self._zoom(1.0 - ev.value())
@@ -969,6 +973,12 @@ class Viewport(QtWidgets.QWidget):
         digit = digit_of(ev)
         if digit is not None:
             key = int(K.Key_0) + digit   # unify with the number row
+        if key == K.Key_Space and shift and not (ctrl or alt):
+            gizmo.show_tool_menu(self)       # like Blender: Shift+Space = tool menu
+            return
+        if key == K.Key_W and not (ctrl or shift or alt) and not self._modal:
+            self.tools.set_tool("SELECT")    # like Blender: W = select tool
+            return
         if key == K.Key_T and not (ctrl or shift or alt):
             self.tools.toggle_toolbar()      # like Blender: T shows/hides the toolbar
             return
