@@ -4,7 +4,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.20.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.21.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -101,7 +101,7 @@ qt_shell/            the add-on (zip this folder for a release)
   editmesh.py        edit-mode selection / transform in the Qt viewport
   properties.py      Properties editor (tabs, atomic page build)
   sidebar.py         N panel (VIEW_3D UI panels, Item ▸ Transform in Qt)
-  outliner.py, wirepick.py (line picking: bones, rig controls, curves), timeline.py, console.py, node_editor.py, uv_editor.py
+  outliner.py, wirepick.py (line picking: bones, rig controls, curves), posetransform.py (pose G/R/S, clear, select), timeline.py, console.py, node_editor.py, uv_editor.py
   text_editor.py     Text editor dock (Run Script, Run Selection, Unload, auto-complete)
   completion.py      auto-completion logic (no Qt)
   scripts.py         script manager core (no Qt)
@@ -194,6 +194,7 @@ add-on folder there is connected:
 | 0.19.1 | not released yet | Add Modifier: the menu's Search… searches only modifiers (MenuSearch for wm.search_single_menu, flattens the menu tree, path labels like "Generate ▸ Subdivision Surface"); the Add button has a parent and the modifier/constraint stack is not rebuilt while its menu is open; constraint menu has icons. Lesson: Blender's Search… items in menus are wm.search_single_menu with menu_idname, not the global operator search |
 | 0.19.2 | not released yet | Tooltips in Properties (and every panel drawn from RNA): bold property name + description on the field, its label and vector components (rna_widgets.prop_tooltip / set_prop_tooltip in make_binding); Properties tabs show their full name as a tooltip. Python Tooltips add the command below |
 | 0.20.0 | not released yet | Rigs: Pose-mode click / Shift-click / box selection of bones by their custom shapes (rig controls) or bone lines (wirepick.py: numpy projection of the shape mesh with Blender's custom-shape matrix pose_mat·T·R·S(scale×length), distance to edges, point-in-triangle, depth order); Object mode hits curves and armatures by their lines too. Outliner rewritten like View Layer mode: children from other collections greyed under the parent, lazy object contents (data → bone hierarchy + materials, Modifiers, Constraints, Vertex Groups), bone selection / hide, modifier toggles, Expand/Collapse All. Pose bone selection is part of the selection snapshot (app.py). Lessons: Blender 5.x selection/hide are on PoseBone; making a hidden QTreeWidget row current scrolls → expands all parents; reuse of a stagedPath in device_commit_files can write an older copy — use a fresh folder per commit |
+| 0.21.0 | not released yet | Pose mode transforms (posetransform.py): G / R / S with axis keys, numbers, Esc/RMB cancel; Move / Rotate / Scale / Transform gizmos at the median of the selected bone heads; world X @ start matrix → ob.convert_space(POSE→LOCAL) → channels in the bone's rotation mode (Euler compatible with the start value, quaternion sign kept), locked channels and connected bones' location kept, only root bones of a selected chain transformed; auto-keying of the changed channels; undo. Pose shortcuts: Alt+G/R/S clear, A / Alt+A / Ctrl+I, H / Shift+H / Alt+H, View Selected frames the bones, right-click = VIEW3D_MT_pose_context_menu |
 
 ---
 

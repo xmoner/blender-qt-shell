@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, gizmo, theme, wirepick
+from . import bridge, editmesh, gizmo, posetransform, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -637,6 +637,9 @@ class Viewport(QtWidgets.QWidget):
             mw = ob.matrix_world
             pts.extend(mw @ Vector(c) for c in ob.bound_box)
             pts.append(mw.translation)
+        self.frame_points(pts)
+
+    def frame_points(self, pts):
         if not pts:
             return
         lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
@@ -649,6 +652,11 @@ class Viewport(QtWidgets.QWidget):
         self.request_redraw()
 
     def frame_selected(self):
+        if bpy.context.mode == "POSE":
+            pts = posetransform.bounds_points()
+            if pts:
+                self.frame_points(pts)
+                return
         sel = list(bpy.context.selected_objects)
         self.frame_objects(sel or list(bpy.context.visible_objects))
 
@@ -868,13 +876,21 @@ class Viewport(QtWidgets.QWidget):
                 self.status.emit("Nothing is selected.")
                 return
             pivot = sum((o.matrix_world.translation for o in sel), Vector()) / len(sel)
+        elif ctx.mode == "POSE":
+            try:
+                pose = posetransform.TransformState(ctx)
+            except ValueError as ex:
+                self.status.emit(str(ex))
+                return
+            sel, pivot = [], pose.pivot
         else:
-            self.status.emit("Interactive G/R/S works in Object and Edit (mesh) mode.")
+            self.status.emit("Interactive G/R/S works in Object, Pose and Edit (mesh) mode.")
             return
         pos = self.mapFromGlobal(QtGui.QCursor.pos())
         self._modal = {
             "kind": kind, "axis": None, "objs": [(o, o.matrix_world.copy()) for o in sel],
             "pivot": pivot, "start": QtCore.QPointF(pos), "value": None, "edit": edit,
+            "pose": pose if ctx.mode == "POSE" else None,
         }
         self._numeric = ""
         self.setFocus()
@@ -956,6 +972,8 @@ class Viewport(QtWidgets.QWidget):
             X = Matrix.Translation(pivot) @ S @ Matrix.Translation(-pivot)
         if m.get("edit") is not None:
             m["edit"].apply(X)
+        if m.get("pose") is not None:
+            m["pose"].apply(X, m["kind"])
         for ob, init in m["objs"]:
             ob.matrix_world = X @ init
         self.redraw_scene()
@@ -967,11 +985,16 @@ class Viewport(QtWidgets.QWidget):
         gizmo.invalidate(self)
         self.releaseMouse()
         if not confirm:
+            if m.get("pose") is not None:
+                m["pose"].restore()
             if m.get("edit") is not None:
                 m["edit"].restore()
             for ob, init in m["objs"]:
                 ob.matrix_world = init
         elif m.get("edit") is not None:
+            bridge.undo_push({"G": "Move", "R": "Rotate", "S": "Resize"}[m["kind"]])
+        elif m.get("pose") is not None:
+            m["pose"].finish(m["kind"])
             bridge.undo_push({"G": "Move", "R": "Rotate", "S": "Resize"}[m["kind"]])
         else:
             ts = bpy.context.scene.tool_settings
@@ -1188,6 +1211,9 @@ class Viewport(QtWidgets.QWidget):
                 mw.toggle_sidebar()      # like Blender: N shows/hides the sidebar
             return
         edit_mesh = bpy.context.mode == "EDIT_MESH"
+        if bpy.context.mode == "POSE" and self._pose_key(key, ctrl, shift, alt):
+            self.update()
+            return
         if edit_mesh and not keypad and not ctrl and key in (K.Key_1, K.Key_2, K.Key_3):
             editmesh.set_select_mode(key == K.Key_1, key == K.Key_2, key == K.Key_3)
             self.selection_edited.emit()
@@ -1288,10 +1314,44 @@ class Viewport(QtWidgets.QWidget):
     def focusNextPrevChild(self, _next):
         return False  # Tab belongs to the viewport (edit mode)
 
+    def _pose_key(self, key, ctrl, shift, alt):
+        """Pose-mode shortcuts like Blender. True when the key was used."""
+        K = QtCore.Qt
+        done = None
+        if key in (K.Key_G, K.Key_R, K.Key_S) and alt and not ctrl:
+            kind = {K.Key_G: "G", K.Key_R: "R", K.Key_S: "S"}[key]
+            if posetransform.clear(kind):
+                done = {"G": "Clear Location", "R": "Clear Rotation", "S": "Clear Scale"}[kind]
+        elif key == K.Key_A and alt and not ctrl:
+            posetransform.select_all("DESELECT")
+            done = "Deselect"
+        elif key == K.Key_A and not (ctrl or shift):
+            posetransform.select_all("SELECT")
+            done = "Select All"
+        elif key == K.Key_I and ctrl:
+            posetransform.select_all("INVERT")
+            done = "Select Inverse"
+        elif key == K.Key_H and alt:
+            posetransform.reveal()
+            done = "Reveal Bones"
+        elif key == K.Key_H and not ctrl:
+            posetransform.hide(unselected=shift)
+            done = "Hide Bones"
+        elif key in (K.Key_X, K.Key_Delete) or (key == K.Key_D and shift) or (key == K.Key_A and shift):
+            return True            # object / mesh actions don't apply to bones
+        if done is None:
+            return False
+        bridge.undo_push(done)
+        gizmo.invalidate(self)
+        self.redraw_scene()
+        self.selection_edited.emit()
+        return True
+
     # ------------------------------------------------------------ context menus
     def _context_menu(self, gpos):
         from .qt_ui import LazyMenu
-        mid = "VIEW3D_MT_object_context_menu" if bpy.context.mode == "OBJECT" else "VIEW3D_MT_edit_mesh_context_menu"
+        mid = {"OBJECT": "VIEW3D_MT_object_context_menu", "POSE": "VIEW3D_MT_pose_context_menu"}.get(
+            bpy.context.mode, "VIEW3D_MT_edit_mesh_context_menu")
         LazyMenu(mid, self).exec(gpos)
 
     def _add_menu(self):

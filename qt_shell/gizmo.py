@@ -400,6 +400,9 @@ def pivot(vp):
             p = None
         vp._gizmo_pivot_cache = (p,)
         return p
+    if mode == "POSE":
+        from . import posetransform
+        return posetransform.pivot(ctx)
     return None
 
 
