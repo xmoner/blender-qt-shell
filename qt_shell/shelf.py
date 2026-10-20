@@ -92,6 +92,14 @@ def run_button(btn):
     if not ok:
         scripts.show_console()
         api.status(f"Shelf '{label}': error{f' on line {line}' if line else ''} – see the Console")
+    else:
+        api.status(f"Shelf: {label}")
+    # show the result right away, also while Blender's own loop is not running (e.g. from a dialog)
+    try:
+        bpy.context.view_layer.update()
+    except Exception:
+        pass
+    api.redraw()
     bridge.undo_push(f"Shelf: {label}")
 
 
@@ -104,6 +112,14 @@ def label_for_code(code, fallback="Script"):
     if m:
         return m.group(1).strip()[:12]
     return fallback[:12]
+
+
+def _alive(w):
+    try:
+        w.isVisible()
+        return True
+    except RuntimeError:
+        return False
 
 
 # ---------------------------------------------------------------- edit dialog
@@ -284,13 +300,22 @@ class ShelfBar(QtWidgets.QWidget):
         if 0 <= i < len(btns):
             run_button(btns[i])
 
+    def _open_dialog(self, btn, title, on_save):
+        """Non-modal edit dialog – Blender keeps running, so ▶ Test shows its result right away."""
+        dlg = ButtonDialog(self.window(), btn, title)
+        dlg.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        dlg.accepted.connect(lambda d=dlg: on_save(d.result_button()))
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        self._dialogs = [d for d in getattr(self, "_dialogs", []) if _alive(d)] + [dlg]
+        return dlg
+
     def add_button(self, btn, edit=False):
         """Adds a button to the current shelf (edit=True opens the edit dialog first)."""
         if edit:
-            dlg = ButtonDialog(self.window(), btn, "New Shelf Button")
-            if dlg.exec() != QtWidgets.QDialog.Accepted:
-                return
-            btn = dlg.result_button()
+            self._open_dialog(btn, "New Shelf Button", lambda b: self.add_button(b))
+            return
         self._shelf().setdefault("buttons", []).append(btn)
         self._save()
         self._fill_buttons()
@@ -304,11 +329,18 @@ class ShelfBar(QtWidgets.QWidget):
 
     def _edit(self, i):
         btns = self._shelf()["buttons"]
-        dlg = ButtonDialog(self.window(), btns[i])
-        if dlg.exec() == QtWidgets.QDialog.Accepted:
-            btns[i] = dlg.result_button()
-            self._save()
-            self._fill_buttons()
+        original = btns[i]
+
+        def save_edit(new):
+            for s in self.data["shelves"]:          # the button may have moved meanwhile
+                bl = s.get("buttons", [])
+                for k, b in enumerate(bl):
+                    if b is original:
+                        bl[k] = new
+                        self._changed()
+                        return
+            self.add_button(new)                    # deleted meanwhile – add it again
+        self._open_dialog(original, "Edit Shelf Button", save_edit)
 
     def _button_menu(self, i, gpos):
         btns = self._shelf()["buttons"]
