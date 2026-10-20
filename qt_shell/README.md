@@ -20,7 +20,8 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Menus | File, Edit, Add, Object, Select, Render and Help are generated **from Blender's original menus** (including add-on entries), depending on the mode |
 | Properties | The Render, Output, Scene, World, Object, Data, Material, Physics… tabs are generated **from Blender's original Python panels** through a stand-in `UILayout` |
 | Modifiers, constraints | Own Qt version (Blender draws these in C), including Geometry Nodes inputs; Add Modifier menu with categories, icons and a modifier-only Search… |
-| Outliner | Collections, objects, parenting, visibility, renaming, moving to a collection |
+| Outliner | Collections, objects, parenting (children from other collections greyed under the parent, like Blender), object contents: data, armature bone hierarchy, materials, modifiers, constraints, vertex groups; bone selection in Pose mode, visibility, renaming, moving to a collection |
+| Rigs | Pose mode: click / Shift+click / box selection of bones by their custom shapes (rig controls) or bone lines; Object mode: curves and armatures are hit by their lines |
 | Timeline | Playback, frame range, keyframes, auto keying |
 | Edit mode | Vertex / edge / face selection by click and box (occluded elements are skipped except in X-ray), switching with 1/2/3 or header buttons, G/R/S with axes, E (extrude), Shift+D, F, X/Delete, H/Alt+H, Ctrl+L, U (UV menu) |
 | Node editor | Shader (material), world, Geometry Nodes, compositor: nodes, sockets, links (drag, pull out of an input), moving, mouse wheel zoom, F / Home frame all, Numpad . frame selected, **Tab** / Shift+A node search, X delete, M/H mute/hide, Ctrl+Tab into / out of a group, sidebar with node properties and input values |

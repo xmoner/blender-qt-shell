@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, gizmo, theme
+from . import bridge, editmesh, gizmo, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -717,7 +717,7 @@ class Viewport(QtWidgets.QWidget):
         best, best_d = None, 14.0
         mats = self.matrices(self.width(), self.height())
         for ob in ctx.visible_objects:
-            if ob.type == "MESH":
+            if ob.type in ("MESH", "CURVE", "ARMATURE") or ob.hide_select:
                 continue
             sp = self.project(ob.matrix_world.translation, mats)
             if sp is None:
@@ -727,14 +727,72 @@ class Viewport(QtWidgets.QWidget):
                 best, best_d = ob, d
         if best is not None:
             return best
+        # curves and armatures (bone controls) are drawn as lines: hit them by their lines
+        wire = wirepick.pick_object(self, x, y, mats)
         origin, direction = self.ray(x, y)
+        surf = None
         try:
-            hit, _loc, _n, _i, ob, _m = ctx.scene.ray_cast(ctx.evaluated_depsgraph_get(), origin, direction)
+            hit, loc, _n, _i, ob, _m = ctx.scene.ray_cast(ctx.evaluated_depsgraph_get(), origin, direction)
+            if hit and ob is not None and not ob.original.hide_select:
+                surf = ((loc - origin).length, ob.original)
         except Exception:
-            return None
-        if hit and ob is not None:
-            return ob.original
+            pass
+        if wire is not None and (surf is None or wire[1] <= surf[0] + 1e-3):
+            return wire[2]                       # the line is in front of the surface (or no surface)
+        if surf is not None:
+            return surf[1]
+        for ob in ctx.visible_objects:           # origins of curves / armatures as a last resort
+            if ob.type in ("CURVE", "ARMATURE") and not ob.hide_select:
+                sp = self.project(ob.matrix_world.translation, mats)
+                if sp is not None and math.hypot(sp.x() - x, sp.y() - y) < best_d:
+                    return ob
         return None
+
+    def _pose_select_click(self, x, y, extend):
+        ctx = bpy.context
+        arms = wirepick.pose_armatures(ctx)
+        hit = wirepick.pick_bone(self, x, y, arms)
+        if not extend:
+            for ob in arms:
+                for pb in ob.pose.bones:
+                    pb.select = False
+        if hit is not None:
+            ob, pb = hit
+            if extend and pb.select and ob.data.bones.active == pb.bone:
+                pb.select = False
+            else:
+                pb.select = True
+                ob.data.bones.active = pb.bone
+                if ctx.view_layer.objects.active != ob:
+                    ctx.view_layer.objects.active = ob
+        for ob in arms:
+            ob.update_tag()
+        bridge.undo_push("Select")
+        self.request_redraw()
+        self.selection_edited.emit()
+        self.update()
+
+    def _pose_select_box(self, rect, mode):
+        ctx = bpy.context
+        arms = wirepick.pose_armatures(ctx)
+        if mode == "SET":
+            for ob in arms:
+                for pb in ob.pose.bones:
+                    pb.select = False
+        hits = wirepick.box_bones(self, rect, arms)
+        for ob, pb in hits:
+            pb.select = mode != "SUB"
+        if hits and mode != "SUB":
+            ob, pb = hits[0]
+            if not (ob.data.bones.active and ob.pose.bones.get(ob.data.bones.active.name)
+                    and ob.pose.bones[ob.data.bones.active.name].select):
+                ob.data.bones.active = pb.bone
+        for ob in arms:
+            ob.update_tag()
+        bridge.undo_push("Box Select")
+        self.request_redraw()
+        self.selection_edited.emit()
+        self.update()
 
     def select_click(self, x, y, extend):
         ctx = bpy.context
@@ -744,8 +802,11 @@ class Viewport(QtWidgets.QWidget):
                 self.request_redraw()
                 self.selection_edited.emit()
             return
+        if ctx.mode == "POSE":
+            self._pose_select_click(x, y, extend)
+            return
         if ctx.mode != "OBJECT":
-            self.status.emit("Click selection works in Object and Edit (mesh) mode.")
+            self.status.emit("Click selection works in Object, Pose and Edit (mesh) mode.")
             return
         ob = self.pick(x, y)
         vl = ctx.view_layer
@@ -769,6 +830,9 @@ class Viewport(QtWidgets.QWidget):
                 bridge.undo_push("Box Select")
                 self.request_redraw()
                 self.selection_edited.emit()
+            return
+        if ctx.mode == "POSE":
+            self._pose_select_box(rect, mode)
             return
         if ctx.mode != "OBJECT":
             return

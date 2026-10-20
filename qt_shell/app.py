@@ -77,12 +77,18 @@ class Hub(QtCore.QObject):
             sel = tuple(sorted(o.name for o in ctx.selected_objects))
             frame = ctx.scene.frame_current
             mode = ctx.mode
+            bones = ()
+            if mode == "POSE" and vl.objects.active is not None and vl.objects.active.pose is not None:
+                ob = vl.objects.active
+                ab = ob.data.bones.active
+                bones = ((ab.name if ab else ""),
+                         tuple(pb.name for pb in ob.pose.bones if pb.select))
         except Exception:
             return
-        snap = (active, sel, frame, mode)
+        snap = (active, sel, frame, mode, bones)
         old = self._snap
         self._snap = snap
-        if old is None or old[:2] != snap[:2]:
+        if old is None or old[:2] != snap[:2] or old[4] != snap[4]:
             self.selection_changed.emit()
         if old is None or old[2] != frame:
             self.frame_changed.emit(frame)
