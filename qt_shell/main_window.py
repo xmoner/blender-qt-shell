@@ -767,7 +767,7 @@ class MainWindow(QtWidgets.QMainWindow):
             a = m.addAction(label + ("   Ctrl+Alt+Q" if key == "quad" else ""),
                             lambda k=key: self.viewports.set_layout(k))
             a.setCheckable(True)
-            pytips.tag(a, f"qt_shell.api.set_viewport_layout({key!r})")
+            pytips.tag(a, f"import qt_shell; qt_shell.api.set_viewport_layout({key!r})")
             group.addAction(a)
             acts[key] = a
         m.aboutToShow.connect(lambda: acts[self.viewports.mode].setChecked(True))

@@ -693,3 +693,23 @@ Check the version in your code:
 if qs.API_VERSION >= (1, 2):
     qs.set_viewport_layout("quad")
 ```
+
+## Graph editor from a script
+
+`qt_shell.api.graph_editor()` returns the Graph editor of the Qt Shell window (None when Qt Shell is closed):
+
+```python
+import qt_shell
+ge = qt_shell.api.graph_editor()
+ge.set_snap(True)               # snap key times to whole frames (the ⌗ Snap button)
+ge.set_tangents("LINEAR")       # AUTO, AUTO_CLAMPED (Spline), LINEAR, FLAT, CONSTANT (Stepped)
+ge.set_handle_type("FREE")      # FREE = Break tangents, ALIGNED = Unify
+ge.set_infinity("REPEAT")       # CONSTANT, LINEAR, REPEAT (Cycle), REPEAT_OFFSET, MIRROR (Oscillate)
+ge.insert_keys()                # key the shown curves at the current frame
+ge.delete_keys()                # delete the selected keys
+ge.frame_all(); ge.frame_selected()
+```
+
+Tangents and infinity apply to the selected keys, or to all shown curves when no key is selected.
+Blender's own `bpy.ops.graph.*` operators and `bpy.context.space_data.auto_snap` only work inside a Blender
+Graph Editor area – from a script in Qt Shell `space_data` is the 3D view.

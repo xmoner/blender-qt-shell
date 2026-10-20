@@ -197,6 +197,22 @@ def viewport_layout():
     return area.mode if area is not None else None
 
 
+def graph_editor():
+    """The Graph editor of the Qt Shell window (None when Qt Shell is not open).
+
+        import qt_shell
+        ge = qt_shell.api.graph_editor()
+        ge.set_snap(True)                 # snap key times to whole frames
+        ge.set_tangents("LINEAR")         # AUTO, AUTO_CLAMPED, LINEAR, FLAT, CONSTANT
+        ge.set_handle_type("FREE")        # FREE = break, ALIGNED = unify
+        ge.set_infinity("REPEAT")         # CONSTANT, LINEAR, REPEAT, REPEAT_OFFSET, MIRROR
+        ge.insert_keys(); ge.delete_keys(); ge.frame_all(); ge.frame_selected()
+
+    Tangents / infinity apply to the selected keys, or to all shown curves when no key is selected."""
+    w = main_window()
+    return getattr(w, "graph_editor", None) if w is not None else None
+
+
 def set_viewport_layout(mode):
     """Splits the 3D view: 'single', 'side' (two views side by side), 'stacked' or 'quad'
     (Top / Perspective / Front / Right)."""
