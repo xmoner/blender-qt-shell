@@ -235,7 +235,9 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             mods = ("C" if ctrl else "") + ("A" if alt else "") + ("S" if m & QtCore.Qt.ShiftModifier else "")
             name = QtGui.QKeySequence(ev.key()).toString()
             name = {" ": "Space", "/": "Slash", "Enter": "Return"}.get(name, name)
-            if (name, mods) in self._OWN_KEYS or (ev.text() and not ctrl and not alt):
+            from . import keymap
+            own = any(keymap.hit(a, ev) for a in ("text.run_script", "text.run_selection", "text.complete"))
+            if own or (name, mods) in self._OWN_KEYS or (ev.text() and not ctrl and not alt):
                 ev.accept()      # handled here; plain typing never triggers window shortcuts
                 return True
         return super().event(ev)
@@ -256,7 +258,8 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             if k == QtCore.Qt.Key_Escape:
                 popup.hide()
                 return
-        if ctrl and k == QtCore.Qt.Key_Space:
+        from . import keymap
+        if keymap.hit("text.complete", ev):
             self.complete(manual=True)
             return
         self._key_press(ev)
@@ -348,10 +351,11 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
         if ctrl and k == QtCore.Qt.Key_F:
             self.find_requested.emit()
             return
-        if (mods & QtCore.Qt.AltModifier) and k == QtCore.Qt.Key_P:
+        from . import keymap
+        if keymap.hit("text.run_script", ev):
             self.run_requested.emit()
             return
-        if ctrl and k in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+        if keymap.hit("text.run_selection", ev):
             self.run_selection_requested.emit()
             return
         if ctrl and k == QtCore.Qt.Key_Slash:
@@ -467,19 +471,22 @@ class TextEditor(QtWidgets.QWidget):
         tool("✕", "Delete this text from the .blend file", self.delete_text)
         bar.addStretch(1)
         self.ac_check = QtWidgets.QCheckBox("Auto-complete")
-        self.ac_check.setToolTip("Suggest names automatically after \".\" and while typing.\n"
-                                 "Ctrl+Space shows the suggestions any time.")
+        from . import keymap
+        keymap.tip(self.ac_check, "Suggest names automatically after \".\" and while typing.\n"
+                                  "{text.complete} shows the suggestions any time.")
         bar.addWidget(self.ac_check)
         self.state_lab = QtWidgets.QLabel()
         bar.addWidget(self.state_lab)
         tool("→ Shelf", "Add the selected code – or the whole text – as a button to the Shelf "
              "(you can also drag selected code onto the Shelf)", self.to_shelf)
-        tool("Run Selection", "Run the selected lines, or the current line, in the script's namespace "
-             "(Ctrl+Enter). A single expression prints its value.", self.run_selection)
+        keymap.tip(tool("Run Selection", "", self.run_selection),
+                   "Run the selected lines, or the current line, in the script's namespace "
+                   "({text.run_selection}). A single expression prints its value.")
         self.unload_btn = tool("■ Unload", "Call the script's unregister() and remove everything it "
                                "registered (menus, docks, overlays, handlers, classes)", self.unload_script)
-        self.run_btn = tool("▶ Run Script", "Run the text as a Python script (Alt+P). "
-                            "If it is already loaded, it is unloaded first.", self.run_script)
+        self.run_btn = tool("▶ Run Script", "", self.run_script)
+        keymap.tip(self.run_btn, "Run the text as a Python script ({text.run_script}). "
+                                 "If it is already loaded, it is unloaded first.")
         self.run_btn.setStyleSheet(
             "QToolButton{background:#3d6b3d;} "
             "QToolButton:hover{background:#4f8f4f; border:1px solid #8fd08f;} "

@@ -808,7 +808,8 @@ class MainWindow(QtWidgets.QMainWindow):
         lb = QtWidgets.QToolButton(bar)
         lb.setText("▦ Layout ▾")
         icons.set_icon(lb, "layout", "Layout ▾")
-        lb.setToolTip("Split the 3D view: one, two or four views (Ctrl+Alt+Q = Four Views)")
+        from . import keymap
+        keymap.tip(lb, "Split the 3D view: one, two or four views ({window.quad} = Four Views)")
         lb.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         lb.setMenu(self._layout_menu(lb))
         pytips.tag(lb, 'import qt_shell\nqt_shell.api.set_viewport_layout("quad")   # "single", "side", "stacked", "quad"')
@@ -1025,14 +1026,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def _view_menu(self, parent):
         m = QtWidgets.QMenu(parent)
         vp = lambda: self.viewport        # the active view at the time the item is used
-        m.addAction("Frame Selected (Num .)", lambda: vp().frame_selected())
-        m.addAction("Frame All (Home)", lambda: vp().frame_all())
+        from . import keymap
+        keymap.tip(m.addAction("", lambda: vp().frame_selected()), "Frame Selected\t{view3d.frame_selected}",
+                   "setText")
+        keymap.tip(m.addAction("", lambda: vp().frame_all()), "Frame All\t{view3d.frame_all}", "setText")
         m.addSeparator()
-        for key, label in (("FRONT", "Front (1)"), ("BACK", "Back (Ctrl+1)"), ("RIGHT", "Right (3)"),
-                           ("LEFT", "Left (Ctrl+3)"), ("TOP", "Top (7)"), ("BOTTOM", "Bottom (Ctrl+7)"),
-                           ("CAMERA", "Camera (0)")):
-            m.addAction(label, lambda k=key: vp().set_view(k))
-        m.addAction("Perspective / Orthographic (5)", lambda: vp().toggle_ortho())
+        for key, label in (("FRONT", "Front"), ("BACK", "Back"), ("RIGHT", "Right"), ("LEFT", "Left"),
+                           ("TOP", "Top"), ("BOTTOM", "Bottom"), ("CAMERA", "Camera")):
+            keymap.tip(m.addAction("", lambda k=key: vp().set_view(k)),
+                       f"{label}\t{{view3d.view_{key.lower()}}}", "setText")
+        keymap.tip(m.addAction("", lambda: vp().toggle_ortho()),
+                   "Perspective / Orthographic\t{view3d.view_persp}", "setText")
         m.addSeparator()
         m.addMenu(self._layout_menu(m))
         m.addSeparator()
@@ -1078,7 +1082,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for key, d in self.docks.items():
             act = d.toggleViewAction()
             if key == "sidebar":
-                act.setText("Sidebar (N)")
+                from . import keymap
+                keymap.tip(act, "Sidebar\t{view3d.sidebar}", "setText")
             win.addAction(act)
         self.window_menu = win
         self.window_menu_docks_end = win.addSeparator()
@@ -1092,28 +1097,30 @@ class MainWindow(QtWidgets.QMainWindow):
         blender_menu("Help", "TOPBAR_MT_help")
 
     def _build_shortcuts(self):
-        def sc(keys, fn):
-            for k in keys if isinstance(keys, (list, tuple)) else [keys]:
-                a = QtGui.QAction(self)
-                a.setShortcut(QtGui.QKeySequence(k))
-                a.setShortcutContext(QtCore.Qt.WindowShortcut)
-                a.triggered.connect(fn)
-                self.addAction(a)
-        sc("Ctrl+N", lambda: run_op("wm.read_homefile", {"app_template": ""}))
-        sc("Ctrl+O", lambda: run_op("wm.open_mainfile"))
-        sc("Ctrl+Shift+O", lambda: LazyMenu("TOPBAR_MT_file_open_recent", self).exec(QtGui.QCursor.pos()))
-        sc("Ctrl+S", lambda: run_op("wm.save_mainfile"))
-        sc("Ctrl+Shift+S", lambda: run_op("wm.save_as_mainfile"))
-        sc("Ctrl+Z", lambda: run_op("ed.undo"))
-        sc(["Ctrl+Shift+Z", "Ctrl+Y"], lambda: run_op("ed.redo"))
-        sc("F3", self.search)
-        sc("F12", lambda: self.render_image(False))
-        sc("Ctrl+F12", lambda: self.render_image(True))
-        sc("F11", self.show_render)
-        sc("Ctrl+Q", self.close)
-        sc("Space", self.timeline.toggle_play)
-        sc("Ctrl+Space", self._toggle_maximize_viewport)
-        sc("Ctrl+Alt+Q", self.viewports.toggle_quad)
+        """Window shortcuts – their keys come from the keymap (Edit → Keyboard Shortcuts…)."""
+        from . import keymap
+
+        def sc(aid, fn):
+            a = QtGui.QAction(self)
+            a.setShortcutContext(QtCore.Qt.WindowShortcut)
+            a.triggered.connect(fn)
+            keymap.bind_action(a, aid)
+            self.addAction(a)
+        sc("window.new", lambda: run_op("wm.read_homefile", {"app_template": ""}))
+        sc("window.open", lambda: run_op("wm.open_mainfile"))
+        sc("window.open_recent", lambda: LazyMenu("TOPBAR_MT_file_open_recent", self).exec(QtGui.QCursor.pos()))
+        sc("window.save", lambda: run_op("wm.save_mainfile"))
+        sc("window.save_as", lambda: run_op("wm.save_as_mainfile"))
+        sc("window.undo", lambda: run_op("ed.undo"))
+        sc("window.redo", lambda: run_op("ed.redo"))
+        sc("window.search", self.search)
+        sc("window.render", lambda: self.render_image(False))
+        sc("window.render_anim", lambda: self.render_image(True))
+        sc("window.show_render", self.show_render)
+        sc("window.quit", self.close)
+        sc("window.play", self.timeline.toggle_play)
+        sc("window.maximize", self._toggle_maximize_viewport)
+        sc("window.quad", self.viewports.toggle_quad)
 
     # ------------------------------------------------------------ operator handling
     def special_op(self, idname, props):
@@ -1477,15 +1484,25 @@ class MainWindow(QtWidgets.QMainWindow):
         act = QtGui.QAction("Qt Preferences…", menu)
         act.setToolTip("Settings of Qt Shell (Blender's own settings: Preferences…)")
         act.triggered.connect(self.show_qt_preferences)
+        keys = QtGui.QAction("Keyboard Shortcuts…", menu)
+        keys.setToolTip("All Qt Shell shortcuts in one window – search and change them; "
+                        "mouse navigation Blender / Maya")
+        keys.triggered.connect(self.show_shortcuts)
         after = None
         acts = menu.actions()
         for i, a in enumerate(acts):
             if a.text().replace("&", "").strip().lower().startswith("preferences"):
                 after = acts[i + 1] if i + 1 < len(acts) else None
-                menu.insertAction(after, act) if after is not None else menu.addAction(act)
+                for x in (act, keys):
+                    menu.insertAction(after, x) if after is not None else menu.addAction(x)
                 return
         menu.addSeparator()
         menu.addAction(act)
+        menu.addAction(keys)
+
+    def show_shortcuts(self):
+        from . import shortcuts_window
+        shortcuts_window.show(self)
 
     def _interface_size(self):
         InterfaceSizeDialog(self).exec()

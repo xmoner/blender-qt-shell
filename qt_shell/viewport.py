@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, gizmo, keying, playcache, posetransform, theme, wirepick
+from . import bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -587,9 +587,9 @@ class Viewport(QtWidgets.QWidget):
                     " · drag: orbit")
         if kind == "ball":
             return "Drag to orbit the view · click an axis to look along it"
-        return {"zoom": "Drag up / down to zoom", "pan": "Drag to pan the view",
-                "camera": "Toggle the camera view (Numpad 0)",
-                "persp": "Toggle perspective / orthographic (Numpad 5)"}[key]
+        return keymap.render({"zoom": "Drag up / down to zoom", "pan": "Drag to pan the view",
+                              "camera": "Toggle the camera view ({view3d.view_camera})",
+                              "persp": "Toggle perspective / orthographic ({view3d.view_persp})"}[key])
 
     def _nav_click(self, hit):
         kind, key = hit
@@ -1137,6 +1137,8 @@ class Viewport(QtWidgets.QWidget):
         if self._modal:
             self._modal_end(b == QtCore.Qt.LeftButton)
             return
+        if keymap.nav_scheme() == "MAYA" and self._maya_press(ev, pos, b, mods):
+            return
         if b == QtCore.Qt.LeftButton and not mods & QtCore.Qt.AltModifier:
             hit = self._nav_hit(pos)
             if hit is not None:
@@ -1167,6 +1169,26 @@ class Viewport(QtWidgets.QWidget):
         elif b == QtCore.Qt.RightButton:
             self._context_menu(ev.globalPosition().toPoint())
 
+    # Maya navigation: Alt + LMB tumble, Alt + MMB track, Alt + RMB dolly, MMB = drag with the active tool
+    _MAYA_TOOL_DRAG = {"MOVE": "G:FREE", "TRANSFORM": "G:FREE", "ROTATE": "R:VIEW", "SCALE": "S:UNIFORM"}
+
+    def _maya_press(self, ev, pos, b, mods):
+        """Mouse press with the Maya scheme. True when it was handled here."""
+        alt = bool(mods & QtCore.Qt.AltModifier)
+        if alt and b in (QtCore.Qt.LeftButton, QtCore.Qt.MiddleButton, QtCore.Qt.RightButton):
+            self._nav = {QtCore.Qt.LeftButton: "orbit", QtCore.Qt.MiddleButton: "pan",
+                         QtCore.Qt.RightButton: "dolly"}[b]
+            self._last = pos
+            self.setCursor(QtCore.Qt.ClosedHandCursor if self._nav != "dolly" else QtCore.Qt.SizeHorCursor)
+            return True
+        if b == QtCore.Qt.MiddleButton:
+            hid = self._MAYA_TOOL_DRAG.get(self.tools.tool)
+            if hid is not None and gizmo.start_drag(self, hid, self.tools.tool):
+                self._modal["drag_button"] = QtCore.Qt.MiddleButton
+                self._gz_hover = None
+            return True                      # Maya: the middle button never navigates without Alt
+        return False
+
     def mouseMoveEvent(self, ev):
         pos = ev.position()
         if self._modal:
@@ -1187,6 +1209,8 @@ class Viewport(QtWidgets.QWidget):
                 self._orbit(d.x(), d.y())
             elif self._nav == "pan":
                 self._pan(d.x(), d.y())
+            elif self._nav == "dolly":           # Maya Alt+RMB: right / up = closer
+                self._zoom(1.01 ** (d.y() - d.x()))
             else:
                 self._zoom(1.01 ** d.y())
             self.update()
@@ -1211,7 +1235,8 @@ class Viewport(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, ev):
         pos = ev.position()
-        if self._modal and self._modal.get("drag") and ev.button() == QtCore.Qt.LeftButton:
+        if self._modal and self._modal.get("drag") and ev.button() == self._modal.get(
+                "drag_button", QtCore.Qt.LeftButton):
             self._modal_end(True)          # gizmo drag: releasing the button confirms
             return
         if self._navg is not None and ev.button() == QtCore.Qt.LeftButton:
@@ -1254,10 +1279,12 @@ class Viewport(QtWidgets.QWidget):
         self.update()
 
     def event(self, ev):
-        if ev.type() == QtCore.QEvent.ShortcutOverride and ev.key() == QtCore.Qt.Key_Space \
-                and ev.modifiers() & QtCore.Qt.ShiftModifier:
-            ev.accept()          # Shift+Space = tool menu here, not the window's Space (play)
-            return True
+        if ev.type() == QtCore.QEvent.ShortcutOverride:
+            # a key that is a 3D View shortcut belongs to the view, not to a window shortcut
+            # (e.g. Shift+Space = tool menu here, not the window's Space = play)
+            if self._modal or keymap.view_owns(ev, bpy.context.mode):
+                ev.accept()
+                return True
         if ev.type() == QtCore.QEvent.NativeGesture:
             if ev.gestureType() == QtCore.Qt.ZoomNativeGesture:
                 self._zoom(1.0 - ev.value())
@@ -1286,96 +1313,60 @@ class Viewport(QtWidgets.QWidget):
                 self._modal_update(self.mapFromGlobal(QtGui.QCursor.pos()).toPointF())
             return
         keypad = bool(mods & QtCore.Qt.KeypadModifier)
-        ctrl = bool(mods & QtCore.Qt.ControlModifier)
-        shift = bool(mods & QtCore.Qt.ShiftModifier)
-        alt = bool(mods & QtCore.Qt.AltModifier)
-        K = QtCore.Qt
-        digit = digit_of(ev)
-        if digit is not None:
-            key = int(K.Key_0) + digit   # unify with the number row
-        if key == K.Key_Space and shift and not (ctrl or alt):
+        names = keymap.event_names(ev)
+
+        def H(aid):
+            return keymap.hit(aid, ev, names)
+
+        mode = bpy.context.mode
+        if H("view3d.tool_menu"):
             gizmo.show_tool_menu(self)       # like Blender: Shift+Space = tool menu
             return
-        if key == K.Key_W and not (ctrl or shift or alt) and not self._modal:
+        if H("view3d.tool_select"):
             self.tools.set_tool("SELECT")    # like Blender: W = select tool
             return
-        if key == K.Key_T and not (ctrl or shift or alt):
+        if H("view3d.toolbar"):
             self.tools.toggle_toolbar()      # like Blender: T shows/hides the toolbar
             return
-        if key == K.Key_N and not (ctrl or shift or alt):
+        if H("view3d.sidebar"):
             mw = getattr(self.hub, "main_window", None)
             if mw is not None:
                 mw.toggle_sidebar()      # like Blender: N shows/hides the sidebar
             return
-        edit_mesh = bpy.context.mode == "EDIT_MESH"
-        if bpy.context.mode == "POSE" and self._pose_key(key, ctrl, shift, alt):
+        if mode == "POSE" and self._pose_key(H):
             self.update()
             return
-        if edit_mesh and not keypad and not ctrl and key in (K.Key_1, K.Key_2, K.Key_3):
-            editmesh.set_select_mode(key == K.Key_1, key == K.Key_2, key == K.Key_3)
-            self.selection_edited.emit()
-            self.request_redraw()
+        if mode == "EDIT_MESH" and self._mesh_key(H, keypad):
             return
-        if edit_mesh and key == K.Key_E and not ctrl:
-            if "FINISHED" in bridge.run_op("mesh.extrude_region"):
-                self.start_modal("G")
-            return
-        if edit_mesh and key == K.Key_D and shift:
-            if "FINISHED" in bridge.run_op("mesh.duplicate"):
-                self.start_modal("G")
-            return
-        if edit_mesh and key == K.Key_F and not ctrl:
-            bridge.run_op("mesh.edge_face_add")
-            return
-        if edit_mesh and key == K.Key_L and ctrl:
-            bridge.run_op("mesh.select_linked")
-            return
-        if edit_mesh and key == K.Key_I and ctrl:
-            bridge.run_op("mesh.select_all", {"action": "INVERT"})
-            return
-        if edit_mesh and key == K.Key_H:
-            bridge.run_op("mesh.reveal" if alt else "mesh.hide", {} if alt else {"unselected": shift})
-            return
-        if edit_mesh and key in (K.Key_X, K.Key_Delete) and not ctrl:
-            from .qt_ui import LazyMenu
-            LazyMenu("VIEW3D_MT_edit_mesh_delete", self).exec(QtGui.QCursor.pos())
-            return
-        if edit_mesh and key == K.Key_U and not ctrl:
-            from .qt_ui import LazyMenu
-            LazyMenu("VIEW3D_MT_uv_map", self).exec(QtGui.QCursor.pos())
-            return
-        # the numpad sends arrow keys when NumLock is off
-        if keypad and key in (K.Key_Down, K.Key_Left, K.Key_Right, K.Key_Up):
-            key = {K.Key_Down: K.Key_2, K.Key_Left: K.Key_4, K.Key_Right: K.Key_6, K.Key_Up: K.Key_8}[key]
         step = 15 * DEG
-        if key in (K.Key_2, K.Key_4, K.Key_6, K.Key_8) and (keypad or not shift):
-            if ctrl:   # Ctrl + 2/4/6/8 = pan the view
-                d = {K.Key_2: (0, -60), K.Key_8: (0, 60), K.Key_4: (60, 0), K.Key_6: (-60, 0)}[key]
-                self._pan(*d)
+        views = (
+            ("view3d.orbit_down", lambda: self.orbit_step(0, step)),
+            ("view3d.orbit_up", lambda: self.orbit_step(0, -step)),
+            ("view3d.orbit_left", lambda: self.orbit_step(-step, 0)),
+            ("view3d.orbit_right", lambda: self.orbit_step(step, 0)),
+            ("view3d.pan_down", lambda: self._pan(0, -60)),
+            ("view3d.pan_up", lambda: self._pan(0, 60)),
+            ("view3d.pan_left", lambda: self._pan(60, 0)),
+            ("view3d.pan_right", lambda: self._pan(-60, 0)),
+            ("view3d.view_flip", lambda: self.orbit_step(math.pi, math.pi - 2 * self.pitch)),
+            ("view3d.view_front", lambda: self.set_view("FRONT")),
+            ("view3d.view_back", lambda: self.set_view("BACK")),
+            ("view3d.view_right", lambda: self.set_view("RIGHT")),
+            ("view3d.view_left", lambda: self.set_view("LEFT")),
+            ("view3d.view_top", lambda: self.set_view("TOP")),
+            ("view3d.view_bottom", lambda: self.set_view("BOTTOM")),
+            ("view3d.view_camera", lambda: self.set_view("CAMERA")),
+            ("view3d.view_persp", self.toggle_ortho),
+            ("view3d.frame_selected", self.frame_selected),
+            ("view3d.frame_all", self.frame_all),
+        )
+        for aid, fn in views:
+            if H(aid):
+                fn()
                 self.update()
-            else:      # 2/8 = up/down, 4/6 = left/right in 15° steps
-                self.orbit_step(*{K.Key_2: (0, step), K.Key_8: (0, -step),
-                                  K.Key_4: (-step, 0), K.Key_6: (step, 0)}[key])
-            return
-        if key == K.Key_9 and (keypad or not shift):   # view from the opposite side
-            self.orbit_step(math.pi, math.pi - 2 * self.pitch)
-            return
-        if key == K.Key_1 and (keypad or not shift):
-            self.set_view("BACK" if ctrl else "FRONT")
-        elif key == K.Key_3 and (keypad or not shift):
-            self.set_view("LEFT" if ctrl else "RIGHT")
-        elif key == K.Key_7 and (keypad or not shift):
-            self.set_view("BOTTOM" if ctrl else "TOP")
-        elif key == K.Key_0 and (keypad or not shift):
-            self.set_view("CAMERA")
-        elif key == K.Key_5:
-            self.toggle_ortho()
-        elif key == K.Key_Period:
-            self.frame_selected()
-        elif key == K.Key_Home:
-            self.frame_all()
-        elif key == K.Key_I and not ctrl and bpy.context.mode in ("OBJECT", "POSE"):
-            if alt:                       # Alt+I: delete keys at the current frame
+                return
+        if mode in ("OBJECT", "POSE") and (H("view3d.insert_key") or H("view3d.delete_key")):
+            if H("view3d.delete_key"):    # Alt+I: delete keys at the current frame
                 n = keying.delete()
                 self.status.emit(f"Deleted {n} keyframe(s)." if n else "No keyframes to delete here.")
                 if n:
@@ -1386,68 +1377,110 @@ class Viewport(QtWidgets.QWidget):
                 if n:
                     bridge.undo_push("Insert Keyframe")
             self.redraw_scene()
-        elif key == K.Key_G and not ctrl:
+        elif H("view3d.move"):
             self.start_modal("G")
-        elif key == K.Key_R and not ctrl:
+        elif H("view3d.rotate"):
             self.start_modal("R")
-        elif key == K.Key_S and not ctrl:
+        elif H("view3d.scale"):
             self.start_modal("S")
-        elif key == K.Key_D and shift:
+        elif H("view3d.duplicate"):
             if bridge.run_op("object.duplicate") == {"FINISHED"}:
                 self.start_modal("G")
-        elif key in (K.Key_X, K.Key_Delete) and not ctrl:
-            bridge.run_op("object.delete" if bpy.context.mode == "OBJECT" else "mesh.delete")
-        elif key == K.Key_A and shift:
+        elif H("view3d.delete"):
+            bridge.run_op("object.delete" if mode == "OBJECT" else "mesh.delete")
+        elif H("view3d.add_menu"):
             self._add_menu()
-        elif key == K.Key_A and alt:
-            bridge.run_op("object.select_all" if bpy.context.mode == "OBJECT" else "mesh.select_all",
+        elif H("view3d.deselect_all"):
+            bridge.run_op("object.select_all" if mode == "OBJECT" else "mesh.select_all",
                           {"action": "DESELECT"})
-        elif key == K.Key_A:
-            bridge.run_op("object.select_all" if bpy.context.mode == "OBJECT" else "mesh.select_all",
+        elif H("view3d.select_all"):
+            bridge.run_op("object.select_all" if mode == "OBJECT" else "mesh.select_all",
                           {"action": "SELECT"})
-        elif key == K.Key_I and ctrl:
+        elif H("view3d.select_invert"):
             bridge.run_op("object.select_all", {"action": "INVERT"})
-        elif key == K.Key_H and alt:
+        elif H("view3d.reveal"):
             bridge.run_op("object.hide_view_clear")
-        elif key == K.Key_H:
-            bridge.run_op("object.hide_view_set", {"unselected": shift})
-        elif key == K.Key_Tab:
+        elif H("view3d.hide"):
+            bridge.run_op("object.hide_view_set", {"unselected": False})
+        elif H("view3d.hide_unselected"):
+            bridge.run_op("object.hide_view_set", {"unselected": True})
+        elif H("view3d.edit_toggle"):
             bridge.run_op("object.editmode_toggle")
-        elif key == K.Key_Z and not ctrl:
+        elif H("view3d.shading_pie"):
             self._shading_pie()
         else:
             super().keyPressEvent(ev)
             return
         self.update()
 
+    def _mesh_key(self, H, keypad):
+        """Edit Mesh shortcuts. True when the key was used."""
+        if not keypad and (H("mesh.select_vert") or H("mesh.select_edge") or H("mesh.select_face")):
+            editmesh.set_select_mode(H("mesh.select_vert"), H("mesh.select_edge"), H("mesh.select_face"))
+            self.selection_edited.emit()
+            self.request_redraw()
+            return True
+        from .qt_ui import LazyMenu
+        if H("mesh.extrude"):
+            if "FINISHED" in bridge.run_op("mesh.extrude_region"):
+                self.start_modal("G")
+        elif H("mesh.duplicate"):
+            if "FINISHED" in bridge.run_op("mesh.duplicate"):
+                self.start_modal("G")
+        elif H("mesh.fill"):
+            bridge.run_op("mesh.edge_face_add")
+        elif H("mesh.select_linked"):
+            bridge.run_op("mesh.select_linked")
+        elif H("mesh.select_invert"):
+            bridge.run_op("mesh.select_all", {"action": "INVERT"})
+        elif H("mesh.reveal"):
+            bridge.run_op("mesh.reveal")
+        elif H("mesh.hide"):
+            bridge.run_op("mesh.hide", {"unselected": False})
+        elif H("mesh.hide_unselected"):
+            bridge.run_op("mesh.hide", {"unselected": True})
+        elif H("mesh.delete_menu"):
+            LazyMenu("VIEW3D_MT_edit_mesh_delete", self).exec(QtGui.QCursor.pos())
+        elif H("mesh.uv_menu"):
+            LazyMenu("VIEW3D_MT_uv_map", self).exec(QtGui.QCursor.pos())
+        else:
+            return False
+        return True
+
     def focusNextPrevChild(self, _next):
         return False  # Tab belongs to the viewport (edit mode)
 
-    def _pose_key(self, key, ctrl, shift, alt):
+    def _pose_key(self, H):
         """Pose-mode shortcuts like Blender. True when the key was used."""
-        K = QtCore.Qt
         done = None
-        if key in (K.Key_G, K.Key_R, K.Key_S) and alt and not ctrl:
-            kind = {K.Key_G: "G", K.Key_R: "R", K.Key_S: "S"}[key]
-            if posetransform.clear(kind):
-                done = {"G": "Clear Location", "R": "Clear Rotation", "S": "Clear Scale"}[kind]
-        elif key == K.Key_A and alt and not ctrl:
-            posetransform.select_all("DESELECT")
-            done = "Deselect"
-        elif key == K.Key_A and not (ctrl or shift):
-            posetransform.select_all("SELECT")
-            done = "Select All"
-        elif key == K.Key_I and ctrl:
-            posetransform.select_all("INVERT")
-            done = "Select Inverse"
-        elif key == K.Key_H and alt:
-            posetransform.reveal()
-            done = "Reveal Bones"
-        elif key == K.Key_H and not ctrl:
-            posetransform.hide(unselected=shift)
-            done = "Hide Bones"
-        elif key in (K.Key_X, K.Key_Delete) or (key == K.Key_D and shift) or (key == K.Key_A and shift):
-            return True            # object / mesh actions don't apply to bones
+        for aid, kind in (("pose.clear_loc", "G"), ("pose.clear_rot", "R"), ("pose.clear_scale", "S")):
+            if H(aid):
+                if posetransform.clear(kind):
+                    done = {"G": "Clear Location", "R": "Clear Rotation", "S": "Clear Scale"}[kind]
+                else:
+                    return True
+                break
+        else:
+            if H("pose.deselect_all"):
+                posetransform.select_all("DESELECT")
+                done = "Deselect"
+            elif H("pose.select_all"):
+                posetransform.select_all("SELECT")
+                done = "Select All"
+            elif H("pose.select_invert"):
+                posetransform.select_all("INVERT")
+                done = "Select Inverse"
+            elif H("pose.reveal"):
+                posetransform.reveal()
+                done = "Reveal Bones"
+            elif H("pose.hide"):
+                posetransform.hide(unselected=False)
+                done = "Hide Bones"
+            elif H("pose.hide_unselected"):
+                posetransform.hide(unselected=True)
+                done = "Hide Bones"
+            elif H("view3d.delete") or H("view3d.duplicate") or H("view3d.add_menu"):
+                return True            # object / mesh actions don't apply to bones
         if done is None:
             return False
         bridge.undo_push(done)

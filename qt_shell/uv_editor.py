@@ -425,17 +425,19 @@ class UVCanvas(QtWidgets.QWidget):
                 self._modal["axis"] = None if self._modal["axis"] == ax else ax
                 self._modal_update(QtCore.QPointF(self.mapFromGlobal(QtGui.QCursor.pos())))
             return
-        if k == K.Key_G:
+        from . import keymap
+        names = keymap.event_names(ev)
+        if keymap.hit("uv.move", ev, names):
             self.start_modal("G")
-        elif k == K.Key_R:
+        elif keymap.hit("uv.rotate", ev, names):
             self.start_modal("R")
-        elif k == K.Key_S:
+        elif keymap.hit("uv.scale", ev, names):
             self.start_modal("S")
-        elif k == K.Key_A and mods & K.AltModifier:
+        elif keymap.hit("uv.deselect_all", ev, names):
             self.select_all(False)
-        elif k == K.Key_A:
+        elif keymap.hit("uv.select_all", ev, names):
             self.select_all(True)
-        elif k == K.Key_Home:
+        elif keymap.hit("uv.fit", ev, names):
             self.fit()
         else:
             super().keyPressEvent(ev)
@@ -460,11 +462,12 @@ class UVEditor(QtWidgets.QWidget):
             ("Cube", "Cube Projection", lambda: self._op("uv.cube_project")),
             ("Reset", "Reset UV", lambda: self._op("uv.reset")),
             ("UV grid texture", "Creates a test UV grid texture and connects it to the material", self.test_texture),
-            ("⤢", "Show 0–1 (Home)", self.canvas.fit),
+            ("⤢", "Show 0–1 ({uv.fit})", self.canvas.fit),
         ):
             b = QtWidgets.QToolButton()
             b.setText(txt)
-            b.setToolTip(tip)
+            from . import keymap
+            keymap.tip(b, tip)
             b.clicked.connect(fn)
             bar.addWidget(b)
         bar.addStretch(1)

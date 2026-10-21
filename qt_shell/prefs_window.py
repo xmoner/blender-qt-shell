@@ -11,6 +11,7 @@ import tempfile
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import keymap
 from . import api, gizmo, scripts, theme
 from . import app as shell_app
 
@@ -113,14 +114,40 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addLayout(row)
         _hint(lay, "Also in Window → Interface Size… and in the add-on preferences. Applying a new size "
                    "rebuilds the Qt window.", page)
+        _section(lay, "Navigation & Shortcuts", page)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("3D View mouse:", page))
+        grp = QtWidgets.QButtonGroup(page)
+        for scheme, label in (("BLENDER", "Blender"), ("MAYA", "Maya")):
+            rb = QtWidgets.QRadioButton(label, page)
+            rb.setChecked(keymap.nav_scheme() == scheme)
+            how = "\n".join(f"{a}: {b}" for a, b in keymap.NAV_SCHEMES[scheme])
+            rb.setToolTip(how)
+            rb.toggled.connect(lambda on, sc=scheme: on and keymap.set_nav_scheme(sc))
+            grp.addButton(rb)
+            row.addWidget(rb)
+        row.addStretch(1)
+        lay.addLayout(row)
+        _hint(lay, "Blender: middle mouse orbits, Shift+middle pans, Ctrl+middle / wheel zooms (Alt+left orbits too). "
+                   "Maya: Alt+left tumbles, Alt+middle tracks, Alt+right dollies; the middle mouse alone drags "
+                   "with the active Move / Rotate / Scale tool.", page)
+        row = QtWidgets.QHBoxLayout()
+        kb = QtWidgets.QPushButton("Keyboard Shortcuts…", page)
+        kb.setToolTip("All Qt Shell shortcuts in one window – search and change them (also Edit → Keyboard "
+                      "Shortcuts…)")
+        kb.clicked.connect(self._shortcuts)
+        row.addWidget(kb)
+        row.addStretch(1)
+        lay.addLayout(row)
         _section(lay, "Animation", page)
         from . import keying
         self._check(page, lay, "Clicking a rig control enters Pose mode", keying.click_control_enters_pose(),
                     keying.set_click_control_enters_pose,
                     "In Object mode a click on a bone's control shape switches to Pose mode and selects that bone "
                     "(like selecting a control in Maya). Off: the click selects the armature object, as in Blender.")
-        _hint(lay, "Keys: I inserts location / rotation / scale keys for the selected controls (bones) in Pose mode "
-                   "or the selected objects in Object mode; Alt+I deletes them on the current frame.", page)
+        _hint(lay, keymap.render("Keys: {view3d.insert_key} inserts location / rotation / scale keys for the "
+                                 "selected controls (bones) in Pose mode or the selected objects in Object mode; "
+                                 "{view3d.delete_key} deletes them on the current frame."), page)
         _section(lay, "Tooltips", page)
         from . import pytips
         c = self._check(page, lay, "Python Tooltips", pytips.enabled(), pytips.set_enabled,
@@ -131,6 +158,10 @@ class QtPreferences(QtWidgets.QDialog):
                    "into the Text editor or the Console.\n"
                    "Shift + middle click on a button, field or menu item copies its command to the clipboard "
                    "(also when this option is off).", page)
+
+    def _shortcuts(self):
+        from . import shortcuts_window
+        shortcuts_window.show(self.win)
 
     def _interface_size(self):
         self.close()                          # the window is rebuilt after a size change
@@ -210,7 +241,7 @@ class QtPreferences(QtWidgets.QDialog):
 
         _section(lay, "Tools", page)
         st = gizmo.tool_state(self.win.hub)
-        c = self._check(page, lay, "Show the toolbar (T)", st.toolbar_visible,
+        c = self._check(page, lay, keymap.render("Show the toolbar ({view3d.toolbar})"), st.toolbar_visible,
                         lambda on: on != st.toolbar_visible and st.toggle_toolbar())
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Active tool", page))

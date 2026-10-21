@@ -507,34 +507,36 @@ class NodeView(QtWidgets.QGraphicsView):
         super().mouseDoubleClickEvent(ev)
 
     def keyPressEvent(self, ev):
-        k = ev.key()
-        mods = ev.modifiers()
-        K = QtCore.Qt
-        if k in (K.Key_X, K.Key_Delete):
+        from . import keymap
+        names = keymap.event_names(ev)
+
+        def H(aid):
+            return keymap.hit(aid, ev, names)
+        if H("node.delete"):
             self.editor.delete_selected()
-        elif k == K.Key_A and mods & K.ShiftModifier:
+        elif H("node.add"):
             self.editor.add_node_popup(QtGui.QCursor.pos(), self.mapToScene(self.mapFromGlobal(QtGui.QCursor.pos())))
-        elif k == K.Key_A and mods & K.AltModifier:
+        elif H("node.deselect_all"):
             for it in self.scene().selectedItems():
                 it.setSelected(False)
             self.editor.commit_selection()
-        elif k == K.Key_A:
+        elif H("node.select_all"):
             for it in self.editor.items.values():
                 it.setSelected(True)
             self.editor.commit_selection()
-        elif k == K.Key_M:
+        elif H("node.mute"):
             self.editor.toggle("mute")
-        elif k == K.Key_H:
+        elif H("node.hide"):
             self.editor.toggle("hide")
-        elif k == K.Key_Home or (k == K.Key_F and not mods & (K.ControlModifier | K.AltModifier)):
+        elif H("node.frame_all"):
             self.editor.frame_all()           # Home like Blender, F as requested
-        elif k == K.Key_Period and mods & K.KeypadModifier:
+        elif H("node.frame_selected"):
             self.editor.frame_selected()      # Numpad . like Blender
-        elif k == K.Key_Tab and not mods & K.ControlModifier:
+        elif H("node.search"):
             # node search at the mouse (like Shift+A)
             gpos = QtGui.QCursor.pos()
             self.editor.add_node_popup(gpos, self.mapToScene(self.mapFromGlobal(gpos)))
-        elif k == K.Key_Tab:
+        elif H("node.group"):
             # Ctrl+Tab: into the selected group node / out of the group
             sel = [it for it in self.scene().selectedItems() if isinstance(it, NodeItem)]
             if sel and getattr(sel[0].node, "node_tree", None) is not None:
@@ -665,7 +667,8 @@ class NodeEditor(QtWidgets.QWidget):
         bar.addWidget(self.path_label, 1)
         self.up_btn = QtWidgets.QToolButton()
         self.up_btn.setText("↑ Exit Group")
-        self.up_btn.setToolTip("Exit the node group (Ctrl+Tab). Ctrl+Tab on a selected group node enters it.")
+        from . import keymap
+        keymap.tip(self.up_btn, "Exit the node group ({node.group}). {node.group} on a selected group node enters it.")
         self.up_btn.clicked.connect(self.exit_group)
         bar.addWidget(self.up_btn)
         self.new_btn = QtWidgets.QToolButton()
@@ -673,14 +676,14 @@ class NodeEditor(QtWidgets.QWidget):
         self.new_btn.clicked.connect(self.new_tree)
         bar.addWidget(self.new_btn)
         add = QtWidgets.QToolButton()
-        add.setText("+ Add Node (Tab)")
-        add.setToolTip("Search and add a node – Tab or Shift+A over the editor")
+        keymap.tip(add, "+ Add Node ({node.search})", "setText")
+        keymap.tip(add, "Search and add a node – {node.search} or {node.add} over the editor")
         add.clicked.connect(lambda: self.add_node_popup(QtGui.QCursor.pos(), self.view.mapToScene(
             self.view.viewport().rect().center())))
         bar.addWidget(add)
         fit = QtWidgets.QToolButton()
         fit.setText("⤢")
-        fit.setToolTip("Frame All (Home / F)\nFrame Selected: Numpad .")
+        keymap.tip(fit, "Frame All ({node.frame_all})\nFrame Selected: {node.frame_selected}")
         fit.clicked.connect(self.frame_all)
         bar.addWidget(fit)
         lay.addLayout(bar)

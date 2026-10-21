@@ -497,14 +497,15 @@ class GraphView(QtWidgets.QWidget):
         self.update()
 
     def keyPressEvent(self, ev):
-        k = ev.key()
-        if k == QtCore.Qt.Key_F:
+        from . import keymap
+        names = keymap.event_names(ev)
+        if keymap.hit("graph.frame_selected", ev, names):
             self.frame(selected_only=True)
-        elif k in (QtCore.Qt.Key_A, QtCore.Qt.Key_Home):
+        elif keymap.hit("graph.frame_all", ev, names):
             self.frame(False)
-        elif k in (QtCore.Qt.Key_Delete, QtCore.Qt.Key_Backspace):
+        elif keymap.hit("graph.delete_keys", ev, names):
             self.ed.delete_keys()
-        elif k in (QtCore.Qt.Key_S, QtCore.Qt.Key_I):
+        elif keymap.hit("graph.insert_keys", ev, names):
             self.ed.insert_keys()
         else:
             super().keyPressEvent(ev)
@@ -695,8 +696,11 @@ class GraphEditor(QtWidgets.QWidget):
             f.setStyleSheet("color: #454545;")
             row.addWidget(f)
 
-        btn("⤢ All", "Frame all curves (A)", lambda: self.view.frame(False), py=f"{self.PY}.frame_all()")
-        btn("⤢ Sel", "Frame the selected keys (F)", lambda: self.view.frame(True), py=f"{self.PY}.frame_selected()")
+        from . import keymap
+        keymap.tip(btn("⤢ All", "", lambda: self.view.frame(False), py=f"{self.PY}.frame_all()"),
+                   "Frame all curves ({graph.frame_all})")
+        keymap.tip(btn("⤢ Sel", "", lambda: self.view.frame(True), py=f"{self.PY}.frame_selected()"),
+                   "Frame the selected keys ({graph.frame_selected})")
         sep()
         for label, kind, tip in self.TANGENTS:
             btn(label, f"{label} tangents – {tip}", lambda _c=False, k=kind: self.set_tangents(k),
@@ -717,9 +721,10 @@ class GraphEditor(QtWidgets.QWidget):
         inf.setMenu(inf_menu)
         row.addWidget(inf)
         sep()
-        btn("+◆", "Key the shown curves at the current frame (S)", self.insert_keys,
-            py=f"{self.PY}.insert_keys()")
-        btn("−◆", "Delete the selected keys (Delete)", self.delete_keys, py=f"{self.PY}.delete_keys()")
+        keymap.tip(btn("+◆", "", self.insert_keys, py=f"{self.PY}.insert_keys()"),
+                   "Key the shown curves at the current frame ({graph.insert_keys})")
+        keymap.tip(btn("−◆", "", self.delete_keys, py=f"{self.PY}.delete_keys()"),
+                   "Delete the selected keys ({graph.delete_keys})")
         self.snap_btn = btn("⌗ Snap", "Snap key times to whole frames while moving", self._toggle_snap, True,
                             py=f"{self.PY}.set_snap(True)")
         self.snap_btn.setChecked(True)
@@ -1054,12 +1059,14 @@ class GraphEditor(QtWidgets.QWidget):
         for label, mode in self.INFINITY:
             im.addAction(label, lambda md=mode: self.set_infinity(md))
         m.addSeparator()
-        m.addAction("Insert Key\tS", self.insert_keys)
-        m.addAction("Delete Keys\tDelete", self.delete_keys)
+        from . import keymap
+        r = keymap.render
+        m.addAction(r("Insert Key\t{graph.insert_keys}"), self.insert_keys)
+        m.addAction(r("Delete Keys\t{graph.delete_keys}"), self.delete_keys)
         m.addSeparator()
         m.addAction("Select All Keys", self._select_all)
-        m.addAction("Frame All\tA", lambda: self.view.frame(False))
-        m.addAction("Frame Selection\tF", lambda: self.view.frame(True))
+        m.addAction(r("Frame All\t{graph.frame_all}"), lambda: self.view.frame(False))
+        m.addAction(r("Frame Selection\t{graph.frame_selected}"), lambda: self.view.frame(True))
         m.exec(gpos)
         m.deleteLater()
 

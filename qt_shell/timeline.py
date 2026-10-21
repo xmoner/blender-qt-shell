@@ -132,7 +132,9 @@ class Timeline(QtWidgets.QWidget):
 
         btn("⏮", "Jump to Start", lambda: self._jump("start"), "bpy.ops.screen.frame_jump(end=False)")
         btn("◆◀", "Previous Keyframe", lambda: self._jump("prev_key"), "bpy.ops.screen.keyframe_jump(next=False)")
-        self.play_btn = btn("▶", "Play / Pause (Space)", self.toggle_play, "bpy.ops.screen.animation_play()")
+        self.play_btn = btn("▶", "", self.toggle_play, "bpy.ops.screen.animation_play()")
+        from . import keymap
+        keymap.tip(self.play_btn, "Play / Pause ({window.play})")
         btn("▶◆", "Next Keyframe", lambda: self._jump("next_key"), "bpy.ops.screen.keyframe_jump(next=True)")
         btn("⏭", "Jump to End", lambda: self._jump("end"), "bpy.ops.screen.frame_jump(end=True)")
         row.addSpacing(12)
@@ -143,11 +145,11 @@ class Timeline(QtWidgets.QWidget):
         pytips.tag(self.auto_key, "bpy.context.scene.tool_settings.use_keyframe_insert_auto = True")
         self.auto_key.toggled.connect(self._set_auto_key)
         row.addWidget(self.auto_key)
-        btn("+◆ Key", "Insert location / rotation / scale keys for the selection – selected bones in "
-            "Pose mode, selected objects otherwise (I in the viewport)", self.insert_key,
-            "import qt_shell.keying; qt_shell.keying.insert()")
-        btn("−◆", "Delete the keys of the selection on the current frame (Alt+I in the viewport)",
-            self.delete_key, "import qt_shell.keying; qt_shell.keying.delete()")
+        keymap.tip(btn("+◆ Key", "", self.insert_key, "import qt_shell.keying; qt_shell.keying.insert()"),
+                   "Insert location / rotation / scale keys for the selection – selected bones in "
+                   "Pose mode, selected objects otherwise ({view3d.insert_key} in the viewport)")
+        keymap.tip(btn("−◆", "", self.delete_key, "import qt_shell.keying; qt_shell.keying.delete()"),
+                   "Delete the keys of the selection on the current frame ({view3d.delete_key} in the viewport)")
         row.addSpacing(12)
         self.cache_btn = QtWidgets.QToolButton(self)
         self.cache_btn.setText("Cache")
