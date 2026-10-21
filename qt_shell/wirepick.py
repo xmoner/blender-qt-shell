@@ -8,6 +8,8 @@ import bpy
 import numpy as np
 from mathutils import Matrix
 
+from . import selshape
+
 PICK_PX = 10.0         # how far from a line a click still hits it (Blender uses a similar radius)
 
 _shape_cache = {}      # mesh pointer → (verts, edges, tris)
@@ -102,7 +104,7 @@ def _hit(proj, edges, tris, x, y):
 
 def _in_rect(proj, rect):
     sx, sy, _z, ok = proj
-    inside = ok & (sx >= rect.left()) & (sx <= rect.right()) & (sy >= rect.top()) & (sy <= rect.bottom())
+    inside = ok & selshape.mask(rect, sx, sy)
     return bool(inside.any())
 
 

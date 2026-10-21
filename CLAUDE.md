@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.31.1 on 2026-10-21; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.32.0 on 2026-10-21; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -82,7 +82,8 @@ Don't dig through old chat history.
 ## Where things are (quick map)
 - `main_window.py` – window, menus, 3D header, docks, `special_op` (operators handled in Qt), searches.
 - `viewport.py` – offscreen 3D view, navigation, selection, interactive G/R/S (`start_modal` …).
-- `gizmo.py` – toolbar + transform gizmos (`pivot()` per mode).
+- `gizmo.py` – toolbar (tools + variants: Select Tweak/Box/Circle/Lasso, Cursor, Scale/Scale Cage) + transform gizmos
+  (`pivot()` per mode, `cage_bounds()`); `selshape.py` – selection shapes used by all box/circle/lasso selection.
 - `editmesh.py` (Edit Mesh), `posetransform.py` (Pose G/R/S, clear, select), `keying.py` (keys of the
   selection: I / Alt+I, Timeline, Graph editor filter), `playcache.py` (cached playback, image mode), `geocache.py` (geometry cache drawn with our own
   GPU shader – camera-independent), `wirepick.py`
@@ -105,7 +106,7 @@ Don't dig through old chat history.
 - New shortcuts: add an action to `keymap.py` and test it with `keymap.hit(id, ev)`; any text that mentions
   a key must be a template (`keymap.tip(widget, "… ({area.action})")` / `keymap.render`) – never a literal key.
 - Settings (QSettings "QtShell") are shared with the owner's Blender – reset what a test changes
-  (the owner uses navigation scheme **MAYA**; key overrides live in `keymap/<id>` and `keymap_maya/<id>`).
+  (the owner's active tool was **MOVE**; the owner uses navigation scheme **MAYA**; key overrides live in `keymap/<id>` and `keymap_maya/<id>`).
 - Never change the scene frame behind the user's back while animated values are unkeyed (frame_set
   re-evaluates F-curves and drops the change) – see `playcache.pending_edits`.
 - Qt SVG Tiny: no `dominant-baseline`, no `hsl()`, `<defs>` before use.

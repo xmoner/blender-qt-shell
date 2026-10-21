@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, theme, wirepick
+from . import bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -94,6 +94,11 @@ class Viewport(QtWidgets.QWidget):
         self._last = None
         self._press_pos = None
         self._box = None
+        self._lasso = None          # Select Lasso: points of the shape being drawn
+        self._circle = None         # Select Circle: {"mode"} while painting the selection
+        self._tweak = False         # Tweak: a press that becomes a move when dragged
+        self._cursor_drag = False   # Cursor tool: placing the 3D cursor
+        self._mouse_pos = None      # last mouse position (Select Circle outline)
         self._modal = None
         self._numeric = ""
         self.area = None            # ViewportArea when the viewport is one of several views
@@ -404,6 +409,17 @@ class Viewport(QtWidgets.QWidget):
             p.setBrush(QtCore.Qt.NoBrush)
             p.setPen(QtGui.QPen(QtGui.QColor("#5680c2"), 2))
             p.drawRect(QtCore.QRectF(self.rect()).adjusted(1, 1, -1, -1))
+        if self._lasso and len(self._lasso) > 1:
+            p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
+            p.setBrush(QtGui.QColor(255, 255, 255, 20))
+            p.drawPolygon(QtGui.QPolygonF(self._lasso))
+        if (self._mouse_pos is not None and self._modal is None and self.tools.tool == "SELECT"
+                and self.tools.variant("SELECT") == "CIRCLE" and self.underMouse()):
+            rr = self.tools.circle_radius * theme.ui_scale
+            p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine if self._circle is None
+                                else QtCore.Qt.SolidLine))
+            p.setBrush(QtGui.QColor(255, 255, 255, 18 if self._circle is not None else 0))
+            p.drawEllipse(self._mouse_pos, rr, rr)
         if self._box:
             p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
@@ -883,7 +899,7 @@ class Viewport(QtWidgets.QWidget):
         self.selection_edited.emit()
         self.update()
 
-    def _pose_select_box(self, rect, mode):
+    def _pose_select_box(self, rect, mode, label="Box Select", undo=True):
         ctx = bpy.context
         arms = wirepick.pose_armatures(ctx)
         if mode == "SET":
@@ -900,7 +916,8 @@ class Viewport(QtWidgets.QWidget):
                 ob.data.bones.active = pb.bone
         for ob in arms:
             ob.update_tag()
-        bridge.undo_push("Box Select")
+        if undo:
+            bridge.undo_push(label)
         self.request_redraw()
         self.selection_edited.emit()
         self.update()
@@ -939,16 +956,18 @@ class Viewport(QtWidgets.QWidget):
         self.selection_edited.emit()
         self.update()
 
-    def select_box(self, rect, mode):
+    def select_box(self, rect, mode, label="Box Select", undo=True):
+        """Select in a shape: QRectF (Box) or selshape.Circle / Lasso. mode SET / ADD / SUB."""
         ctx = bpy.context
         if ctx.mode == "EDIT_MESH":
             if editmesh.box(self, rect, mode):
-                bridge.undo_push("Box Select")
+                if undo:
+                    bridge.undo_push(label)
                 self.request_redraw()
                 self.selection_edited.emit()
             return
         if ctx.mode == "POSE":
-            self._pose_select_box(rect, mode)
+            self._pose_select_box(rect, mode, label, undo)
             return
         if ctx.mode != "OBJECT":
             return
@@ -958,14 +977,82 @@ class Viewport(QtWidgets.QWidget):
                 o.select_set(False)
         for ob in ctx.selectable_objects:        # skips hide_select objects and collections
             sp = self.project(ob.matrix_world.translation, mats)
-            if sp is not None and rect.contains(sp):
+            if sp is not None and selshape.contains(rect, sp.x(), sp.y()):
                 ob.select_set(mode != "SUB")
         sel = ctx.selected_objects
         if sel and (ctx.view_layer.objects.active not in sel):
             ctx.view_layer.objects.active = sel[0]
-        bridge.undo_push("Box Select")
+        if undo:
+            bridge.undo_push(label)
         self.selection_edited.emit()
         self.update()
+
+    # ------------------------------------------------------------ Cursor / Tweak / Circle tools
+    def place_cursor(self, pos):
+        """Cursor tool: the 3D cursor goes onto the surface under the mouse, or – over empty space – onto
+        the plane through the cursor that faces the view (like Blender's Cursor tool)."""
+        ctx = bpy.context
+        origin, direction = self.ray(pos.x(), pos.y())
+        loc = None
+        try:
+            hit, l, _n, _i, _ob, _m = ctx.scene.ray_cast(ctx.evaluated_depsgraph_get(), origin, direction)
+            if hit:
+                loc = l
+        except Exception:
+            loc = None
+        if loc is None:
+            cur = ctx.scene.cursor.location.copy()
+            _r, _u, fwd = self.view_vectors()
+            denom = direction.dot(fwd)
+            if abs(denom) < 1e-9:
+                return
+            loc = origin + direction * ((cur - origin).dot(fwd) / denom)
+        ctx.scene.cursor.location = loc
+        self.request_redraw()
+        self.update()
+
+    def _circle_apply(self, pos):
+        c = self._circle
+        shape = selshape.Circle(pos, self.tools.circle_radius * theme.ui_scale)
+        mode = c["mode"]
+        if mode == "SET":
+            c["mode"] = "ADD"          # only the first dab replaces the selection
+        self.select_box(shape, mode, "Circle Select", undo=False)
+
+    def _tweak_start(self, press, pos):
+        """Tweak: dragging what is under the press point moves it (selects it first when it isn't)."""
+        ctx = bpy.context
+        x, y = press.x(), press.y()
+        if ctx.mode == "OBJECT":
+            ob = self.pick(x, y)
+            if ob is None:
+                return False
+            if not ob.select_get():
+                self.select_click(x, y, False)
+        elif ctx.mode == "POSE":
+            hit = wirepick.pick_bone(self, x, y, wirepick.pose_armatures(ctx))
+            if hit is None:
+                return False
+            if not hit[1].select:
+                self._pose_select_click(x, y, False)
+        elif ctx.mode == "EDIT_MESH":
+            el = editmesh.element_at(self, x, y)
+            if el is None:
+                return False
+            if not el.select:
+                editmesh.pick(self, x, y, False)
+                self.selection_edited.emit()
+            gizmo.invalidate(self)
+        else:
+            return False
+        self.start_modal("G")
+        m = self._modal
+        if not m:
+            return False
+        m["drag"] = True                  # releasing the button confirms
+        m["start"] = QtCore.QPointF(press)
+        self._modal_update(pos)
+        return True
 
     # ------------------------------------------------------------ G / R / S
     def start_modal(self, kind):
@@ -1072,6 +1159,11 @@ class Viewport(QtWidgets.QWidget):
             ps = self.project(pivot) or start
             if num is not None:
                 fac = num
+            elif m.get("cage"):
+                # Scale Cage: the dragged side follows the mouse along the handle's direction (can flip)
+                dx, dy = start.x() - ps.x(), start.y() - ps.y()
+                l2 = max(dx * dx + dy * dy, 1.0)
+                fac = ((pos.x() - ps.x()) * dx + (pos.y() - ps.y()) * dy) / l2
             else:
                 d0 = max(math.hypot(start.x() - ps.x(), start.y() - ps.y()), 1.0)
                 fac = math.hypot(pos.x() - ps.x(), pos.y() - ps.y()) / d0
@@ -1173,11 +1265,26 @@ class Viewport(QtWidgets.QWidget):
             self.setCursor(QtCore.Qt.ClosedHandCursor)
         elif b == QtCore.Qt.LeftButton:
             tool = self.tools.tool
-            if tool != "SELECT":
+            if tool not in ("SELECT", "CURSOR"):
                 hid = gizmo.hit(gizmo.handles(self, tool), pos)
                 if hid is not None and gizmo.start_drag(self, hid, tool):
                     self._gz_hover = None
                     return
+            if tool == "CURSOR":
+                self._cursor_drag = True
+                self.place_cursor(pos)
+                return
+            if tool == "SELECT":
+                variant = self.tools.variant("SELECT")
+                if variant == "CIRCLE":
+                    self._circle = {"mode": "SUB" if mods & QtCore.Qt.ControlModifier else (
+                        "ADD" if mods & QtCore.Qt.ShiftModifier else "SET")}
+                    self._mouse_pos = pos
+                    self._circle_apply(pos)
+                    return
+                if variant == "LASSO":
+                    self._lasso = [pos]
+                self._tweak = variant == "TWEAK"
             self._press_pos = pos
         elif b == QtCore.Qt.RightButton:
             self._context_menu(ev.globalPosition().toPoint())
@@ -1215,6 +1322,28 @@ class Viewport(QtWidgets.QWidget):
                 self._last = pos
                 self.setCursor(QtCore.Qt.ClosedHandCursor)
             return
+        if self._cursor_drag:
+            self.place_cursor(pos)
+            return
+        if self._circle is not None:
+            self._mouse_pos = pos
+            self._circle_apply(pos)
+            self.update()
+            return
+        if self._lasso is not None:
+            last = self._lasso[-1]
+            if abs(pos.x() - last.x()) + abs(pos.y() - last.y()) >= 3:
+                self._lasso.append(pos)
+                self.update()
+            return
+        if self._tweak and self._press_pos is not None:
+            if (pos - self._press_pos).manhattanLength() > 5:
+                press, self._press_pos, self._tweak = self._press_pos, None, False
+                self._tweak_start(press, pos)       # nothing under the press point: nothing happens
+            return
+        if self.tools.tool == "SELECT" and self.tools.variant("SELECT") == "CIRCLE":
+            self._mouse_pos = pos               # the circle follows the mouse
+            self.update()
         if self._nav and self._last is not None:
             d = pos - self._last
             self._last = pos
@@ -1264,6 +1393,29 @@ class Viewport(QtWidgets.QWidget):
             self._nav = None
             self.unsetCursor()
             return
+        if ev.button() == QtCore.Qt.LeftButton:
+            if self._cursor_drag:
+                self._cursor_drag = False
+                bridge.undo_push("Set 3D Cursor")
+                return
+            if self._circle is not None:
+                self._circle = None
+                bridge.undo_push("Circle Select")
+                self.update()
+                return
+            if self._lasso is not None:
+                pts, self._lasso = self._lasso, None
+                press, self._press_pos = self._press_pos, None
+                mods = ev.modifiers()
+                if len(pts) > 2:
+                    mode = "SUB" if mods & QtCore.Qt.ControlModifier else (
+                        "ADD" if mods & QtCore.Qt.ShiftModifier else "SET")
+                    self.select_box(selshape.Lasso(pts), mode, "Lasso Select")
+                elif press is not None:
+                    self.select_click(press.x(), press.y(), bool(mods & QtCore.Qt.ShiftModifier))
+                self.update()
+                return
+            self._tweak = False
         if ev.button() == QtCore.Qt.LeftButton and self._press_pos is not None:
             mods = ev.modifiers()
             if self._box:
@@ -1278,6 +1430,11 @@ class Viewport(QtWidgets.QWidget):
             self.update()
 
     def wheelEvent(self, ev):
+        if self._circle is not None:
+            steps = ev.angleDelta().y() / 120.0
+            self.tools.set_circle_radius(self.tools.circle_radius * (1.15 ** steps))
+            self.update()
+            return
         mods = ev.modifiers()
         pd = ev.pixelDelta()
         trackpad = not pd.isNull()  # only touchpads send pixelDelta
@@ -1335,10 +1492,14 @@ class Viewport(QtWidgets.QWidget):
         if H("view3d.tool_menu"):
             gizmo.show_tool_menu(self)       # like Blender: Shift+Space = tool menu
             return
-        for aid, tool in (("view3d.tool_select", "SELECT"), ("view3d.tool_move", "MOVE"),
-                          ("view3d.tool_rotate", "ROTATE"), ("view3d.tool_scale", "SCALE")):
+        for aid, tool in (("view3d.tool_select", "SELECT"), ("view3d.tool_cursor", "CURSOR"),
+                          ("view3d.tool_move", "MOVE"), ("view3d.tool_rotate", "ROTATE"),
+                          ("view3d.tool_scale", "SCALE")):
             if H(aid):
-                self.tools.set_tool(tool)    # Blender: W = select tool; Maya: Q / W / E / R
+                # Blender: W = select tool, W again: Tweak → Box → Circle → Lasso; Maya: Q / W / E / R
+                self.tools.activate(tool)
+                v = gizmo.variant_info(tool, self.tools.variant(tool))
+                self.status.emit(f"Tool: {v[1] if v else gizmo.TOOL_NAMES[tool]}")
                 return
         for aid, kind, label in (("view3d.key_location", "location", "Location"),
                                  ("view3d.key_rotation", "rotation", "Rotation"),

@@ -11,6 +11,8 @@ import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
+from . import selshape
+
 PICK_RADIUS = 14.0
 
 
@@ -180,12 +182,7 @@ def _find_face(pr, x, y):
     return best
 
 
-def pick(vp, x, y, extend):
-    """Returns True if the selection changed."""
-    r = active()
-    if not r:
-        return False
-    ob, bm = r
+def _element(vp, ob, bm, x, y):
     vmode, emode, fmode = select_mode()
     pr = Projector(vp, ob, bm)
     co = _vert_coords(bm)
@@ -197,6 +194,24 @@ def pick(vp, x, y, extend):
         elem = _find_edge(pr, X, Y, ok, x, y)
     if elem is None and fmode:
         elem = _find_face(pr, x, y)
+    return elem
+
+
+def element_at(vp, x, y):
+    """The vertex / edge / face under (x, y) in the current select mode, or None – selection unchanged."""
+    r = active()
+    if not r:
+        return None
+    return _element(vp, r[0], r[1], x, y)
+
+
+def pick(vp, x, y, extend):
+    """Returns True if the selection changed."""
+    r = active()
+    if not r:
+        return False
+    ob, bm = r
+    elem = _element(vp, ob, bm, x, y)
     if not extend:
         _deselect_all(bm)
     if elem is not None:
@@ -214,6 +229,7 @@ def pick(vp, x, y, extend):
 
 
 def box(vp, rect, mode):
+    """Select in a shape: a QRectF (Box) or a selshape.Circle / Lasso. mode SET / ADD / SUB."""
     r = active()
     if not r:
         return False
@@ -222,7 +238,7 @@ def box(vp, rect, mode):
     pr = Projector(vp, ob, bm)
     co = _vert_coords(bm)
     X, Y, ok = pr.project(co)
-    inside = ok & (X >= rect.left()) & (X <= rect.right()) & (Y >= rect.top()) & (Y <= rect.bottom())
+    inside = ok & selshape.mask(rect, X, Y)
     if mode == "SET":
         _deselect_all(bm)
     state = mode != "SUB"
@@ -250,7 +266,7 @@ def box(vp, rect, mode):
                 continue
             c = f.calc_center_median()
             fx, fy, fok = pr.project(np.array([c[:]]))
-            if fok[0] and rect.contains(fx[0], fy[0]) and pr.visible(c, face=f):
+            if fok[0] and selshape.contains(rect, fx[0], fy[0]) and pr.visible(c, face=f):
                 f.select_set(state)
     _finish(ob, bm)
     return True

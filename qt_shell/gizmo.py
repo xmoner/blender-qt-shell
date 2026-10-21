@@ -1,5 +1,5 @@
-"""Transform tools and gizmos in the 3D viewport (like Blender's toolbar: Select, Move, Rotate, Scale,
-Transform).
+"""Tools and gizmos in the 3D viewport (like Blender's toolbar: Select – Tweak / Box / Circle / Lasso,
+Cursor, Move, Rotate, Scale – Scale / Scale Cage, Transform).
 
 - Toolbar: a column of tool buttons on the left of every 3D view (T shows / hides it).
 - Gizmo: drawn at the pivot of the selection (median of the selected objects' origins, or of the
@@ -8,9 +8,14 @@ Transform).
     Rotate – X / Y / Z rings, the outer white ring = rotate around the view axis
     Scale  – X / Y / Z handles with boxes, the outer white ring = uniform scale
     Transform – all in one: arrows move, rings rotate, boxes on the axes scale
+    Scale Cage – a box around the selection: drag a side (one axis) or a corner (all axes);
+                 the opposite side / corner stays where it is
+- Tool buttons with variants (Select, Scale) show a small triangle: hold the button or right click it
+  to choose the variant; pressing the tool's key again cycles the variants (like Blender).
 
-Shortcuts: Shift+Space opens the tool menu (W Select, G Move, R Rotate, S Scale, T Transform),
-W switches to Select, T shows / hides the toolbar.
+Shortcuts: Shift+Space opens the tool menu (W Select, Space Cursor, G Move, R Rotate, S Scale,
+T Transform – the key of the active tool again: next variant), W switches to Select (again: next select
+variant), T shows / hides the toolbar. All keys live in keymap.py.
 - Dragging a handle runs the same interactive transform as G / R / S (with the axis set);
   releasing the mouse confirms, right click / Esc cancels.
 
@@ -24,21 +29,58 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import theme
 from . import icons
+from . import keymap
 from . import pytips
 
 # (tool, glyph, tooltip, key in the Shift+Space tool menu)
 TOOLS = [
-    ("SELECT", "⬚", "Select Box – click / drag to select", "W"),
+    ("SELECT", "⬚", "Select – click to select; drag: Tweak moves, Box / Circle / Lasso select", "W"),
+    ("CURSOR", "⊕", "Cursor – click to place the 3D cursor on the surface under the mouse, drag to move it",
+     "Space"),
     ("MOVE", "✥", "Move – drag an arrow (X / Y / Z) or the centre (free)", "G"),
     ("ROTATE", "⟳", "Rotate – drag a ring (X / Y / Z) or the outer ring (view axis)", "R"),
     ("SCALE", "⤡", "Scale – drag a handle (X / Y / Z) or the outer ring (uniform)", "S"),
     ("TRANSFORM", "❖", "Transform – arrows move, rings rotate, boxes scale", "T"),
 ]
 _KIND = {"MOVE": "G", "ROTATE": "R", "SCALE": "S", "TRANSFORM": "T"}
-_BUILTIN = {"SELECT": "select_box", "MOVE": "move", "ROTATE": "rotate", "SCALE": "scale",
+_BUILTIN = {"SELECT": "select_box", "CURSOR": "cursor", "MOVE": "move", "ROTATE": "rotate", "SCALE": "scale",
             "TRANSFORM": "transform"}
-TOOL_NAMES = {"SELECT": "Select Box", "MOVE": "Move", "ROTATE": "Rotate", "SCALE": "Scale",
+TOOL_NAMES = {"SELECT": "Select", "CURSOR": "Cursor", "MOVE": "Move", "ROTATE": "Rotate", "SCALE": "Scale",
               "TRANSFORM": "Transform"}
+
+# variants: tool → [(variant, name, icon, Blender tool id, tooltip)]
+VARIANTS = {
+    "SELECT": [
+        ("TWEAK", "Tweak", "tool_tweak", "select",
+         "Click to select; drag what is under the mouse to move it"),
+        ("BOX", "Select Box", "tool_select", "select_box",
+         "Drag a rectangle to select (Shift adds, Ctrl removes)"),
+        ("CIRCLE", "Select Circle", "tool_select_circle", "select_circle",
+         "Paint the selection with a circle (Shift adds, Ctrl removes); mouse wheel while dragging changes "
+         "its size"),
+        ("LASSO", "Select Lasso", "tool_select_lasso", "select_lasso",
+         "Draw a free shape around what to select (Shift adds, Ctrl removes)"),
+    ],
+    "SCALE": [
+        ("SCALE", "Scale", "tool_scale", "scale",
+         "Drag a handle (X / Y / Z) or the outer ring (uniform)"),
+        ("CAGE", "Scale Cage", "tool_scale_cage", "scale_cage",
+         "Drag a side of the box around the selection (one axis) or a corner (all axes) – the opposite "
+         "side stays"),
+    ],
+}
+_DEFAULT_VARIANT = {"SELECT": "BOX", "SCALE": "SCALE"}
+# keymap actions of the tools (their keys are shown in tooltips; pressing again cycles the variants)
+TOOL_ACTIONS = {"SELECT": "view3d.tool_select", "CURSOR": "view3d.tool_cursor", "MOVE": "view3d.tool_move",
+                "ROTATE": "view3d.tool_rotate", "SCALE": "view3d.tool_scale"}
+CIRCLE_RADIUS = 25          # default Select Circle radius (unscaled px)
+
+
+def variant_info(tool, variant):
+    for v in VARIANTS.get(tool, []):
+        if v[0] == variant:
+            return v
+    return None
 
 AXES = (("X", Vector((1, 0, 0)), QtGui.QColor("#ff3352")),
         ("Y", Vector((0, 1, 0)), QtGui.QColor("#8bdc00")),
@@ -62,6 +104,14 @@ class ToolState(QtCore.QObject):
         s = QtCore.QSettings("QtShell", "QtShell")
         tool = str(s.value("viewport/tool", "SELECT"))
         self.tool = tool if tool in [t[0] for t in TOOLS] else "SELECT"
+        self.variants = {}
+        for t, vs in VARIANTS.items():
+            v = str(s.value(f"viewport/tool_variant_{t.lower()}", _DEFAULT_VARIANT[t]))
+            self.variants[t] = v if v in [x[0] for x in vs] else _DEFAULT_VARIANT[t]
+        try:
+            self.circle_radius = float(s.value("viewport/select_circle_radius", CIRCLE_RADIUS))
+        except (TypeError, ValueError):
+            self.circle_radius = float(CIRCLE_RADIUS)
         self.toolbar_visible = str(s.value("viewport/toolbar", "true")).lower() == "true"
         # toolbar position shared by all views: (fx, fy) = fraction of the free space, None = default
         self.toolbar_pos = None
@@ -75,12 +125,38 @@ class ToolState(QtCore.QObject):
         except Exception:
             self.toolbar_pos = None
 
-    def set_tool(self, tool):
-        if tool not in [t[0] for t in TOOLS] or tool == self.tool:
+    def set_tool(self, tool, variant=None):
+        if tool not in [t[0] for t in TOOLS]:
             return
-        self.tool = tool
-        QtCore.QSettings("QtShell", "QtShell").setValue("viewport/tool", tool)
-        self.changed.emit()
+        changed = False
+        if variant is not None and variant != self.variants.get(tool) and variant_info(tool, variant):
+            self.variants[tool] = variant
+            QtCore.QSettings("QtShell", "QtShell").setValue(f"viewport/tool_variant_{tool.lower()}", variant)
+            changed = True
+        if tool != self.tool:
+            self.tool = tool
+            QtCore.QSettings("QtShell", "QtShell").setValue("viewport/tool", tool)
+            changed = True
+        if changed:
+            self.changed.emit()
+
+    def variant(self, tool=None):
+        """Current variant of a tool with variants (SELECT: TWEAK / BOX / CIRCLE / LASSO, SCALE: SCALE / CAGE)."""
+        return self.variants.get(tool or self.tool)
+
+    def activate(self, tool):
+        """A tool key / button: switch to the tool, or – when it is already active – to its next variant."""
+        vs = VARIANTS.get(tool)
+        if tool == self.tool and vs:
+            ids = [v[0] for v in vs]
+            cur = self.variants.get(tool, ids[0])
+            self.set_tool(tool, ids[(ids.index(cur) + 1) % len(ids)] if cur in ids else ids[0])
+        else:
+            self.set_tool(tool)
+
+    def set_circle_radius(self, r):
+        self.circle_radius = max(4.0, min(400.0, float(r)))
+        QtCore.QSettings("QtShell", "QtShell").setValue("viewport/select_circle_radius", self.circle_radius)
 
     def set_toolbar_pos(self, pos, horizontal=None):
         self.toolbar_pos = pos
@@ -143,6 +219,61 @@ class _Grip(QtWidgets.QWidget):
         self.update()
 
 
+class _ToolButton(QtWidgets.QToolButton):
+    """A tool button. Tools with variants (Select, Scale) show a small triangle in the corner; holding the
+    button or a right click opens the variants (like Blender's toolbar)."""
+
+    def __init__(self, toolbar, tool):
+        super().__init__(toolbar)
+        self.toolbar = toolbar
+        self.tool = tool
+        self.has_variants = tool in VARIANTS
+        if self.has_variants:
+            m = QtWidgets.QMenu(self)
+            m.setToolTipsVisible(True)
+            m.aboutToShow.connect(self._fill)
+            self.setMenu(m)
+            self.setPopupMode(QtWidgets.QToolButton.DelayedPopup)
+
+    def _fill(self):
+        m = self.menu()
+        m.clear()
+        st = self.toolbar.state
+        for vid, name, icon, bid, tip in VARIANTS[self.tool]:
+            a = m.addAction(icons.icon(icon), name)
+            a.setCheckable(True)
+            cur = st.variant(self.tool) == vid
+            a.setChecked(st.tool == self.tool and cur)
+            if cur:                       # Qt shows no check mark next to an icon: the current one is bold
+                fnt = a.font()
+                fnt.setBold(True)
+                a.setFont(fnt)
+            a.setToolTip(tip)
+            pytips.tag(a, f'bpy.ops.wm.tool_set_by_id(name="builtin.{bid}")')
+            a.triggered.connect(lambda _c=False, v=vid: st.set_tool(self.tool, v))
+
+    def contextMenuEvent(self, ev):
+        if self.has_variants:
+            self.showMenu()
+            ev.accept()
+            return
+        super().contextMenuEvent(ev)
+
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        if not self.has_variants:
+            return
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(225, 225, 225, 200))
+        r = self.rect()
+        k = theme.px(5)
+        x, y = r.right() - theme.px(2), r.bottom() - theme.px(2)
+        p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, y - k), QtCore.QPointF(x, y), QtCore.QPointF(x - k, y)]))
+        p.end()
+
+
 class Toolbar(QtWidgets.QFrame):
     """Tool buttons floating over a 3D view – movable by its grip, snaps to the edges."""
 
@@ -157,6 +288,7 @@ class Toolbar(QtWidgets.QFrame):
             "QFrame#qtshell_toolbar { background: rgba(40, 40, 40, 215); border: 1px solid #1a1a1a;"
             f" border-radius: {theme.px(5)}px; }}"
             "QToolButton { background: transparent; border: 1px solid transparent; }"
+            "QToolButton::menu-indicator { image: none; width: 0px; }"
             f"QToolButton:checked {{ background: {theme.C['highlight']}; }}\n" + theme.hover_qss())
         lay = QtWidgets.QBoxLayout(QtWidgets.QBoxLayout.TopToBottom, self)
         m = theme.px(3)
@@ -175,20 +307,17 @@ class Toolbar(QtWidgets.QFrame):
         f = self.font()
         f.setPixelSize(theme.fs(17))
         for tool, glyph, tip, key in TOOLS:
-            b = QtWidgets.QToolButton(self)
+            b = _ToolButton(self, tool)
             b.setText(glyph)
-            icons.set_icon(b, f"tool_{tool.lower()}")
             b.setFont(f)
-            extra = "W, or " if tool == "SELECT" else ""
-            b.setToolTip(f"{tip}\nShortcut: {extra}Shift+Space → {key}\nT shows / hides the toolbar")
             b.setCheckable(True)
-            pytips.tag(b, f'bpy.ops.wm.tool_set_by_id(name="builtin.{_BUILTIN[tool]}")')
             b.setFixedSize(theme.px(30), theme.px(30))
             b.clicked.connect(lambda _c=False, t=tool: self.state.set_tool(t))
             group.addButton(b)
             lay.addWidget(b)
             self.buttons[tool] = b
         self.state.changed.connect(self.sync)
+        keymap.notifier.changed.connect(self._update_buttons)     # tooltips follow key changes
         viewport.installEventFilter(self)          # keep the place when the view is resized
         self.sync()
 
@@ -217,8 +346,31 @@ class Toolbar(QtWidgets.QFrame):
         self._lay.invalidate()
         self.adjustSize()
 
+    def _update_buttons(self):
+        """Icon (current variant), tooltip with the current keys and the Python command of each button."""
+        try:
+            for tool, glyph, tip, key in TOOLS:
+                b = self.buttons[tool]
+                v = variant_info(tool, self.state.variant(tool)) if tool in VARIANTS else None
+                icons.set_icon(b, v[2] if v else f"tool_{tool.lower()}")
+                name = v[1] if v else TOOL_NAMES[tool]
+                text = f"{name} – {v[4]}" if v else tip
+                aid = TOOL_ACTIONS.get(tool)
+                lines = [text]
+                if aid:
+                    lines.append(f"Key: {{{aid}}}" + (" (again: next variant)" if v else ""))
+                lines.append(f"Tool menu: {{view3d.tool_menu}} → {key}")
+                if v:
+                    lines.append("Hold or right click: " + ", ".join(x[1] for x in VARIANTS[tool]))
+                lines.append("{view3d.toolbar} shows / hides the toolbar")
+                b.setToolTip(keymap.render("\n".join(lines)))
+                pytips.tag(b, f'bpy.ops.wm.tool_set_by_id(name="builtin.{v[3] if v else _BUILTIN[tool]}")')
+        except RuntimeError:          # deleted together with its viewport
+            pass
+
     def sync(self):
         try:
+            self._update_buttons()
             for tool, b in self.buttons.items():
                 b.setChecked(tool == self.state.tool)
             if self.grip.horizontal != self.state.toolbar_horizontal:
@@ -340,7 +492,8 @@ class Toolbar(QtWidgets.QFrame):
 
 # ---------------------------------------------------------------- Shift+Space tool menu
 class ToolMenu(QtWidgets.QMenu):
-    """Like Blender's Shift+Space: the tools with a key each (W / G / R / S / T)."""
+    """Like Blender's Shift+Space: the tools with a key each (W / Space / G / R / S / T); pressing the key
+    of the active tool again switches to its next variant."""
 
     def __init__(self, state, parent=None):
         super().__init__(parent)
@@ -350,18 +503,25 @@ class ToolMenu(QtWidgets.QMenu):
         title.setEnabled(False)
         self.addSeparator()
         for tool, glyph, _tip, key in TOOLS:
-            ic = icons.icon(f"tool_{tool.lower()}")
-            a = self.addAction(ic, f"{TOOL_NAMES[tool]}\t{key}") if not ic.isNull() else \
-                self.addAction(f"{glyph}  {TOOL_NAMES[tool]}\t{key}")
-            a.setCheckable(True)
-            a.setChecked(tool == state.tool)
-            a.triggered.connect(lambda _c=False, t=tool: state.set_tool(t))
+            vs = VARIANTS.get(tool)
+            entries = [(v[0], v[1], v[2]) for v in vs] if vs else [(None, TOOL_NAMES[tool], f"tool_{tool.lower()}")]
+            for i, (vid, name, icon) in enumerate(entries):
+                ic = icons.icon(icon)
+                label = f"{name}\t{key}" if i == 0 else name
+                a = self.addAction(ic, label) if not ic.isNull() else self.addAction(f"{glyph}  {label}")
+                a.setCheckable(True)
+                a.setChecked(tool == state.tool and (vid is None or vid == state.variant(tool)))
+                if a.isChecked():
+                    fnt = a.font()
+                    fnt.setBold(True)
+                    a.setFont(fnt)
+                a.triggered.connect(lambda _c=False, t=tool, v=vid: state.set_tool(t, v))
             self._keys[getattr(QtCore.Qt, f"Key_{key}")] = tool
 
     def keyPressEvent(self, ev):
         tool = self._keys.get(ev.key())
         if tool is not None and not ev.modifiers() & (QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier):
-            self.state.set_tool(tool)
+            self.state.activate(tool)          # the key again: next variant (W: Tweak → Box → Circle → Lasso)
             self.close()
             return
         super().keyPressEvent(ev)
@@ -408,6 +568,103 @@ def pivot(vp):
 
 def invalidate(vp):
     vp._gizmo_pivot_cache = None
+    vp._gizmo_cage_cache = None
+
+
+def _selection_points(ctx):
+    """World points that span the selection: bounding boxes of objects, selected vertices, bone ends."""
+    mode = ctx.mode
+    if mode == "OBJECT":
+        pts = []
+        for o in ctx.selected_objects:
+            if o.visible_get():
+                mw = o.matrix_world
+                pts.extend(mw @ Vector(c) for c in o.bound_box)
+        return pts
+    if mode == "EDIT_MESH":
+        from . import editmesh
+        r = editmesh.active()
+        if not r:
+            return []
+        ob, bm = r
+        mw = ob.matrix_world
+        return [mw @ v.co for v in bm.verts if v.select and not v.hide]
+    if mode == "POSE":
+        pts = []
+        for ob in ctx.view_layer.objects:
+            if ob.type == "ARMATURE" and ob.mode == "POSE" and ob.pose is not None:
+                mw = ob.matrix_world
+                for pb in ob.pose.bones:
+                    if pb.select:
+                        pts += [mw @ pb.head, mw @ pb.tail]
+        return pts
+    return []
+
+
+def cage_bounds(vp):
+    """(min, max) world corners of the box around the selection (Scale Cage), or None."""
+    cache = getattr(vp, "_gizmo_cage_cache", None)
+    if cache is not None:
+        return cache[0]
+    res = None
+    try:
+        pts = _selection_points(bpy.context)
+        if pts:
+            lo = Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts)))
+            hi = Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts)))
+            res = (lo, hi)
+    except Exception:
+        res = None
+    vp._gizmo_cage_cache = (res,)
+    return res
+
+
+def _cage_point(lo, hi, signs):
+    """Point of the cage: signs per axis '+' (max), '-' (min) or '0' (middle)."""
+    return Vector([hi[i] if s == "+" else lo[i] if s == "-" else (lo[i] + hi[i]) / 2 for i, s in enumerate(signs)])
+
+
+def _cage_handles(vp):
+    b = cage_bounds(vp)
+    if b is None:
+        return []
+    lo, hi = b
+    mats = vp.matrices(vp.width(), vp.height())
+    sc = theme.ui_scale
+    size = hi - lo
+    eps = max(size.length, 1e-6) * 1e-4
+    flat = [size[i] <= eps for i in range(3)]
+    corners = {}
+    for sx in "-+":
+        for sy in "-+":
+            for sz in "-+":
+                q = vp.project(_cage_point(lo, hi, sx + sy + sz), mats)
+                if q is None:
+                    return []
+                corners[sx + sy + sz] = q
+    segs = []
+    for k, q in corners.items():
+        for i in range(3):
+            if k[i] == "-":
+                k2 = k[:i] + "+" + k[i + 1:]
+                segs.append((q, corners[k2]))
+    out = [{"id": None, "kind": "cage", "segs": segs, "color": QtGui.QColor("#e8e8e8")}]
+    for i, (name, _a, col) in enumerate(AXES):
+        if flat[i]:
+            continue
+        for sgn in "-+":
+            signs = ["0", "0", "0"]
+            signs[i] = sgn
+            q = vp.project(_cage_point(lo, hi, signs), mats)
+            signs[i] = "+" if sgn == "-" else "-"
+            o = vp.project(_cage_point(lo, hi, signs), mats)
+            if q is None or o is None or math.hypot(q.x() - o.x(), q.y() - o.y()) < 12 * sc:
+                continue                 # the axis points at the viewer – this side can't be dragged
+            out.append({"id": f"C:{sgn}{name}", "kind": "box", "center": q, "color": col})
+    if not all(flat):
+        for k, q in corners.items():
+            out.append({"id": f"C:c{k}", "kind": "box", "center": q, "color": QtGui.QColor("#e8e8e8")})
+    return out
 
 
 # ---------------------------------------------------------------- geometry
@@ -436,6 +693,8 @@ def handles(vp, tool):
     'box' (center)."""
     if tool not in _KIND:
         return []
+    if tool == "SCALE" and tool_state(vp.hub).variant("SCALE") == "CAGE":
+        return _cage_handles(vp)
     pv = pivot(vp)
     if pv is None:
         return []
@@ -502,6 +761,8 @@ def hit(hs, pos):
     best, best_key = None, None
     for h in hs:
         kind = h["kind"]
+        if h["id"] is None:               # drawing only (the scale cage's box)
+            continue
         if kind == "circle":
             dc = math.hypot(pos.x() - h["center"].x(), pos.y() - h["center"].y())
             d = abs(dc - h["r"]) if h.get("ring_hit") else max(0.0, dc - h["r"])
@@ -539,6 +800,13 @@ def paint(vp, p, tool, hover):
     for h in hs:
         col = HOVER_COLOR if h["id"] == hover else h["color"]
         width = (3.2 if h["id"] == hover else 2.2) * sc
+        if h["kind"] == "cage":
+            pen = QtGui.QPen(col, 1.2 * sc, QtCore.Qt.DashLine)
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.NoBrush)
+            for a, b in h["segs"]:
+                p.drawLine(a, b)
+            continue
         if h["kind"] == "ring":
             p.setPen(QtGui.QPen(col, width))
             p.setBrush(QtCore.Qt.NoBrush)
@@ -581,6 +849,8 @@ def paint(vp, p, tool, hover):
 def start_drag(vp, handle_id, tool=None):
     """Starts the interactive transform for a handle ("G:X", "R:VIEW", …). True when it started."""
     op, _, axis = handle_id.partition(":")
+    if op == "C":
+        return _start_cage_drag(vp, axis)
     if op not in ("G", "R", "S"):
         return False
     vp.start_modal(op)
@@ -589,5 +859,35 @@ def start_drag(vp, handle_id, tool=None):
         return False
     m["axis"] = axis if axis in ("X", "Y", "Z") else None
     m["drag"] = True                  # release of the mouse button confirms
+    vp._modal_update(m["start"])
+    return True
+
+
+def _start_cage_drag(vp, handle):
+    """Scale Cage: scale from the opposite side ("+X" … a side, one axis) or corner ("c+-+", all axes)."""
+    b = cage_bounds(vp)
+    if b is None:
+        return False
+    lo, hi = b
+    flip = {"+": "-", "-": "+"}
+    if handle.startswith("c"):
+        signs = handle[1:4]
+        pivot_pt = _cage_point(lo, hi, [flip[c] for c in signs])
+        axis = None
+    else:
+        sgn, name = handle[0], handle[1]
+        i = "XYZ".index(name)
+        signs = ["0", "0", "0"]
+        signs[i] = flip[sgn]
+        pivot_pt = _cage_point(lo, hi, signs)
+        axis = name
+    vp.start_modal("S")
+    m = vp._modal
+    if not m:
+        return False
+    m["pivot"] = pivot_pt
+    m["axis"] = axis
+    m["cage"] = True                  # factor = mouse movement along the handle's direction
+    m["drag"] = True
     vp._modal_update(m["start"])
     return True

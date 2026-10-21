@@ -83,6 +83,26 @@ _ICONS = {
                   '<path fill="{c}" d="M14.5 1.5 V6.4 L9.6 1.5 Z"/>',
     "tool_transform": f'<rect x="4.5" y="4.5" width="7" height="7" rx="1" {S}/><path {S} d="M8 0.8 V3 M8 13 V15.2 M0.8 8 H3 M13 8 H15.2"/>'
                       '<circle cx="8" cy="8" r="1.4" fill="{a}"/>',
+    # select variants (the arrow = the same pointer as in tool_select)
+    "tool_tweak": '<path fill="{c}" d="M4 1.5 L12.2 8.8 L8.4 9.2 L10.9 13.9 L9.2 14.8 L6.8 10.1 L4 12.8 Z"/>',
+    "tool_select_circle": '<circle cx="7" cy="7" r="5.2" fill="none" stroke="{c}" stroke-width="1.2" '
+                          'stroke-dasharray="2 1.6"/><path fill="{c}" d="M8 8 L14.5 10.4 L11.6 11.3 L13.9 13.9 '
+                          'L13 14.8 L10.6 12.2 L9.6 15 Z"/>',
+    "tool_select_lasso": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-dasharray="2 1.6" '
+                         'd="M3 9 C0.8 6 2.5 2 7 2 C11 2 13 4 12 6.5 C11.4 8 9 8 7.5 7.6 C5.5 7 4.5 10 3 9 Z"/>'
+                         '<path fill="{c}" d="M8 8 L14.5 10.4 L11.6 11.3 L13.9 13.9 L13 14.8 L10.6 12.2 L9.6 15 Z"/>',
+    # 3D cursor: red / white ring with a cross (like Blender's)
+    "tool_cursor": '<circle cx="8" cy="8" r="4.6" fill="none" stroke="#ffffff" stroke-width="1.6"/>'
+                   '<circle cx="8" cy="8" r="4.6" fill="none" stroke="#e84a4a" stroke-width="1.6" '
+                   'stroke-dasharray="3.6 3.6"/><path fill="none" stroke="{c}" stroke-width="1.1" '
+                   'd="M8 0.8 V5 M8 11 V15.2 M0.8 8 H5 M11 8 H15.2"/>',
+    # scale cage: dashed box with square handles on corners and sides
+    "tool_scale_cage": '<rect x="3" y="3" width="10" height="10" fill="none" stroke="{c}" stroke-width="1" '
+                       'stroke-dasharray="1.6 1.4"/><g fill="{c}"><rect x="1.5" y="1.5" width="3" height="3"/>'
+                       '<rect x="11.5" y="1.5" width="3" height="3"/><rect x="1.5" y="11.5" width="3" height="3"/>'
+                       '<rect x="11.5" y="11.5" width="3" height="3"/></g><g fill="{a}">'
+                       '<rect x="6.6" y="1.6" width="2.8" height="2.8"/><rect x="11.6" y="6.6" width="2.8" height="2.8"/>'
+                       '<rect x="6.6" y="11.6" width="2.8" height="2.8"/><rect x="1.6" y="6.6" width="2.8" height="2.8"/></g>',
 
     # --- navigation
     "zoom": f'<circle cx="6.8" cy="6.8" r="4.6" {S}/><path d="M10.3 10.3 L14.4 14.4" stroke="{{c}}" stroke-width="2.2" '

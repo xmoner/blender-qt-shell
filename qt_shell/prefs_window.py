@@ -283,8 +283,10 @@ class QtPreferences(QtWidgets.QDialog):
             c.blockSignals(False)
             tools.setCurrentIndex(max(0, tools.findData(st.tool)))
         st.changed.connect(_safe(sync))
-        _hint(lay, "Shift+Space over a 3D view opens the tool menu (W Select, G Move, R Rotate, S Scale, "
-                   "T Transform).", page)
+        _hint(lay, keymap.render("{view3d.tool_menu} over a 3D view opens the tool menu (W Select – again: Tweak, Box, "
+                                 "Circle, Lasso · Space Cursor · G Move · R Rotate · S Scale – again: Scale Cage · "
+                                 "T Transform). Hold or right click a toolbar button with a small triangle for its "
+                                 "variants."), page)
 
     def _viewport_scale(self, percent):
         self._set_pref("viewport_scale", percent / 100.0)
