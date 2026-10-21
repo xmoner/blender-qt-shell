@@ -51,29 +51,44 @@ class KeyCapture(QtWidgets.QDialog):
         QtCore.QTimer.singleShot(250, self.accept)
 
 
-class ShortcutsWindow(QtWidgets.QDialog):
+class ShortcutsPanel(QtWidgets.QWidget):
+    """The shortcut list and editor – used in the Keyboard Shortcuts window and in Qt Preferences.
+
+    The 3D View areas have two key sets, Blender and Maya. "Use" switches the active controls (mouse
+    navigation + 3D View keys); "Edit set" chooses which set the list shows and edits (both can be edited
+    at any time). Window and editor shortcuts are shared by both sets."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Keyboard Shortcuts")
-        self.resize(theme.px(720), theme.px(640))
         lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
 
         top = QtWidgets.QHBoxLayout()
+        top.addWidget(QtWidgets.QLabel("Use controls:", self))
+        self.use = QtWidgets.QComboBox(self)
+        for key, name in keymap.PROFILES.items():
+            self.use.addItem(name, key)
+        self.use.setToolTip("Active 3D View controls: mouse navigation and the 3D View key set "
+                            "(also Qt Preferences → Interface → Navigation & Shortcuts)")
+        self.use.currentIndexChanged.connect(self._use_changed)
+        top.addWidget(self.use)
+        top.addSpacing(16)
+        top.addWidget(QtWidgets.QLabel("Edit 3D View keys of:", self))
+        self.edit_set = QtWidgets.QComboBox(self)
+        for key, name in keymap.PROFILES.items():
+            self.edit_set.addItem(name, key)
+        self.edit_set.setToolTip("Which 3D View key set the list shows and changes – the Blender and the Maya "
+                                 "set are kept separately")
+        self.edit_set.currentIndexChanged.connect(lambda _i: self._rebuild())
+        top.addWidget(self.edit_set)
+        top.addStretch(1)
+        lay.addLayout(top)
+
         self.search = QtWidgets.QLineEdit(self)
         self.search.setPlaceholderText("Search by name or key (e.g. \"frame\" or \"Ctrl+S\")…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
-        top.addWidget(self.search, 1)
-        top.addWidget(QtWidgets.QLabel("Mouse navigation:", self))
-        self.nav = QtWidgets.QComboBox(self)
-        self.nav.addItem("Blender", "BLENDER")
-        self.nav.addItem("Maya", "MAYA")
-        self.nav.setCurrentIndex(0 if keymap.nav_scheme() == "BLENDER" else 1)
-        self.nav.setToolTip("How the mouse moves the 3D view (also in Qt Preferences → Interface)")
-        self.nav.currentIndexChanged.connect(lambda _i: (keymap.set_nav_scheme(self.nav.currentData()),
-                                                         self._rebuild()))
-        top.addWidget(self.nav)
-        lay.addLayout(top)
+        lay.addWidget(self.search)
 
         self.tree = QtWidgets.QTreeWidget(self)
         self.tree.setColumnCount(3)
@@ -81,13 +96,15 @@ class ShortcutsWindow(QtWidgets.QDialog):
         hdr = self.tree.header()
         hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-        hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
+        hdr.setStretchLastSection(False)
+        hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.Fixed)
+        self.tree.setColumnWidth(2, theme.px(28))
         self.tree.setUniformRowHeights(True)
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._change(it))
         self.tree.currentItemChanged.connect(lambda *_a: self._update_buttons())
         lay.addWidget(self.tree, 1)
 
-        row = QtWidgets.QHBoxLayout()
+        self.buttons = row = QtWidgets.QHBoxLayout()
         self.b_change = QtWidgets.QPushButton("Change…", self)
         self.b_change.setToolTip("Record a new key for the action (replaces its keys) – or double-click the row")
         self.b_change.clicked.connect(lambda: self._change(self.tree.currentItem()))
@@ -98,17 +115,15 @@ class ShortcutsWindow(QtWidgets.QDialog):
         self.b_clear.setToolTip("Remove all keys of the action")
         self.b_clear.clicked.connect(self._clear)
         self.b_reset = QtWidgets.QPushButton("Reset", self)
-        self.b_reset.setToolTip("Default keys of the action")
+        self.b_reset.setToolTip("Default keys of the action (in the edited set)")
         self.b_reset.clicked.connect(self._reset)
         for b in (self.b_change, self.b_add, self.b_clear, self.b_reset):
             row.addWidget(b)
         row.addStretch(1)
         b_all = QtWidgets.QPushButton("Reset All…", self)
+        b_all.setToolTip("Defaults for all shared shortcuts and the edited 3D View set")
         b_all.clicked.connect(self._reset_all)
         row.addWidget(b_all)
-        close = QtWidgets.QPushButton("Close", self)
-        close.clicked.connect(self.close)
-        row.addWidget(close)
         lay.addLayout(row)
         hint = QtWidgets.QLabel("Bold = changed from the default. ⚠ = the key is also used by another action in "
                                 "the same area. \"1\" means the number row and the numpad, \"Numpad 1\" only "
@@ -116,10 +131,39 @@ class ShortcutsWindow(QtWidgets.QDialog):
         hint.setWordWrap(True)
         hint.setProperty("dim", True)
         lay.addWidget(hint)
+        self._syncing = False
+        self._sync_use()
+        self.edit_set.setCurrentIndex(self.use.currentIndex())
+        keymap.notifier.changed.connect(self._external_change)
         self._rebuild()
+
+    # ------------------------------------------------------------ sets
+    def profile(self):
+        return self.edit_set.currentData()
+
+    def _sync_use(self):
+        self._syncing = True
+        self.use.setCurrentIndex(list(keymap.PROFILES).index(keymap.nav_scheme()))
+        self._syncing = False
+
+    def _use_changed(self, _i):
+        if self._syncing:
+            return
+        keymap.set_nav_scheme(self.use.currentData())
+        self.edit_set.setCurrentIndex(self.use.currentIndex())   # edit what is used
+
+    def _external_change(self):
+        try:
+            if self.use.currentData() != keymap.nav_scheme():
+                self._sync_use()
+                self.edit_set.setCurrentIndex(self.use.currentIndex())
+            self._rebuild()
+        except RuntimeError:                   # panel already deleted
+            pass
 
     # ------------------------------------------------------------ tree
     def _rebuild(self):
+        prof = self.profile()
         cur = self.tree.currentItem()
         cur_aid = cur.data(0, AID) if cur is not None else None
         self.tree.clear()
@@ -127,24 +171,25 @@ class ShortcutsWindow(QtWidgets.QDialog):
         bold.setBold(True)
         groups = {}
         for ctx in keymap.CONTEXTS:
-            g = QtWidgets.QTreeWidgetItem(self.tree, [ctx])
+            title = f"{ctx}   ({keymap.PROFILES[prof]} set)" if ctx in keymap.PROFILED else ctx
+            g = QtWidgets.QTreeWidgetItem(self.tree, [title])
             g.setFont(0, bold)
             g.setFlags(g.flags() & ~QtCore.Qt.ItemIsSelectable)
             g.setExpanded(True)
             groups[ctx] = g
         select = None
         for aid, a in keymap.ACTIONS.items():
-            it = QtWidgets.QTreeWidgetItem(groups[a["context"]], [a["label"], keymap.text(aid), ""])
+            it = QtWidgets.QTreeWidgetItem(groups[a["context"]], [a["label"], keymap.text(aid, profile=prof), ""])
             it.setData(0, AID, aid)
-            default = ", ".join(keymap.display(keymap.normalize(k)) for k in a["default"]) or "—"
+            default = ", ".join(keymap.display(k) for k in keymap.default_keys(aid, prof)) or "—"
             it.setToolTip(0, f"{aid}\nDefault: {default}")
             it.setToolTip(1, f"Default: {default}")
-            if not keymap.is_default(aid):
+            if not keymap.is_default(aid, prof):
                 it.setFont(0, bold)
                 it.setFont(1, bold)
             clash = set()
-            for k in keymap.keys(aid):
-                clash.update(keymap.conflicts(aid, k))
+            for k in keymap.keys(aid, prof):
+                clash.update(keymap.conflicts(aid, k, prof))
             if clash:
                 names = ", ".join(f"{keymap.ACTIONS[o]['label']} ({keymap.ACTIONS[o]['context']})"
                                   for o in sorted(clash))
@@ -153,12 +198,12 @@ class ShortcutsWindow(QtWidgets.QDialog):
                 it.setToolTip(2, "Same key as: " + names)
             if aid == cur_aid:
                 select = it
-        # mouse navigation of the current scheme (read only)
-        m = QtWidgets.QTreeWidgetItem(self.tree, [f"Mouse · 3D View ({self.nav.currentText()})"])
+        # mouse navigation of the edited set (read only)
+        m = QtWidgets.QTreeWidgetItem(self.tree, [f"Mouse · 3D View   ({keymap.PROFILES[prof]})"])
         m.setFont(0, bold)
         m.setFlags(m.flags() & ~QtCore.Qt.ItemIsSelectable)
         m.setExpanded(True)
-        for label, how in keymap.NAV_SCHEMES[keymap.nav_scheme()]:
+        for label, how in keymap.NAV_SCHEMES[prof]:
             it = QtWidgets.QTreeWidgetItem(m, [label, how, ""])
             it.setFlags(it.flags() & ~QtCore.Qt.ItemIsSelectable)
             it.setForeground(1, QtGui.QBrush(QtGui.QColor("#9a9a9a")))
@@ -170,6 +215,7 @@ class ShortcutsWindow(QtWidgets.QDialog):
     def _filter(self, text):
         t = text.strip().lower()
         nk = keymap.normalize(text.strip()).lower() if text.strip() else ""
+        prof = self.profile()
         for i in range(self.tree.topLevelItemCount()):
             g = self.tree.topLevelItem(i)
             any_shown = False
@@ -177,7 +223,7 @@ class ShortcutsWindow(QtWidgets.QDialog):
                 it = g.child(j)
                 aid = it.data(0, AID)
                 hay = f"{it.text(0)} {it.text(1)} {aid or ''} {g.text(0)}".lower()
-                keys = [k.lower() for k in keymap.keys(aid)] if aid else []
+                keys = [k.lower() for k in keymap.keys(aid, prof)] if aid else []
                 show = not t or t in hay or (nk and nk in keys)
                 it.setHidden(not show)
                 any_shown = any_shown or show
@@ -194,11 +240,12 @@ class ShortcutsWindow(QtWidgets.QDialog):
         if it is None or it.data(0, AID) is None:
             return
         aid = it.data(0, AID)
+        prof = self.profile()
         dlg = KeyCapture(self, keymap.ACTIONS[aid]["label"])
         if dlg.exec() != QtWidgets.QDialog.Accepted or not dlg.key:
             return
         k = dlg.key
-        clash = keymap.conflicts(aid, k)
+        clash = keymap.conflicts(aid, k, prof)
         if clash:
             names = "\n".join(f"• {keymap.ACTIONS[o]['label']} ({keymap.ACTIONS[o]['context']})" for o in clash)
             box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Warning, "Shortcut in Use",
@@ -211,29 +258,44 @@ class ShortcutsWindow(QtWidgets.QDialog):
                 return
             if box.clickedButton() is take:
                 for o in clash:
-                    keymap.set_keys(o, [x for x in keymap.keys(o) if x != keymap.normalize(k)])
-        new = list(keymap.keys(aid)) + [k] if add else [k]
-        keymap.set_keys(aid, list(dict.fromkeys(new)))
+                    keymap.set_keys(o, [x for x in keymap.keys(o, prof) if x != keymap.normalize(k)], prof)
+        new = list(keymap.keys(aid, prof)) + [k] if add else [k]
+        keymap.set_keys(aid, list(dict.fromkeys(new)), prof)
         self._rebuild()
 
     def _clear(self):
         it = self.tree.currentItem()
         if it is not None and it.data(0, AID):
-            keymap.set_keys(it.data(0, AID), [])
+            keymap.set_keys(it.data(0, AID), [], self.profile())
             self._rebuild()
 
     def _reset(self):
         it = self.tree.currentItem()
         if it is not None and it.data(0, AID):
-            keymap.reset(it.data(0, AID))
+            keymap.reset(it.data(0, AID), self.profile())
             self._rebuild()
 
     def _reset_all(self):
+        name = keymap.PROFILES[self.profile()]
         r = QtWidgets.QMessageBox.question(self, "Reset All Shortcuts",
-                                           "Set every Qt Shell shortcut back to its default?")
+                                           f"Set the shared shortcuts and the {name} 3D View set back to "
+                                           "their defaults?")
         if r == QtWidgets.QMessageBox.Yes:
-            keymap.reset_all()
+            keymap.reset_all(self.profile())
             self._rebuild()
+
+
+class ShortcutsWindow(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Keyboard Shortcuts")
+        self.resize(theme.px(760), theme.px(660))
+        lay = QtWidgets.QVBoxLayout(self)
+        self.panel = ShortcutsPanel(self)
+        lay.addWidget(self.panel, 1)
+        close = QtWidgets.QPushButton("Close", self)
+        close.clicked.connect(self.close)
+        self.panel.buttons.addWidget(close)
 
 
 _win = None

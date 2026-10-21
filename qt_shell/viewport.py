@@ -1322,9 +1322,22 @@ class Viewport(QtWidgets.QWidget):
         if H("view3d.tool_menu"):
             gizmo.show_tool_menu(self)       # like Blender: Shift+Space = tool menu
             return
-        if H("view3d.tool_select"):
-            self.tools.set_tool("SELECT")    # like Blender: W = select tool
-            return
+        for aid, tool in (("view3d.tool_select", "SELECT"), ("view3d.tool_move", "MOVE"),
+                          ("view3d.tool_rotate", "ROTATE"), ("view3d.tool_scale", "SCALE")):
+            if H(aid):
+                self.tools.set_tool(tool)    # Blender: W = select tool; Maya: Q / W / E / R
+                return
+        for aid, kind, label in (("view3d.key_location", "location", "Location"),
+                                 ("view3d.key_rotation", "rotation", "Rotation"),
+                                 ("view3d.key_scale", "scale", "Scale")):
+            if H(aid) and bpy.context.mode in ("OBJECT", "POSE"):
+                n = keying.insert(kinds=(kind,))     # Maya: Shift+W / E / R
+                self.status.emit(keying.last_message.replace("Keyed", f"Keyed {label} of") if n
+                                 else keying.last_message)
+                if n:
+                    bridge.undo_push(f"Insert {label} Keyframe")
+                self.redraw_scene()
+                return
         if H("view3d.toolbar"):
             self.tools.toggle_toolbar()      # like Blender: T shows/hides the toolbar
             return
@@ -1364,6 +1377,12 @@ class Viewport(QtWidgets.QWidget):
             if H(aid):
                 fn()
                 self.update()
+                return
+        # after the views: a numpad digit is a view key first, the number row may be shading (Maya 4/5/6)
+        for aid, kind in (("view3d.shading_wire", "WIREFRAME"), ("view3d.shading_solid", "SOLID"),
+                          ("view3d.shading_material", "MATERIAL")):
+            if H(aid):
+                self.set_shading(kind)       # Maya: 4 / 5 / 6
                 return
         if mode in ("OBJECT", "POSE") and (H("view3d.insert_key") or H("view3d.delete_key")):
             if H("view3d.delete_key"):    # Alt+I: delete keys at the current frame

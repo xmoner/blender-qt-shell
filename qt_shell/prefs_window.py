@@ -43,14 +43,14 @@ def _hint(parent_lay, text, parent):
 
 
 class QtPreferences(QtWidgets.QDialog):
-    PAGES = ("Interface", "Window", "Viewport", "Text Editor", "Scripts", "System")
+    PAGES = ("Interface", "Window", "Viewport", "Shortcuts", "Text Editor", "Scripts", "System")
 
     def __init__(self, win):
         super().__init__(win)
         self.win = win
         self.setWindowTitle("Qt Preferences")
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose)
-        self.resize(theme.px(720), theme.px(500))
+        self.resize(theme.px(800), theme.px(560))
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
@@ -62,7 +62,8 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addWidget(self.nav)
         lay.addWidget(self.stack, 1)
         self._builders = {"Interface": self._page_interface, "Window": self._page_window,
-                          "Viewport": self._page_viewport, "Text Editor": self._page_text,
+                          "Viewport": self._page_viewport, "Shortcuts": self._page_shortcuts,
+                          "Text Editor": self._page_text,
                           "Scripts": self._page_scripts, "System": self._page_system}
         for name in self.PAGES:
             self.nav.addItem(name)
@@ -72,7 +73,8 @@ class QtPreferences(QtWidgets.QDialog):
             pl.setContentsMargins(m, m, m, m)
             pl.setSpacing(theme.px(8))
             self._builders[name](page, pl)
-            pl.addStretch(1)
+            if name != "Shortcuts":           # the shortcut list fills its page
+                pl.addStretch(1)
             self.stack.addWidget(page)
         self.nav.currentRowChanged.connect(self.stack.setCurrentIndex)
         self.nav.setCurrentRow(0)
@@ -116,27 +118,36 @@ class QtPreferences(QtWidgets.QDialog):
                    "rebuilds the Qt window.", page)
         _section(lay, "Navigation & Shortcuts", page)
         row = QtWidgets.QHBoxLayout()
-        row.addWidget(QtWidgets.QLabel("3D View mouse:", page))
+        row.addWidget(QtWidgets.QLabel("3D View controls:", page))
         grp = QtWidgets.QButtonGroup(page)
-        for scheme, label in (("BLENDER", "Blender"), ("MAYA", "Maya")):
+        self._nav_radios = {}
+        for scheme, label in keymap.PROFILES.items():
             rb = QtWidgets.QRadioButton(label, page)
             rb.setChecked(keymap.nav_scheme() == scheme)
             how = "\n".join(f"{a}: {b}" for a, b in keymap.NAV_SCHEMES[scheme])
-            rb.setToolTip(how)
-            rb.toggled.connect(lambda on, sc=scheme: on and keymap.set_nav_scheme(sc))
+            rb.setToolTip(f"Mouse:\n{how}\n\nKeys: the {label} set of the 3D View shortcuts")
+            rb.toggled.connect(lambda on, sc=scheme: on and keymap.nav_scheme() != sc and keymap.set_nav_scheme(sc))
             grp.addButton(rb)
             row.addWidget(rb)
+            self._nav_radios[scheme] = rb
         row.addStretch(1)
         lay.addLayout(row)
-        _hint(lay, "Blender: middle mouse orbits, Shift+middle pans, Ctrl+middle / wheel zooms (Alt+left orbits too). "
-                   "Maya: Alt+left tumbles, Alt+middle tracks, Alt+right dollies; the middle mouse alone drags "
-                   "with the active Move / Rotate / Scale tool.", page)
+        keymap.notifier.changed.connect(self._sync_nav_radios)
+        _hint(lay, "Switches the mouse navigation and the 3D View keys together.\n"
+                   "Blender: middle mouse orbits, Shift+middle pans, Ctrl+middle / wheel zooms (Alt+left orbits "
+                   "too); G / R / S, I, A, Numpad views …\n"
+                   "Maya: Alt+left tumbles, Alt+middle tracks, Alt+right dollies, middle drag uses the active tool; "
+                   "Q / W / E / R tools, S key, Shift+W / E / R key a channel, F / A frame, Ctrl+D duplicate, "
+                   "4 / 5 / 6 shading, F8 component mode, F9 / F10 / F11 vertex / edge / face.", page)
         row = QtWidgets.QHBoxLayout()
-        kb = QtWidgets.QPushButton("Keyboard Shortcuts…", page)
-        kb.setToolTip("All Qt Shell shortcuts in one window – search and change them (also Edit → Keyboard "
-                      "Shortcuts…)")
-        kb.clicked.connect(self._shortcuts)
+        kb = QtWidgets.QPushButton("Edit Shortcuts…", page)
+        kb.setToolTip("Shows the Shortcuts page: change the keys of both sets (Blender, Maya) and the shared ones")
+        kb.clicked.connect(lambda: self.nav.setCurrentRow(self.PAGES.index("Shortcuts")))
         row.addWidget(kb)
+        kw = QtWidgets.QPushButton("Open in a Window…", page)
+        kw.setToolTip("The same list in its own window (also Edit → Keyboard Shortcuts…)")
+        kw.clicked.connect(self._shortcuts)
+        row.addWidget(kw)
         row.addStretch(1)
         lay.addLayout(row)
         _section(lay, "Animation", page)
@@ -158,6 +169,18 @@ class QtPreferences(QtWidgets.QDialog):
                    "into the Text editor or the Console.\n"
                    "Shift + middle click on a button, field or menu item copies its command to the clipboard "
                    "(also when this option is off).", page)
+
+    def _sync_nav_radios(self):
+        try:
+            rb = self._nav_radios.get(keymap.nav_scheme())
+            if rb is not None and not rb.isChecked():
+                rb.setChecked(True)
+        except RuntimeError:
+            pass
+
+    def _page_shortcuts(self, page, lay):
+        from .shortcuts_window import ShortcutsPanel
+        lay.addWidget(ShortcutsPanel(page), 1)
 
     def _shortcuts(self):
         from . import shortcuts_window

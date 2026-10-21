@@ -63,6 +63,15 @@ _a("view3d.edit_toggle", V, "Toggle Edit Mode", "Tab")
 _a("view3d.shading_pie", V, "Shading Menu", "Z")
 _a("view3d.tool_menu", V, "Tool Menu", "Shift+Space")
 _a("view3d.tool_select", V, "Select Tool", "W")
+_a("view3d.tool_move", V, "Move Tool")
+_a("view3d.tool_rotate", V, "Rotate Tool")
+_a("view3d.tool_scale", V, "Scale Tool")
+_a("view3d.key_location", V, "Key Location")
+_a("view3d.key_rotation", V, "Key Rotation")
+_a("view3d.key_scale", V, "Key Scale")
+_a("view3d.shading_wire", V, "Wireframe Shading")
+_a("view3d.shading_solid", V, "Solid Shading")
+_a("view3d.shading_material", V, "Material Preview Shading")
 _a("view3d.toolbar", V, "Toolbar", "T")
 _a("view3d.sidebar", V, "Sidebar", "N")
 _a("view3d.frame_selected", V, "Frame Selected", "Num+.", ".")
@@ -108,6 +117,38 @@ _a("pose.select_invert", VP, "Invert Bone Selection", "Ctrl+I")
 _a("pose.hide", VP, "Hide Bones", "H")
 _a("pose.hide_unselected", VP, "Hide Unselected Bones", "Shift+H")
 _a("pose.reveal", VP, "Reveal Bones", "Alt+H")
+# ---------------------------------------------------------------- Maya set (3D View areas)
+# The 3D View areas have two sets of keys – Blender (above) and Maya – switched together with the mouse
+# navigation (Qt Preferences → Interface). Only the differences from the Blender set are listed.
+PROFILED = {V, VM, VP}
+MAYA_DEFAULTS = {
+    "view3d.move": (), "view3d.rotate": (), "view3d.scale": (),
+    "view3d.tool_select": ("Q",), "view3d.tool_move": ("W",), "view3d.tool_rotate": ("E",),
+    "view3d.tool_scale": ("R",),
+    "view3d.insert_key": ("S",), "view3d.delete_key": (),
+    "view3d.key_location": ("Shift+W",), "view3d.key_rotation": ("Shift+E",), "view3d.key_scale": ("Shift+R",),
+    "view3d.duplicate": ("Ctrl+D",), "view3d.delete": ("Del", "Backspace"),
+    "view3d.select_all": (), "view3d.deselect_all": (),
+    "view3d.hide": ("Ctrl+H",), "view3d.hide_unselected": ("Alt+H",), "view3d.reveal": ("Ctrl+Shift+H",),
+    "view3d.edit_toggle": ("F8",),
+    "view3d.shading_pie": (), "view3d.shading_wire": ("4",), "view3d.shading_solid": ("5",),
+    "view3d.shading_material": ("6",),
+    "view3d.frame_selected": ("F",), "view3d.frame_all": ("A",),
+    "view3d.view_front": ("Num+1",), "view3d.view_back": ("Ctrl+Num+1",), "view3d.view_right": ("Num+3",),
+    "view3d.view_left": ("Ctrl+Num+3",), "view3d.view_top": ("Num+7",), "view3d.view_bottom": ("Ctrl+Num+7",),
+    "view3d.view_camera": ("Num+0",), "view3d.view_persp": ("Num+5",), "view3d.view_flip": ("Num+9",),
+    "view3d.orbit_down": ("Num+2",), "view3d.orbit_up": ("Num+8",), "view3d.orbit_left": ("Num+4",),
+    "view3d.orbit_right": ("Num+6",), "view3d.pan_down": ("Ctrl+Num+2",), "view3d.pan_up": ("Ctrl+Num+8",),
+    "view3d.pan_left": ("Ctrl+Num+4",), "view3d.pan_right": ("Ctrl+Num+6",),
+    "mesh.select_vert": ("F9",), "mesh.select_edge": ("F10",), "mesh.select_face": ("F11",),
+    "mesh.extrude": ("Ctrl+E",), "mesh.duplicate": ("Ctrl+D",), "mesh.fill": (),
+    "mesh.hide": ("Ctrl+H",), "mesh.hide_unselected": ("Alt+H",), "mesh.reveal": ("Ctrl+Shift+H",),
+    "mesh.delete_menu": ("Del", "Backspace"),
+    "pose.select_all": (), "pose.deselect_all": (),
+    "pose.hide": ("Ctrl+H",), "pose.hide_unselected": ("Alt+H",), "pose.reveal": ("Ctrl+Shift+H",),
+}
+PROFILES = {"BLENDER": "Blender", "MAYA": "Maya"}
+
 # graph editor
 _a("graph.frame_selected", GE, "Frame Selected Keys", "F")
 _a("graph.frame_all", GE, "Frame All Curves", "A", "Home")
@@ -184,47 +225,72 @@ def normalize(s):
     return "+".join(out + [key])
 
 
-def keys(aid):
-    """Current keys of the action (user setting or default)."""
-    if aid in _cache:
-        return _cache[aid]
-    a = ACTIONS.get(aid)
-    if a is None:
+def profiled(aid):
+    """True for actions of the 3D View areas – they have a Blender and a Maya set."""
+    return ACTIONS[aid]["context"] in PROFILED
+
+
+def _profile(profile):
+    return profile or nav_scheme()
+
+
+def default_keys(aid, profile=None):
+    a = ACTIONS[aid]
+    keys_ = a["default"]
+    if profiled(aid) and _profile(profile) == "MAYA" and aid in MAYA_DEFAULTS:
+        keys_ = MAYA_DEFAULTS[aid]
+    return tuple(normalize(k) for k in keys_)
+
+
+def _skey(aid, profile=None):
+    if profiled(aid) and _profile(profile) == "MAYA":
+        return f"keymap_maya/{aid}"
+    return f"keymap/{aid}"
+
+
+def keys(aid, profile=None):
+    """Current keys of the action (user setting or default) – for 3D View actions in the given set
+    (default: the active set, which follows the mouse navigation)."""
+    if aid not in ACTIONS:
         return ()
-    v = _settings().value(f"keymap/{aid}", None)
+    ck = (aid, _profile(profile) if profiled(aid) else "")
+    if ck in _cache:
+        return _cache[ck]
+    v = _settings().value(_skey(aid, profile), None)
     if v is None:
-        res = tuple(normalize(k) for k in a["default"])
+        res = default_keys(aid, profile)
     else:
         res = tuple(normalize(k) for k in str(v).split(";") if k.strip())
-    _cache[aid] = res
+    _cache[ck] = res
     return res
 
 
-def is_default(aid):
-    return keys(aid) == tuple(normalize(k) for k in ACTIONS[aid]["default"])
+def is_default(aid, profile=None):
+    return keys(aid, profile) == default_keys(aid, profile)
 
 
-def set_keys(aid, new_keys):
+def set_keys(aid, new_keys, profile=None):
     ks = [normalize(k) for k in new_keys if normalize(k)]
     st = _settings()
-    if tuple(ks) == tuple(normalize(k) for k in ACTIONS[aid]["default"]):
-        st.remove(f"keymap/{aid}")
+    if tuple(ks) == default_keys(aid, profile):
+        st.remove(_skey(aid, profile))
     else:
-        st.setValue(f"keymap/{aid}", ";".join(ks))
-    _cache.pop(aid, None)
+        st.setValue(_skey(aid, profile), ";".join(ks))
+    _cache.clear()
     _changed()
 
 
-def reset(aid):
-    _settings().remove(f"keymap/{aid}")
-    _cache.pop(aid, None)
+def reset(aid, profile=None):
+    _settings().remove(_skey(aid, profile))
+    _cache.clear()
     _changed()
 
 
-def reset_all():
+def reset_all(profile=None):
+    """Defaults for the common shortcuts and the given (default: active) 3D View set."""
     st = _settings()
     for aid in ACTIONS:
-        st.remove(f"keymap/{aid}")
+        st.remove(_skey(aid, profile))
     _cache.clear()
     _changed()
 
@@ -234,19 +300,19 @@ def display(k):
     return k.replace("Num+.", "Numpad .").replace("Num+", "Numpad ")
 
 
-def text(aid, sep=" / "):
+def text(aid, sep=" / ", profile=None):
     """Current keys as text for hints, e.g. 'Ctrl+Shift+Z / Ctrl+Y'; '—' when unassigned."""
-    ks = keys(aid)
+    ks = keys(aid, profile)
     return sep.join(display(k) for k in ks) if ks else "—"
 
 
-def conflicts(aid, key):
+def conflicts(aid, key, profile=None):
     """Other actions in the same area (context) that use key. A key of a more specific area (an editor,
     an edit mode) overriding a window / general 3D View key is intended and not reported."""
     ctx = ACTIONS[aid]["context"]
     k = normalize(key)
     return [other for other, a in ACTIONS.items()
-            if other != aid and a["context"] == ctx and k in keys(other)]
+            if other != aid and a["context"] == ctx and k in keys(other, profile)]
 
 
 # ---------------------------------------------------------------- events
@@ -381,5 +447,7 @@ def nav_scheme():
 
 
 def set_nav_scheme(scheme):
+    """Switches the 3D View controls: mouse navigation and the 3D View key set (Blender / Maya)."""
     _settings().setValue("viewport/navigation", scheme)
-    notifier.changed.emit()
+    _cache.clear()
+    _changed()

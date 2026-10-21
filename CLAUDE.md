@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.28.0 on 2026-10-21; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.29.0 on 2026-10-21; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -66,7 +66,8 @@ Don't dig through old chat history.
 - `computer_type` pastes via clipboard (no key handlers); use `computer_key` for shortcuts.
 - Access grants expire after ~30 min of inactivity – request again.
 - Before quitting a Blender with `os._exit`, make sure it is **yours**: check its process uptime in the Console
-  (`GetProcessTimes` via ctypes; a few seconds/minutes = the instance you just started).
+  (`GetProcessTimes` via ctypes – set `kernel32.GetCurrentProcess.restype = wintypes.HANDLE`, otherwise the call
+  fails and returns 0; a few seconds/minutes = the instance you just started).
 
 ## Where things are (quick map)
 - `main_window.py` – window, menus, 3D header, docks, `special_op` (operators handled in Qt), searches.
@@ -80,7 +81,8 @@ Don't dig through old chat history.
   (Blender layouts/menus → Qt, `LazyMenu`), `fake_ui.py` (records Blender `draw()` calls).
 - `graph_editor.py`, `timeline.py`, `node_editor.py`, `uv_editor.py`, `text_editor.py`, `console.py`.
 - `icons.py` (own icons), `blicons.py` + `blicons_more.py` (all 1,032 Blender icon names).
-- `keymap.py` – all shortcuts (registry, `hit`, templates), `shortcuts_window.py` – Keyboard Shortcuts window.
+- `keymap.py` – all shortcuts (registry, `hit`, templates, Blender/Maya 3D View key sets via `profile`),
+  `shortcuts_window.py` – `ShortcutsPanel` (Keyboard Shortcuts window + Qt Preferences → Shortcuts page).
 - `app.py` – hub, timers, selection snapshot, `notify` (tooltips, Shift+MMB copy).
 - `api.py` – public API (`docs/API.md`). `devreload.py` – dev reload.
 
@@ -92,7 +94,8 @@ Don't dig through old chat history.
 - Qt: making a hidden tree row current expands all its parents (autoscroll) – check visibility first.
 - New shortcuts: add an action to `keymap.py` and test it with `keymap.hit(id, ev)`; any text that mentions
   a key must be a template (`keymap.tip(widget, "… ({area.action})")` / `keymap.render`) – never a literal key.
-- Settings (QSettings "QtShell") are shared with the owner's Blender – reset what a test changes.
+- Settings (QSettings "QtShell") are shared with the owner's Blender – reset what a test changes
+  (the owner uses navigation scheme **MAYA**; key overrides live in `keymap/<id>` and `keymap_maya/<id>`).
 - Never change the scene frame behind the user's back while animated values are unkeyed (frame_set
   re-evaluates F-curves and drops the change) – see `playcache.pending_edits`.
 - Qt SVG Tiny: no `dominant-baseline`, no `hsl()`, `<defs>` before use.
