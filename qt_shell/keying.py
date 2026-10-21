@@ -7,6 +7,25 @@ import re
 
 import bpy
 
+SETTING_CLICK_POSE = "animation/click_control_enters_pose"
+last_message = ""
+
+
+def click_control_enters_pose():
+    """Qt Preferences → Animation: clicking a rig control in Object mode enters Pose mode (default on)."""
+    try:
+        from PySide6 import QtCore
+        v = QtCore.QSettings("QtShell", "QtShell").value(SETTING_CLICK_POSE, True)
+        return v not in (False, "false", "0", 0)
+    except Exception:
+        return True
+
+
+def set_click_control_enters_pose(on):
+    from PySide6 import QtCore
+    QtCore.QSettings("QtShell", "QtShell").setValue(SETTING_CLICK_POSE, bool(on))
+
+
 _BONE_RE = re.compile(r'^pose\.bones\["((?:[^"\\]|\\.)*)"\]\.(.+)$')
 
 
@@ -57,8 +76,10 @@ def targets():
 
 def insert(kinds=("location", "rotation", "scale")):
     """Inserts keys with the current values at the current frame. Returns the number of keyed items."""
+    global last_message
     n = 0
-    for ob, item in targets():
+    tg = targets()
+    for ob, item in tg:
         group = item.name if item is not ob else None
         for k in kinds:
             path = _rot_path(item) if k == "rotation" else k
@@ -71,6 +92,14 @@ def insert(kinds=("location", "rotation", "scale")):
             except Exception as ex:
                 from .bridge import log
                 log(f"Insert keyframe {item.name}.{path}: {ex}", "WARNING")
+    frame = bpy.context.scene.frame_current
+    if not tg:
+        last_message = ("Nothing to key – select a rig control (Pose mode) or an object."
+                        if not pose_mode() else "Nothing to key – no bone (rig control) is selected.")
+    else:
+        names = ", ".join(item.name for _ob, item in tg[:4]) + (" …" if len(tg) > 4 else "")
+        what = "bone" if pose_mode() else "object"
+        last_message = f"Keyed {len(tg)} {what}{'s' if len(tg) > 1 else ''} at frame {frame}: {names}"
     return n
 
 

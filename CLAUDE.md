@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.23.0 on 2026-10-21).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.24.0 on 2026-10-21; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -17,6 +17,8 @@ Don't dig through old chat history.
   give `Tag: vX.Y.Z` + `Title: Qt Shell X.Y.Z – <short name>` in one code block and the body
   (Markdown, English: `## New` / `## Fixes` / `## Improvements`, then `## Install`) in a second one.
   Install section: *Download `qt_shell.zip`, then in Blender 5.2: Edit → Preferences → Add-ons → Install from Disk.*
+- After an update tell the owner to **restart Blender** (Install from Disk over a running Qt Shell keeps the
+  old modules). The status bar shows `Qt Shell X.Y.Z` – ask him to check it when something "doesn't work".
 - The owner's Blender may be open with his own work – **never reload / quit / click in it**.
   Test in a **separate Blender instance** that you start and close yourself without saving.
 

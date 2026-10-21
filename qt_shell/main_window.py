@@ -40,6 +40,12 @@ MODE_ICONS = {"OBJECT": "object_mode", "EDIT": "edit_mode", "SCULPT": "sculpt_mo
 MODES = [("OBJECT", "Object Mode"), ("EDIT", "Edit Mode"), ("SCULPT", "Sculpt Mode"),
          ("VERTEX_PAINT", "Vertex Paint"), ("WEIGHT_PAINT", "Weight Paint"),
          ("TEXTURE_PAINT", "Texture Paint"), ("POSE", "Pose Mode")]
+try:
+    from . import bl_info as _bl_info
+    _QT_SHELL_VERSION = ".".join(str(v) for v in _bl_info["version"])
+except Exception:
+    _QT_SHELL_VERSION = "?"
+
 DISCARDING_OPS = {"wm.open_mainfile", "wm.read_homefile", "wm.revert_mainfile",
                   "wm.recover_last_session", "wm.recover_auto_save", "wm.read_factory_settings"}
 
@@ -1588,7 +1594,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ctx = bpy.context
             sel = len(ctx.selected_objects)
             total = len(ctx.view_layer.objects)
-            self.status_right.setText(f"Objects {sel}/{total}  |  Blender {bpy.app.version_string}")
+            self.status_right.setText(f"Objects {sel}/{total}  |  Blender {bpy.app.version_string}  |  "
+                                      f"Qt Shell {_QT_SHELL_VERSION}")
         except Exception:
             pass
 

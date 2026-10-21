@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, gizmo, posetransform, theme, wirepick
+from . import bridge, editmesh, gizmo, keying, posetransform, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -756,6 +756,29 @@ class Viewport(QtWidgets.QWidget):
                     return ob
         return None
 
+    def _enter_pose_on(self, ob, pb):
+        """Object mode → Pose mode on armature ob with only bone pb selected. True when it worked."""
+        ctx = bpy.context
+        vl = ctx.view_layer
+        for o in ctx.selected_objects:
+            o.select_set(False)
+        ob.select_set(True)
+        vl.objects.active = ob
+        if "FINISHED" not in bridge.run_op("object.mode_set", {"mode": "POSE"}) or ob.mode != "POSE":
+            return False
+        for b in ob.pose.bones:
+            b.select = False
+        pb.select = True
+        ob.data.bones.active = pb.bone
+        ob.update_tag()
+        self.status.emit(f"Pose mode – {pb.name} selected (clicking a rig control enters Pose mode; "
+                         "Qt Preferences → Animation).")
+        bridge.undo_push("Select")
+        self.request_redraw()
+        self.selection_edited.emit()
+        self.update()
+        return True
+
     def _pose_select_click(self, x, y, extend):
         ctx = bpy.context
         arms = wirepick.pose_armatures(ctx)
@@ -818,6 +841,11 @@ class Viewport(QtWidgets.QWidget):
             return
         ob = self.pick(x, y)
         vl = ctx.view_layer
+        if ob is not None and ob.type == "ARMATURE" and not extend and keying.click_control_enters_pose():
+            # like Maya: clicking a rig control selects the control (Pose mode), not the whole rig
+            hit = wirepick.pick_bone(self, x, y, [ob])
+            if hit is not None and self._enter_pose_on(ob, hit[1]):
+                return
         if not extend:
             for o in ctx.selected_objects:
                 o.select_set(False)
@@ -1278,7 +1306,6 @@ class Viewport(QtWidgets.QWidget):
         elif key == K.Key_Home:
             self.frame_all()
         elif key == K.Key_I and not ctrl and bpy.context.mode in ("OBJECT", "POSE"):
-            from . import keying
             if alt:                       # Alt+I: delete keys at the current frame
                 n = keying.delete()
                 self.status.emit(f"Deleted {n} keyframe(s)." if n else "No keyframes to delete here.")
@@ -1286,7 +1313,7 @@ class Viewport(QtWidgets.QWidget):
                     bridge.undo_push("Delete Keyframe")
             else:                         # I: insert location / rotation / scale keys
                 n = keying.insert()
-                self.status.emit("Keyframe inserted." if n else "Nothing selected to key.")
+                self.status.emit(keying.last_message)
                 if n:
                     bridge.undo_push("Insert Keyframe")
             self.redraw_scene()

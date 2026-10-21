@@ -113,6 +113,14 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addLayout(row)
         _hint(lay, "Also in Window → Interface Size… and in the add-on preferences. Applying a new size "
                    "rebuilds the Qt window.", page)
+        _section(lay, "Animation", page)
+        from . import keying
+        self._check(page, lay, "Clicking a rig control enters Pose mode", keying.click_control_enters_pose(),
+                    keying.set_click_control_enters_pose,
+                    "In Object mode a click on a bone's control shape switches to Pose mode and selects that bone "
+                    "(like selecting a control in Maya). Off: the click selects the armature object, as in Blender.")
+        _hint(lay, "Keys: I inserts location / rotation / scale keys for the selected controls (bones) in Pose mode "
+                   "or the selected objects in Object mode; Alt+I deletes them on the current frame.", page)
         _section(lay, "Tooltips", page)
         from . import pytips
         c = self._check(page, lay, "Python Tooltips", pytips.enabled(), pytips.set_enabled,

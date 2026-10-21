@@ -6,7 +6,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.23.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.24.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -199,6 +199,7 @@ add-on folder there is connected:
 | 0.21.0 | not released yet | Pose mode transforms (posetransform.py): G / R / S with axis keys, numbers, Esc/RMB cancel; Move / Rotate / Scale / Transform gizmos at the median of the selected bone heads; world X @ start matrix → ob.convert_space(POSE→LOCAL) → channels in the bone's rotation mode (Euler compatible with the start value, quaternion sign kept), locked channels and connected bones' location kept, only root bones of a selected chain transformed; auto-keying of the changed channels; undo. Pose shortcuts: Alt+G/R/S clear, A / Alt+A / Ctrl+I, H / Shift+H / Alt+H, View Selected frames the bones, right-click = VIEW3D_MT_pose_context_menu |
 | 0.22.0 | not released yet | File → Open Recent (like Maya's Recent Files): up to 20 files, newest first, numbered (&1…&10), file name (+ folder when names repeat), full path tooltip, missing files greyed, Clear Recent Files List; Ctrl+Shift+O opens it at the cursor. Qt Shell keeps its own history (CONFIG/qt_shell_recent.txt, load_post + save_post handlers, 30 entries) merged with Blender's recent-files.txt. qt_ui.QT_MENUS: menus filled by Qt. Lesson: TOPBAR_MT_file_open_recent has no Python class in Blender 5.2 (C menu) – fake_ui.find_menu_class returns None, so such menus need a Qt filler |
 | 0.23.0 | not released yet | Keying rig controls (keying.py): I / Alt+I in the viewport insert / delete loc-rot-scale keys of the selection (selected pose bones in Pose mode, objects otherwise); Timeline +◆ Key / −◆ key the selected bones (were keying the armature object); Graph editor S / +◆ inserts the **current** (posed) value (was fc.evaluate → the key never moved); in Pose mode the Graph editor and the Timeline show only the selected bones' curves / keys, channels labelled `bone: X Rotation` |
+| 0.24.0 | not released yet | Object mode: clicking a rig control (bone custom shape) enters Pose mode and selects that bone, like selecting a control in Maya (Qt Preferences → Interface → Animation, QSettings `animation/click_control_enters_pose`, default on) – before, the click selected the armature object and I keyed the object, so nothing moved in playback. I reports what was keyed (`Keyed 1 bone at frame 20: God`). Status bar shows the running Qt Shell version (tells whether Blender was restarted after an update). Lesson: after *Install from Disk* over a running Qt Shell, Blender keeps the old modules – restart Blender |
 
 ---
 
