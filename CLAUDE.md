@@ -28,6 +28,8 @@ Don't dig through old chat history.
    (recreate it from §Tools below if `/tmp` was wiped; `__file__` is a false positive).
 3. Deploy to the PC (see below) and **test live** in a test Blender instance.
 4. Bump `bl_info["version"]` (fix = patch, feature = minor).
+   **Deploy the bumped `qt_shell/__init__.py` to the PC too** – otherwise the owner's status bar keeps showing
+   the old version after a restart (the test only deployed the changed modules).
 5. Docs:
    - `README.md` **and** `qt_shell/README.md` – same feature rows, keep them in sync;
    - `docs/DEVELOPMENT.md` – new row in §5 version history (+ lessons learned, file list in §3 for new modules);
