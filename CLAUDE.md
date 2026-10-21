@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.24.0 on 2026-10-21; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.25.0 on 2026-10-21; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -65,13 +65,15 @@ Don't dig through old chat history.
 - Console input line is at about y = 739 (screenshot frame 1456×819) when the Console tab is open.
 - `computer_type` pastes via clipboard (no key handlers); use `computer_key` for shortcuts.
 - Access grants expire after ~30 min of inactivity – request again.
+- Before quitting a Blender with `os._exit`, make sure it is **yours**: check its process uptime in the Console
+  (`GetProcessTimes` via ctypes; a few seconds/minutes = the instance you just started).
 
 ## Where things are (quick map)
 - `main_window.py` – window, menus, 3D header, docks, `special_op` (operators handled in Qt), searches.
 - `viewport.py` – offscreen 3D view, navigation, selection, interactive G/R/S (`start_modal` …).
 - `gizmo.py` – toolbar + transform gizmos (`pivot()` per mode).
 - `editmesh.py` (Edit Mesh), `posetransform.py` (Pose G/R/S, clear, select), `keying.py` (keys of the
-  selection: I / Alt+I, Timeline, Graph editor filter), `wirepick.py`
+  selection: I / Alt+I, Timeline, Graph editor filter), `playcache.py` (cached playback), `wirepick.py`
   (picking bones / rig controls / curves by their lines).
 - `outliner.py`, `properties.py`, `rna_widgets.py` (RNA → Qt widgets, tooltips), `qt_ui.py`
   (Blender layouts/menus → Qt, `LazyMenu`), `fake_ui.py` (records Blender `draw()` calls).

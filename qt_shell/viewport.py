@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, gizmo, keying, posetransform, theme, wirepick
+from . import bridge, editmesh, gizmo, keying, playcache, posetransform, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -300,6 +300,8 @@ class Viewport(QtWidgets.QWidget):
                     self._fps_samples.append((time.perf_counter(), f))
             self._img_transparent = transparent and self._draw_kwargs.get("draw_background") is False
             self._failed = None
+            if self._modal is None:
+                playcache.store(self, ctx.scene.frame_current, img, self._img_transparent)
         except Exception as ex:
             self._failed = f"Viewport render failed: {ex}"
 
@@ -563,6 +565,20 @@ class Viewport(QtWidgets.QWidget):
             self.request_redraw()   # full quality (progressive refinement) again after playback
         self.update()
 
+    def show_cached(self, frame):
+        """Playback from the cache: shows the stored image of frame without evaluating the scene."""
+        hit = playcache.lookup(self, frame)
+        if hit is None:
+            return False
+        self._image, self._img_transparent = hit
+        self._dirty = False
+        self._extra_frames = 0
+        if frame != self._fps_last_frame:
+            self._fps_last_frame = frame
+            self._fps_samples.append((time.perf_counter(), frame))
+        self.repaint()
+        return True
+
     def render_now(self):
         """Draws the current frame immediately (used by playback)."""
         if not self.isVisible() or bridge.is_rendering():
@@ -619,7 +635,9 @@ class Viewport(QtWidgets.QWidget):
         try:
             ob = ctx.view_layer.objects.active
             coll = ctx.view_layer.active_layer_collection.collection.name
-            p.drawText(12, 38, f"({ctx.scene.frame_current}) {coll} | {ob.name if ob else '—'}")
+            shown = getattr(self.hub, "display_frame", None)
+            p.drawText(12, 38, f"({shown if shown is not None else ctx.scene.frame_current}) {coll} | "
+                               f"{ob.name if ob else '—'}")
         except Exception:
             pass
         if self._modal:

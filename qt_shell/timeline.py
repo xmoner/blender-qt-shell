@@ -4,10 +4,21 @@ import time
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, theme
+from . import bridge, playcache, theme
 from . import icons
 from . import pytips
 from .rna_widgets import DragSpin
+
+
+def _runs(frames):
+    """[(first, last)] of consecutive frames."""
+    out = []
+    for f in frames:
+        if out and f == out[-1][1] + 1:
+            out[-1][1] = f
+        else:
+            out.append([f, f])
+    return out
 
 
 class TimeBar(QtWidgets.QWidget):
@@ -56,6 +67,16 @@ class TimeBar(QtWidgets.QWidget):
             p.drawLine(QtCore.QPointF(x, 14), QtCore.QPointF(x, self.height()))
             p.setPen(QtGui.QColor("#9a9a9a"))
             p.drawText(QtCore.QPointF(x + 2, 11), str(fr))
+        # cached frames (cached playback) – a green line along the bottom, like Maya's cache bar
+        cached = self.tl.cached_frames()
+        if cached:
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor("#4caf50"))
+            hb = max(3, theme.px(4))
+            half = max(self.frame_to_x(1) - self.frame_to_x(0), 1.0) / 2
+            for a, b in _runs(sorted(cached)):
+                xa, xb = self.frame_to_x(a) - half, self.frame_to_x(b) + half
+                p.drawRect(QtCore.QRectF(xa, self.height() - hb, xb - xa, hb))
         # keys
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         y = self.height() * 0.65
@@ -66,8 +87,8 @@ class TimeBar(QtWidgets.QWidget):
             p.setPen(QtGui.QColor("#000"))
             p.setBrush(QtGui.QColor("#e9c44a" if k == sc.frame_current else "#d0d0d0"))
             p.drawPolygon(poly)
-        # current frame
-        x = self.frame_to_x(sc.frame_current)
+        # current frame (the cached frame being shown during cached playback)
+        x = self.frame_to_x(self.tl.shown_frame())
         p.setPen(QtGui.QPen(QtGui.QColor("#4772b3"), 2))
         p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, self.height()))
         p.end()
@@ -127,6 +148,21 @@ class Timeline(QtWidgets.QWidget):
             "import qt_shell.keying; qt_shell.keying.insert()")
         btn("−◆", "Delete the keys of the selection on the current frame (Alt+I in the viewport)",
             self.delete_key, "import qt_shell.keying; qt_shell.keying.delete()")
+        row.addSpacing(12)
+        self.cache_btn = QtWidgets.QToolButton(self)
+        self.cache_btn.setText("Cache")
+        self.cache_btn.setCheckable(True)
+        self.cache_btn.setChecked(playcache.enabled())
+        self.cache_btn.setPopupMode(QtWidgets.QToolButton.MenuButtonPopup)
+        self.cache_btn.setToolTip("Cached playback (like Maya): frames drawn once are kept and played back in "
+                                  "real time; the green line in the timeline shows the cached frames. "
+                                  "Any change to the scene or the view drops the cache.")
+        pytips.tag(self.cache_btn, 'import qt_shell.playcache as pc; pc.set_enabled(True)')
+        self.cache_btn.toggled.connect(self._set_cache)
+        cm = QtWidgets.QMenu(self.cache_btn)
+        cm.aboutToShow.connect(lambda: self._fill_cache_menu(cm))
+        self.cache_btn.setMenu(cm)
+        row.addWidget(self.cache_btn)
         row.addStretch(1)
         row.addWidget(QtWidgets.QLabel("Frame"))
         self.cur = self._spin(-1048574, 1048574)
@@ -155,9 +191,93 @@ class Timeline(QtWidgets.QWidget):
         hub.file_loaded.connect(self.sync)
         self.sync()
 
+    # ------------------------------------------------------------ cached playback
+    def _views(self):
+        area = getattr(self.hub, "viewport_area", None)
+        if area is not None:
+            return area.visible_views()
+        vp = getattr(self.hub, "viewport", None)
+        return [vp] if vp is not None and vp.isVisible() else []
+
+    def cached_frames(self):
+        try:
+            return playcache.cached_frames(self._views())
+        except Exception:
+            return set()
+
+    def shown_frame(self):
+        f = getattr(self.hub, "display_frame", None)
+        return bpy.context.scene.frame_current if f is None else f
+
+    def _set_cache(self, on):
+        playcache.set_enabled(on)
+        self.bar.update()
+
+    def _fill_cache_menu(self, m):
+        m.clear()
+        n = len(self.cached_frames())
+        info = m.addAction(f"{n} frame(s) cached · {playcache.used_mb():.0f} MB of "
+                           f"{playcache.limit_bytes() // (1024 * 1024)} MB")
+        info.setEnabled(False)
+        m.addSeparator()
+        a = m.addAction("Cache All Frames")
+        a.setToolTip("Draws every frame of the scene range once, so the next playback is real time")
+        a.triggered.connect(self.cache_all)
+        m.addAction("Flush Cache", self.flush_cache)
+        lim = m.addMenu("Memory Limit")
+        cur = playcache.limit_bytes() // (1024 * 1024)
+        for mb in (256, 512, 1024, 2048, 4096, 8192):
+            act = lim.addAction(f"{mb} MB" if mb < 1024 else f"{mb // 1024} GB")
+            act.setCheckable(True)
+            act.setChecked(mb == cur)
+            act.triggered.connect(lambda _=False, mb=mb: QtCore.QSettings("QtShell", "QtShell").setValue(
+                playcache.KEY_LIMIT, mb))
+
+    def flush_cache(self):
+        playcache.flush()
+        self.bar.update()
+
+    def cache_all(self):
+        """Fills the cache for the scene range (shows progress in the status bar; Esc stops)."""
+        if not playcache.enabled():
+            self.cache_btn.setChecked(True)
+        if self.is_playing():
+            self.toggle_play()
+        sc = bpy.context.scene
+        keep = sc.frame_current
+        views = self._views()
+        if not views:
+            return
+        mw = getattr(self.hub, "main_window", None)
+        app = QtWidgets.QApplication.instance()
+        total = sc.frame_end - sc.frame_start + 1
+        try:
+            for i, f in enumerate(range(sc.frame_start, sc.frame_end + 1)):
+                if playcache.ready(views, f):
+                    continue
+                sc.frame_set(f)
+                for v in views:
+                    v.render_now()
+                self.cur.blockSignals(True)
+                self.cur.setValue(f)
+                self.cur.blockSignals(False)
+                self.bar.update()
+                if mw is not None and i % 5 == 0:
+                    mw.statusBar().showMessage(f"Caching frame {f} ({i + 1}/{total})…", 2000)
+                app.processEvents(QtCore.QEventLoop.ExcludeUserInputEvents)
+        finally:
+            sc.frame_set(keep)
+            for v in views:
+                v.render_now()
+            self.sync()
+            if mw is not None:
+                mw.statusBar().showMessage(f"Cached {len(self.cached_frames())} frame(s) "
+                                           f"({playcache.used_mb():.0f} MB).", 4000)
+
     def sync(self):
         sc = bpy.context.scene
-        for w, v in ((self.cur, sc.frame_current), (self.start, sc.frame_start), (self.end, sc.frame_end)):
+        shown = self.shown_frame()
+        for w, v in ((self.cur, shown), (self.start, sc.frame_start), (self.end, sc.frame_end)):
             if not (w._editing or w._dragging):
                 w.blockSignals(True)
                 w.setValue(v)
@@ -222,14 +342,28 @@ class Timeline(QtWidgets.QWidget):
     def is_playing(self):
         return bool(getattr(self.hub, "playing", False))
 
+    def _end_cached_display(self):
+        """After cached playback the scene is moved to the frame that was shown last."""
+        f = getattr(self.hub, "display_frame", None)
+        self.hub.display_frame = None
+        sc = bpy.context.scene
+        if f is not None and f != sc.frame_current:
+            sc.frame_set(f)
+            vp = getattr(self.hub, "viewport_area", None) or getattr(self.hub, "viewport", None)
+            if vp is not None:
+                vp.render_now()
+
     def toggle_play(self):
         if self.is_playing():
             self._set_playing(False)
+            self._end_cached_display()
             if not icons.set_icon(self.play_btn, "play"):
                 self.play_btn.setText("▶")
             self.sync()
         else:
             sc = bpy.context.scene
+            self.hub.display_frame = None
+            self._play_frame = sc.frame_current
             self._t0 = time.perf_counter()
             self._f0 = sc.frame_current
             self._next = self._t0
@@ -257,8 +391,9 @@ class Timeline(QtWidgets.QWidget):
             now = time.perf_counter()
         start, end = sc.frame_start, sc.frame_end
         length = max(end - start + 1, 1)
+        shown = getattr(self, "_play_frame", sc.frame_current)
         if getattr(sc, "sync_mode", "NONE") == "NONE":
-            f = sc.frame_current + 1
+            f = shown + 1
             if f > end or f < start:
                 f = start
             self._next += period
@@ -267,16 +402,25 @@ class Timeline(QtWidgets.QWidget):
         else:
             n = int((now - self._t0) * fps)
             f = start + (self._f0 - start + n) % length
-            if f == sc.frame_current:
+            if f == shown:
                 self._next = self._t0 + (n + 1) / fps
                 return
             self._next = self._t0 + (n + 1) / fps
-        sc.frame_set(f)
-        vp = getattr(self.hub, "viewport_area", None)
-        if vp is None:
-            vp = getattr(self.hub, "viewport", None)
-        if vp is not None:
-            vp.render_now()        # every visible view
+        self._play_frame = f
+        views = self._views()
+        if playcache.ready(views, f):
+            # cached playback: show the stored images, the scene stays where it is (no evaluation)
+            for v in views:
+                v.show_cached(f)
+            self.hub.display_frame = f
+        else:
+            self.hub.display_frame = None
+            sc.frame_set(f)
+            vp = getattr(self.hub, "viewport_area", None)
+            if vp is None:
+                vp = getattr(self.hub, "viewport", None)
+            if vp is not None:
+                vp.render_now()        # every visible view (and stores the frames in the cache)
         self.cur.blockSignals(True)
         self.cur.setValue(f)
         self.cur.blockSignals(False)
@@ -301,3 +445,4 @@ class Timeline(QtWidgets.QWidget):
 
     def stop(self):
         self._set_playing(False)
+        self._end_cached_display()

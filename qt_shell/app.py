@@ -40,6 +40,7 @@ class Hub(QtCore.QObject):
         self.viewport = None     # set by the main window
         self.viewport_area = None   # all 3D views (ViewportArea); viewport is the active one
         self.playing = False     # animation playback in the timeline
+        self.display_frame = None  # frame shown from the playback cache (scene frame not changed), else None
         self.main_window = None
 
     def tick(self):

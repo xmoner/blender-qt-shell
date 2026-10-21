@@ -6,7 +6,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.24.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.25.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -103,7 +103,7 @@ qt_shell/            the add-on (zip this folder for a release)
   editmesh.py        edit-mode selection / transform in the Qt viewport
   properties.py      Properties editor (tabs, atomic page build)
   sidebar.py         N panel (VIEW_3D UI panels, Item ▸ Transform in Qt)
-  outliner.py, wirepick.py (line picking: bones, rig controls, curves), posetransform.py (pose G/R/S, clear, select), keying.py (insert / delete keys of the selection, curve filter), timeline.py, console.py, node_editor.py, uv_editor.py
+  outliner.py, wirepick.py (line picking: bones, rig controls, curves), posetransform.py (pose G/R/S, clear, select), keying.py (insert / delete keys of the selection, curve filter), playcache.py (cached playback), timeline.py, console.py, node_editor.py, uv_editor.py
   text_editor.py     Text editor dock (Run Script, Run Selection, Unload, auto-complete)
   completion.py      auto-completion logic (no Qt)
   scripts.py         script manager core (no Qt)
@@ -200,6 +200,7 @@ add-on folder there is connected:
 | 0.22.0 | not released yet | File → Open Recent (like Maya's Recent Files): up to 20 files, newest first, numbered (&1…&10), file name (+ folder when names repeat), full path tooltip, missing files greyed, Clear Recent Files List; Ctrl+Shift+O opens it at the cursor. Qt Shell keeps its own history (CONFIG/qt_shell_recent.txt, load_post + save_post handlers, 30 entries) merged with Blender's recent-files.txt. qt_ui.QT_MENUS: menus filled by Qt. Lesson: TOPBAR_MT_file_open_recent has no Python class in Blender 5.2 (C menu) – fake_ui.find_menu_class returns None, so such menus need a Qt filler |
 | 0.23.0 | not released yet | Keying rig controls (keying.py): I / Alt+I in the viewport insert / delete loc-rot-scale keys of the selection (selected pose bones in Pose mode, objects otherwise); Timeline +◆ Key / −◆ key the selected bones (were keying the armature object); Graph editor S / +◆ inserts the **current** (posed) value (was fc.evaluate → the key never moved); in Pose mode the Graph editor and the Timeline show only the selected bones' curves / keys, channels labelled `bone: X Rotation` |
 | 0.24.0 | not released yet | Object mode: clicking a rig control (bone custom shape) enters Pose mode and selects that bone, like selecting a control in Maya (Qt Preferences → Interface → Animation, QSettings `animation/click_control_enters_pose`, default on) – before, the click selected the armature object and I keyed the object, so nothing moved in playback. I reports what was keyed (`Keyed 1 bone at frame 20: God`). Status bar shows the running Qt Shell version (tells whether Blender was restarted after an update). Lesson: after *Install from Disk* over a running Qt Shell, Blender keeps the old modules – restart Blender |
+| 0.25.0 | not released yet | Cached playback like Maya (playcache.py): every rendered viewport frame is stored with the view's signature (size, matrices, shading, overlays); playback shows stored frames without frame_set (hub.display_frame, the scene frame is set to the last shown frame on stop); Timeline: green line of cached frames, Cache toggle + menu (Cache All Frames, Flush Cache, Memory Limit 256 MB–8 GB, default 1 GB, QSettings playback/cache, playback/cache_mb). Invalidation: bridge.Flags.edit_version (+1 in depsgraph_update_post – not called on frame changes –, undo, load) or a view change. ~5–6 MB per frame at 1400×630 |
 
 ---
 

@@ -17,6 +17,7 @@ class Flags:
     undo = False
     render_done = False
     render_stats = ""
+    edit_version = 0      # +1 on every scene edit / undo / load (not on frame changes) – playback cache
 
 
 _log_listeners = []
@@ -256,9 +257,17 @@ def _on_depsgraph(*_args):
 
 
 @bpy.app.handlers.persistent
+def _on_depsgraph_edit(*_args):
+    # depsgraph_update_post runs for edits, not for frame changes (those run frame_change_post)
+    Flags.depsgraph = True
+    Flags.edit_version += 1
+
+
+@bpy.app.handlers.persistent
 def _on_load(*_args):
     Flags.file_loaded = True
     Flags.depsgraph = True
+    Flags.edit_version += 1
     add_recent(bpy.data.filepath)
 
 
@@ -271,6 +280,7 @@ def _on_save(*_args):
 def _on_undo(*_args):
     Flags.undo = True
     Flags.depsgraph = True
+    Flags.edit_version += 1
 
 
 @bpy.app.handlers.persistent
@@ -286,7 +296,7 @@ def _on_render_stats(*args):
 
 
 _HANDLERS = (
-    ("depsgraph_update_post", _on_depsgraph),
+    ("depsgraph_update_post", _on_depsgraph_edit),
     ("frame_change_post", _on_depsgraph),
     ("load_post", _on_load),
     ("save_post", _on_save),
