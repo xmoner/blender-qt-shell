@@ -65,10 +65,13 @@ def unit_factor(fc):
 
 
 def channel_name(fc):
-    base, axes = PATH_NAMES.get(fc.data_path, (None, None))
+    from .keying import bone_of_path
+    bone, path = bone_of_path(fc.data_path)
+    base, axes = PATH_NAMES.get(path, (None, None))
     if base:
         i = fc.array_index
-        return f"{axes[i] if i < len(axes) else i} {base}"
+        name = f"{axes[i] if i < len(axes) else i} {base}"
+        return f"{bone}: {name}" if bone else name
     name = fc.data_path.rsplit(".", 1)[-1].replace("_", " ").title()
     if fc.data_path.endswith("]"):
         name = fc.data_path
@@ -76,7 +79,8 @@ def channel_name(fc):
 
 
 def channel_color(fc, n):
-    if fc.data_path in PATH_NAMES:
+    from .keying import bone_of_path
+    if bone_of_path(fc.data_path)[1] in PATH_NAMES:
         return QtGui.QColor(AXIS_COLORS[fc.array_index % 4])
     return QtGui.QColor(OTHER_COLORS[n % len(OTHER_COLORS)])
 
@@ -797,9 +801,16 @@ class GraphEditor(QtWidgets.QWidget):
                 obs.insert(0, act)
         except Exception:
             obs = []
+        from . import keying
         for ob in obs:
-            for n, fc in enumerate(fcurves_of(ob)):
+            # Pose mode: only the curves of the selected bones (rig controls), like Blender / Maya
+            names = keying.selected_bone_names(ob) if ob.type == "ARMATURE" else None
+            n = 0
+            for fc in fcurves_of(ob):
+                if not keying.fcurve_visible(ob, fc, names):
+                    continue
                 curves.append(Curve(ob, fc, n))
+                n += 1
         return curves
 
     def refresh(self, force=False):
@@ -965,23 +976,20 @@ class GraphEditor(QtWidgets.QWidget):
     def insert_keys(self):
         sc = bpy.context.scene
         f = sc.frame_current
+        from . import keying
         curves = self.shown()
         if curves:
             for c in curves:
                 try:
-                    v = c.fc.evaluate(f)
-                    c.fc.keyframe_points.insert(f, v)
+                    # the current (posed) value – the curve's own value would keep the key where it was
+                    c.fc.keyframe_points.insert(f, keying.current_value(c.ob, c.fc))
+                    c.fc.update()
                 except Exception as ex:
                     bridge.log(f"Insert key: {ex}", "WARNING")
+            for ob in {c.ob for c in curves}:
+                ob.update_tag()
         else:
-            for ob in bpy.context.selected_objects:
-                rot = "rotation_quaternion" if ob.rotation_mode == "QUATERNION" else (
-                    "rotation_axis_angle" if ob.rotation_mode == "AXIS_ANGLE" else "rotation_euler")
-                for path in ("location", rot, "scale"):
-                    try:
-                        ob.keyframe_insert(path)
-                    except Exception as ex:
-                        bridge.log(str(ex), "ERROR")
+            keying.insert()
         self.view._finish_edit("Insert Keyframe")
         self.refresh()
 

@@ -1277,6 +1277,19 @@ class Viewport(QtWidgets.QWidget):
             self.frame_selected()
         elif key == K.Key_Home:
             self.frame_all()
+        elif key == K.Key_I and not ctrl and bpy.context.mode in ("OBJECT", "POSE"):
+            from . import keying
+            if alt:                       # Alt+I: delete keys at the current frame
+                n = keying.delete()
+                self.status.emit(f"Deleted {n} keyframe(s)." if n else "No keyframes to delete here.")
+                if n:
+                    bridge.undo_push("Delete Keyframe")
+            else:                         # I: insert location / rotation / scale keys
+                n = keying.insert()
+                self.status.emit("Keyframe inserted." if n else "Nothing selected to key.")
+                if n:
+                    bridge.undo_push("Insert Keyframe")
+            self.redraw_scene()
         elif key == K.Key_G and not ctrl:
             self.start_modal("G")
         elif key == K.Key_R and not ctrl:

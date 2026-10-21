@@ -122,12 +122,11 @@ class Timeline(QtWidgets.QWidget):
         pytips.tag(self.auto_key, "bpy.context.scene.tool_settings.use_keyframe_insert_auto = True")
         self.auto_key.toggled.connect(self._set_auto_key)
         row.addWidget(self.auto_key)
-        btn("+◆ Key", "Insert a location/rotation/scale keyframe for the active object", self.insert_key,
-            'for ob in bpy.context.selected_objects:\n    for path in ("location", "rotation_euler", "scale"):\n'
-            '        ob.keyframe_insert(data_path=path)')
-        btn("−◆", "Delete the keyframe on the current frame", self.delete_key,
-            'for ob in bpy.context.selected_objects:\n    for path in ("location", "rotation_euler", "scale"):\n'
-            '        ob.keyframe_delete(data_path=path)')
+        btn("+◆ Key", "Insert location / rotation / scale keys for the selection – selected bones in "
+            "Pose mode, selected objects otherwise (I in the viewport)", self.insert_key,
+            "import qt_shell.keying; qt_shell.keying.insert()")
+        btn("−◆", "Delete the keys of the selection on the current frame (Alt+I in the viewport)",
+            self.delete_key, "import qt_shell.keying; qt_shell.keying.delete()")
         row.addStretch(1)
         row.addWidget(QtWidgets.QLabel("Frame"))
         self.cur = self._spin(-1048574, 1048574)
@@ -167,7 +166,8 @@ class Timeline(QtWidgets.QWidget):
         self.auto_key.setChecked(sc.tool_settings.use_keyframe_insert_auto)
         self.auto_key.blockSignals(False)
         ob = bpy.context.view_layer.objects.active
-        self.bar.keys = bridge.object_keyframes(ob) if ob else []
+        from . import keying
+        self.bar.keys = keying.key_frames(ob) if ob else []
         self.bar.update()
 
     @staticmethod
@@ -288,24 +288,15 @@ class Timeline(QtWidgets.QWidget):
         return ("location", rot, "scale")
 
     def insert_key(self):
-        sel = bpy.context.selected_objects
-        for ob in sel:
-            for path in self._paths(ob):
-                try:
-                    ob.keyframe_insert(path)
-                except Exception as ex:
-                    bridge.log(str(ex), "ERROR")
-        bridge.undo_push("Insert Keyframe")
+        from . import keying
+        if keying.insert():                  # selected bones in Pose mode, selected objects otherwise
+            bridge.undo_push("Insert Keyframe")
         self.sync()
 
     def delete_key(self):
-        for ob in bpy.context.selected_objects:
-            for path in self._paths(ob):
-                try:
-                    ob.keyframe_delete(path)
-                except Exception:
-                    pass
-        bridge.undo_push("Delete Keyframe")
+        from . import keying
+        if keying.delete():
+            bridge.undo_push("Delete Keyframe")
         self.sync()
 
     def stop(self):
