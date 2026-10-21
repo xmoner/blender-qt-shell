@@ -791,8 +791,13 @@ class Viewport(QtWidgets.QWidget):
         ctx = bpy.context
         best, best_d = None, 14.0
         mats = self.matrices(self.width(), self.height())
+        # objects that can be picked: not hide_select, and not in a collection with selection off
+        try:
+            selectable = {o.name for o in ctx.selectable_objects}
+        except Exception:
+            selectable = {o.name for o in ctx.visible_objects if not o.hide_select}
         for ob in ctx.visible_objects:
-            if ob.type in ("MESH", "CURVE", "ARMATURE") or ob.hide_select:
+            if ob.type in ("MESH", "CURVE", "ARMATURE") or ob.name not in selectable:
                 continue
             sp = self.project(ob.matrix_world.translation, mats)
             if sp is None:
@@ -807,9 +812,17 @@ class Viewport(QtWidgets.QWidget):
         origin, direction = self.ray(x, y)
         surf = None
         try:
-            hit, loc, _n, _i, ob, _m = ctx.scene.ray_cast(ctx.evaluated_depsgraph_get(), origin, direction)
-            if hit and ob is not None and not ob.original.hide_select:
-                surf = ((loc - origin).length, ob.original)
+            # unselectable surfaces don't block the pick (as in Blender): cast again behind them
+            dg = ctx.evaluated_depsgraph_get()
+            start = origin.copy()
+            for _k in range(32):
+                hit, loc, _n, _i, ob, _m = ctx.scene.ray_cast(dg, start, direction)
+                if not hit or ob is None:
+                    break
+                if ob.original.name in selectable:
+                    surf = ((loc - origin).length, ob.original)
+                    break
+                start = loc + direction * 1e-4
         except Exception:
             pass
         if wire is not None and (surf is None or wire[1] <= surf[0] + 1e-3):
@@ -817,7 +830,7 @@ class Viewport(QtWidgets.QWidget):
         if surf is not None:
             return surf[1]
         for ob in ctx.visible_objects:           # origins of curves / armatures as a last resort
-            if ob.type in ("CURVE", "ARMATURE") and not ob.hide_select:
+            if ob.type in ("CURVE", "ARMATURE") and ob.name in selectable:
                 sp = self.project(ob.matrix_world.translation, mats)
                 if sp is not None and math.hypot(sp.x() - x, sp.y() - y) < best_d:
                     return ob
@@ -943,7 +956,7 @@ class Viewport(QtWidgets.QWidget):
         if mode == "SET":
             for o in ctx.selected_objects:
                 o.select_set(False)
-        for ob in ctx.visible_objects:
+        for ob in ctx.selectable_objects:        # skips hide_select objects and collections
             sp = self.project(ob.matrix_world.translation, mats)
             if sp is not None and rect.contains(sp):
                 ob.select_set(mode != "SUB")

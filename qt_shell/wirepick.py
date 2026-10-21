@@ -206,8 +206,12 @@ def pick_object(vp, x, y, mats=None):
     mats = mats or vp.matrices(vp.width(), vp.height())
     dg = None
     best, best_key = None, None
+    try:
+        selectable = {o.name for o in ctx.selectable_objects}
+    except Exception:
+        selectable = {o.name for o in ctx.visible_objects if not o.hide_select}
     for ob in ctx.visible_objects:
-        if ob.type not in _WIRE_TYPES or ob.hide_select:
+        if ob.type not in _WIRE_TYPES or ob.name not in selectable:
             continue
         h = None
         try:

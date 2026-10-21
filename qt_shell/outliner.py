@@ -81,6 +81,7 @@ class Outliner(QtWidgets.QWidget):
         self._all = []            # (key, item) for every row, duplicates included
         self._expanded = set()
         self._updating = False
+        self._last_active = None        # active row key last revealed (sync_selection)
         hub.data_changed.connect(self.refresh)
         hub.selection_changed.connect(self.sync_selection)
         hub.file_loaded.connect(lambda: self.refresh(force=True))
@@ -317,17 +318,27 @@ class Outliner(QtWidgets.QWidget):
                 for o in ctx.view_layer.objects:
                     if o.type == "ARMATURE" and o.mode == "POSE" and o.pose is not None:
                         sel_bones.update((o.name, pb.name) for pb in o.pose.bones if pb.select)
+            act_key = None
+            if pose and active is not None and active.type == "ARMATURE" and active.data.bones.active:
+                act_key = ("BONE", active.name, active.data.bones.active.name)
+            elif active is not None:
+                act_key = ("OBJECT", active.name)
+            if act_key != self._last_active:
+                # a new active object / bone (picked in the viewport…): open the rows down to it,
+                # like Blender's Show Active – only once per change, so it can be collapsed again
+                self._last_active = act_key
+                if act_key is not None:
+                    self._reveal(act_key)
             self.tree.blockSignals(True)
             for key, it in self._all:
                 if not _alive(it):
                     continue
                 if key[0] == "OBJECT":
-                    it.setSelected(key[1] in sel and not pose)
+                    # in Pose mode the armature stays selected too (as in Blender)
+                    it.setSelected(key[1] in sel)
                 elif key[0] == "BONE":
                     it.setSelected((key[1], key[2]) in sel_bones)
-            cur = None
-            if pose and active is not None and active.type == "ARMATURE" and active.data.bones.active:
-                cur = self._items.get(("BONE", active.name, active.data.bones.active.name))
+            cur = self._items.get(act_key) if act_key is not None else None
             if cur is None and active is not None:
                 cur = self._items.get(("OBJECT", active.name))
             if cur is not None and _alive(cur) and _shown(cur):
@@ -338,6 +349,25 @@ class Outliner(QtWidgets.QWidget):
             self.tree.blockSignals(False)
         finally:
             self._updating = False
+
+    def _reveal(self, key):
+        """Expand the parents of the row for `key` (filling lazy object contents for bones)
+        and scroll to it. Signals must not be blocked: expanding fills lazy rows."""
+        if key[0] == "BONE":
+            obit = self._items.get(("OBJECT", key[1]))
+            if obit is None or not _alive(obit):
+                return
+            if self._items.get(key) is None or not _alive(self._items.get(key)):
+                obit.setExpanded(True)              # fills the armature's data + bones (itemExpanded)
+        it = self._items.get(key)
+        if it is None or not _alive(it):
+            return
+        p = it.parent()
+        while p is not None:
+            if not p.isExpanded():
+                p.setExpanded(True)
+            p = p.parent()
+        self.tree.scrollToItem(it, QtWidgets.QAbstractItemView.EnsureVisible)
 
     def _on_tree_selection(self):
         if self._updating:
