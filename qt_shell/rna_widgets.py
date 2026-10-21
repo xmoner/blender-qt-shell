@@ -103,10 +103,34 @@ def _safe_set(data, prop_id, value, index=-1):
             arr[index] = value
         else:
             setattr(data, prop_id, value)
-        return True
     except Exception as ex:
         log(f"{prop_id}: {ex}", "ERROR")
         return False
+    _autokey(data, prop_id, index)
+    return True
+
+
+def _autokey(data, prop_id, index=-1):
+    """Like Blender's UI: with Auto Keying on, changing an already animated property keys it."""
+    try:
+        if not bpy.context.scene.tool_settings.use_keyframe_insert_auto:
+            return
+        idb = data.id_data
+        ad = getattr(idb, "animation_data", None)
+        if ad is None or ad.action is None:
+            return
+        path = data.path_from_id(prop_id)
+        from .graph_editor import fcurves_of
+        keyed = any(fc.data_path == path and (index < 0 or fc.array_index == index) for fc in fcurves_of(idb))
+        if not keyed:
+            return
+        group = data.name if isinstance(data, bpy.types.PoseBone) else None
+        kw = {"index": index}
+        if group:
+            kw["group"] = group
+        data.keyframe_insert(prop_id, **kw)
+    except Exception as ex:
+        log(f"Auto key {prop_id}: {ex}", "WARNING")
 
 
 # ---------------------------------------------------------------- draggable spinbox

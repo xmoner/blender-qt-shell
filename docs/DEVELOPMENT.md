@@ -6,7 +6,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.26.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.26.1 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -202,6 +202,7 @@ add-on folder there is connected:
 | 0.24.0 | not released yet | Object mode: clicking a rig control (bone custom shape) enters Pose mode and selects that bone, like selecting a control in Maya (Qt Preferences → Interface → Animation, QSettings `animation/click_control_enters_pose`, default on) – before, the click selected the armature object and I keyed the object, so nothing moved in playback. I reports what was keyed (`Keyed 1 bone at frame 20: God`). Status bar shows the running Qt Shell version (tells whether Blender was restarted after an update). Lesson: after *Install from Disk* over a running Qt Shell, Blender keeps the old modules – restart Blender |
 | 0.25.0 | not released yet | Cached playback like Maya (playcache.py): every rendered viewport frame is stored with the view's signature (size, matrices, shading, overlays); playback shows stored frames without frame_set (hub.display_frame, the scene frame is set to the last shown frame on stop); Timeline: green line of cached frames, Cache toggle + menu (Cache All Frames, Flush Cache, Memory Limit 256 MB–8 GB, default 1 GB, QSettings playback/cache, playback/cache_mb). Invalidation: bridge.Flags.edit_version (+1 in depsgraph_update_post – not called on frame changes –, undo, load) or a view change. ~5–6 MB per frame at 1400×630 |
 | 0.26.0 | not released yet | Background caching (Timeline → Auto, also in the Cache menu; QSettings playback/cache_auto, default off): a 40 ms QTimer waits until the scene and views are unchanged for 0.6 s (edit_version + view signatures), no mouse button / popup / modal / G-R-S, not RENDERED shading; then renders missing frames of the range for ≈35 ms per step (frame_set → render_frame of each view → store), restores the scene frame, the views' images and Flags.depsgraph (frame hops don't refresh the UI). Rig 1–40: full cache in ~3–4 s, refills ~3 s after an edit |
+| 0.26.1 | not released yet | Fix: with background caching on, moving animated objects / controls didn't stick – the cache's frame hops re-evaluate F-curves and threw away unkeyed changes. Background caching now waits while any animated property differs from its F-curve at the current frame (playcache.pending_edits; drivers / muted curves ignored). Auto Key in Qt property fields (rna_widgets._autokey: like Blender's UI, only properties that are already animated). Object-mode G/R/S auto-key location + rotation + scale (Blender's default key channels). Lesson: never change the scene frame behind the user's back while unkeyed animated values exist |
 
 ---
 

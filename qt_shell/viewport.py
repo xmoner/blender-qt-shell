@@ -1045,14 +1045,16 @@ class Viewport(QtWidgets.QWidget):
         else:
             ts = bpy.context.scene.tool_settings
             if ts.use_keyframe_insert_auto:
-                path = {"G": "location", "R": "rotation_euler", "S": "scale"}[m["kind"]]
+                # like Blender's default key channels: location, rotation and scale (rotating / scaling
+                # several objects about a pivot also moves them)
                 for ob, _init in m["objs"]:
-                    try:
-                        if path == "rotation_euler" and ob.rotation_mode == "QUATERNION":
-                            path = "rotation_quaternion"
-                        ob.keyframe_insert(path)
-                    except Exception:
-                        pass
+                    rot = {"QUATERNION": "rotation_quaternion", "AXIS_ANGLE": "rotation_axis_angle"}.get(
+                        ob.rotation_mode, "rotation_euler")
+                    for path in ("location", rot, "scale"):
+                        try:
+                            ob.keyframe_insert(path)
+                        except Exception:
+                            pass
             bridge.undo_push({"G": "Move", "R": "Rotate", "S": "Resize"}[m["kind"]])
         self.redraw_scene()
         self.update()

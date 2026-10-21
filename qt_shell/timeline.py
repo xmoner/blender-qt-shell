@@ -265,6 +265,12 @@ class Timeline(QtWidgets.QWidget):
             if now - self._ac_since < 0.6:
                 return
             sc = bpy.context.scene
+            pkey = (key, sc.frame_current)
+            if getattr(self, "_ac_pending_key", None) != pkey:
+                self._ac_pending_key = pkey
+                self._ac_pending = playcache.pending_edits()
+            if self._ac_pending:
+                return                         # unkeyed changes – a frame hop would reset them
             keep = sc.frame_current
             rng = list(range(sc.frame_start, sc.frame_end + 1))
             if not rng:

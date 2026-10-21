@@ -49,6 +49,34 @@ def set_auto_enabled(on):
     _settings().setValue(KEY_AUTO, bool(on))
 
 
+def pending_edits(frame=None):
+    """True when an animated property has a value that differs from its F-curve at the current frame –
+    an unkeyed change. A frame change (which background caching needs) would throw it away, exactly as
+    in Blender, so background caching waits until it is keyed (or the frame is changed by the user)."""
+    from .graph_editor import fcurves_of
+    sc = bpy.context.scene
+    f = sc.frame_current if frame is None else frame
+    for ob in sc.objects:
+        ad = ob.animation_data
+        if ad is None or ad.action is None:
+            continue
+        driven = {(d.data_path, d.array_index) for d in ad.drivers}
+        for fc in fcurves_of(ob):
+            if fc.mute or (fc.data_path, fc.array_index) in driven or not len(fc.keyframe_points):
+                continue
+            try:
+                v = ob.path_resolve(fc.data_path)
+                if hasattr(v, "__len__"):
+                    v = v[fc.array_index]
+                if isinstance(v, bool):
+                    v = float(v)
+                if abs(float(v) - fc.evaluate(f)) > 1e-4:
+                    return True
+            except Exception:
+                continue
+    return False
+
+
 def full():
     return _bytes >= limit_bytes() * 0.98
 
