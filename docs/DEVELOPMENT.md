@@ -6,7 +6,7 @@ Where the project is, how it is built, tested and released, and what is still op
 Keep this file up to date at the end of every work session.
 
 - **Repository:** https://github.com/xmoner/blender-qt-shell (branch `main`)
-- **Current version:** 0.26.1 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
+- **Current version:** 0.27.0 (`qt_shell/__init__.py` → `bl_info["version"]`), Python API 1.2
 - **Last updated:** 2026-10-20
 - **Owner:** xmoner – communicates in **Czech**; code, comments, README, docs and release notes are in **English**.
 
@@ -103,7 +103,7 @@ qt_shell/            the add-on (zip this folder for a release)
   editmesh.py        edit-mode selection / transform in the Qt viewport
   properties.py      Properties editor (tabs, atomic page build)
   sidebar.py         N panel (VIEW_3D UI panels, Item ▸ Transform in Qt)
-  outliner.py, wirepick.py (line picking: bones, rig controls, curves), posetransform.py (pose G/R/S, clear, select), keying.py (insert / delete keys of the selection, curve filter), playcache.py (cached playback), timeline.py, console.py, node_editor.py, uv_editor.py
+  outliner.py, wirepick.py (line picking: bones, rig controls, curves), posetransform.py (pose G/R/S, clear, select), keying.py (insert / delete keys of the selection, curve filter), playcache.py (cached playback, image mode + settings), geocache.py (geometry cache + own GPU drawing), timeline.py, console.py, node_editor.py, uv_editor.py
   text_editor.py     Text editor dock (Run Script, Run Selection, Unload, auto-complete)
   completion.py      auto-completion logic (no Qt)
   scripts.py         script manager core (no Qt)
@@ -203,6 +203,7 @@ add-on folder there is connected:
 | 0.25.0 | not released yet | Cached playback like Maya (playcache.py): every rendered viewport frame is stored with the view's signature (size, matrices, shading, overlays); playback shows stored frames without frame_set (hub.display_frame, the scene frame is set to the last shown frame on stop); Timeline: green line of cached frames, Cache toggle + menu (Cache All Frames, Flush Cache, Memory Limit 256 MB–8 GB, default 1 GB, QSettings playback/cache, playback/cache_mb). Invalidation: bridge.Flags.edit_version (+1 in depsgraph_update_post – not called on frame changes –, undo, load) or a view change. ~5–6 MB per frame at 1400×630 |
 | 0.26.0 | not released yet | Background caching (Timeline → Auto, also in the Cache menu; QSettings playback/cache_auto, default off): a 40 ms QTimer waits until the scene and views are unchanged for 0.6 s (edit_version + view signatures), no mouse button / popup / modal / G-R-S, not RENDERED shading; then renders missing frames of the range for ≈35 ms per step (frame_set → render_frame of each view → store), restores the scene frame, the views' images and Flags.depsgraph (frame hops don't refresh the UI). Rig 1–40: full cache in ~3–4 s, refills ~3 s after an edit |
 | 0.26.1 | not released yet | Fix: with background caching on, moving animated objects / controls didn't stick – the cache's frame hops re-evaluate F-curves and threw away unkeyed changes. Background caching now waits while any animated property differs from its F-curve at the current frame (playcache.pending_edits; drivers / muted curves ignored). Auto Key in Qt property fields (rna_widgets._autokey: like Blender's UI, only properties that are already animated). Object-mode G/R/S auto-key location + rotation + scale (Blender's default key channels). Lesson: never change the scene frame behind the user's back while unkeyed animated values exist |
+| 0.27.0 | not released yet | Geometry playback cache (geocache.py, default cache mode; Images mode kept): per frame the evaluated meshes (world matrix; corner positions + normals only for deformed objects, own topology when a modifier changes it), and rig controls as world-space line segments with bone colours; drawn by Qt Shell into the viewport offscreen with its own GPU shader (create_from_info: studio-like 2-light solid shading, Material / Object / Single / Random / Texture colour modes – Texture samples the image feeding Base Color through any nodes, else the active / first colour Image Texture node, active UV map) + POLYLINE_SMOOTH_COLOR for controls (In Front respected) + Qt floor grid → the camera can move during cached playback. Background caching only evaluates (frame_set + capture, no render): rig 1–40 ≈ 2.5 MB/frame, filled in ~3 s. Cache validity now also includes an animation signature (crc of all keys, throttled 4×/s) – edits evaluated by an immediate frame_set (Graph editor) never reach depsgraph_update_post. Lessons: never replace a shared base mesh when topology changes between frames; Blender's Texture mode image ≠ first TEX_IMAGE node |
 
 ---
 

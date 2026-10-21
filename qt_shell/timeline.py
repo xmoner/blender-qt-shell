@@ -4,7 +4,7 @@ import time
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, playcache, theme
+from . import bridge, geocache, playcache, theme
 from . import icons
 from . import pytips
 from .rna_widgets import DragSpin
@@ -217,9 +217,41 @@ class Timeline(QtWidgets.QWidget):
 
     def cached_frames(self):
         try:
+            if not playcache.enabled():
+                return set()
+            if playcache.geometry_mode():
+                return geocache.cached_frames()
             return playcache.cached_frames(self._views())
         except Exception:
             return set()
+
+    def _cache_ready(self, views, f):
+        if not playcache.enabled() or not views:
+            return False
+        if playcache.geometry_mode():
+            return geocache.has(f) and all(v.geo_cache_usable() for v in views)
+        return playcache.ready(views, f)
+
+    def _cache_has(self, views, f):
+        """Is frame f stored (independent of whether the views can show it right now)?"""
+        if playcache.geometry_mode():
+            return geocache.has(f)
+        return playcache.ready(views, f)
+
+    def _cache_show(self, views, f):
+        if playcache.geometry_mode():
+            return all([v.show_geo(f) for v in views])
+        return all([v.show_cached(f) for v in views])
+
+    def _cache_store(self, views, f):
+        """Stores the scene's current frame f (after frame_set). Images need a render, geometry doesn't."""
+        if not playcache.enabled():
+            return
+        if playcache.geometry_mode():
+            geocache.capture(f)
+        else:
+            for v in views:
+                v.render_frame()
 
     def shown_frame(self):
         f = getattr(self.hub, "display_frame", None)
@@ -250,13 +282,16 @@ class Timeline(QtWidgets.QWidget):
             views = self._views()
             if not views:
                 return
+            geo = playcache.geometry_mode()
             for v in views:
                 if getattr(v, "_modal", None) is not None or v._dirty or v._extra_frames > 0:
                     return                    # the user is transforming / the view isn't drawn yet
                 space, _r = v.space()
-                if space is not None and space.shading.type == "RENDERED":
+                if not geo and space is not None and space.shading.type == "RENDERED":
                     return
-            key = (bridge.Flags.edit_version, tuple(playcache.view_signature(v) for v in views))
+            # geometry doesn't depend on the camera – only scene edits restart it
+            key = (playcache.scene_version(),) if geo else (
+                playcache.scene_version(), tuple(playcache.view_signature(v) for v in views))
             now = time.perf_counter()
             if key != self._ac_key:
                 self._ac_key = key           # something changed – wait until things settle
@@ -276,7 +311,7 @@ class Timeline(QtWidgets.QWidget):
             if not rng:
                 return
             i0 = rng.index(keep) if keep in rng else 0
-            missing = [f for f in rng[i0:] + rng[:i0] if not playcache.ready(views, f)]
+            missing = [f for f in rng[i0:] + rng[:i0] if not self._cache_has(views, f)]
             if not missing:
                 return
             saved = [(v._image, v._img_transparent) for v in views]
@@ -285,8 +320,7 @@ class Timeline(QtWidgets.QWidget):
             try:
                 for f in missing:
                     sc.frame_set(f)
-                    for v in views:
-                        v.render_frame()          # stores the frame in the cache
+                    self._cache_store(views, f)
                     if playcache.full() or time.perf_counter() - t0 > 0.035:
                         break
             finally:
@@ -307,6 +341,21 @@ class Timeline(QtWidgets.QWidget):
                            f"{playcache.limit_bytes() // (1024 * 1024)} MB")
         info.setEnabled(False)
         m.addSeparator()
+        grp = QtGui.QActionGroup(m)
+        for key, text, tip in (
+                ("GEOMETRY", "Cache Geometry (camera can move)",
+                 "Stores the animated geometry and rig controls; playback draws them from any camera in "
+                 "solid shading. Moving the camera keeps the cache."),
+                ("IMAGE", "Cache Images (exact look)",
+                 "Stores finished viewport pictures – exact look incl. materials, but any camera move "
+                 "drops the cache.")):
+            act = m.addAction(text)
+            act.setCheckable(True)
+            act.setChecked(playcache.mode() == key)
+            act.setToolTip(tip)
+            grp.addAction(act)
+            act.triggered.connect(lambda _=False, k=key: (playcache.set_mode(k), self.bar.update()))
+        m.addSeparator()
         auto = m.addAction("Background Caching (Auto)")
         auto.setCheckable(True)
         auto.setChecked(playcache.auto_enabled())
@@ -326,6 +375,7 @@ class Timeline(QtWidgets.QWidget):
 
     def flush_cache(self):
         playcache.flush()
+        geocache.flush()
         self.bar.update()
 
     def cache_all(self):
@@ -344,11 +394,14 @@ class Timeline(QtWidgets.QWidget):
         total = sc.frame_end - sc.frame_start + 1
         try:
             for i, f in enumerate(range(sc.frame_start, sc.frame_end + 1)):
-                if playcache.ready(views, f):
+                if self._cache_has(views, f):
                     continue
                 sc.frame_set(f)
-                for v in views:
-                    v.render_now()
+                if playcache.geometry_mode():
+                    geocache.capture(f)
+                else:
+                    for v in views:
+                        v.render_now()
                 self.cur.blockSignals(True)
                 self.cur.setValue(f)
                 self.cur.blockSignals(False)
@@ -499,10 +552,8 @@ class Timeline(QtWidgets.QWidget):
             self._next = self._t0 + (n + 1) / fps
         self._play_frame = f
         views = self._views()
-        if playcache.ready(views, f):
-            # cached playback: show the stored images, the scene stays where it is (no evaluation)
-            for v in views:
-                v.show_cached(f)
+        if self._cache_ready(views, f) and self._cache_show(views, f):
+            # cached playback: draw from the cache, the scene stays where it is (no evaluation)
             self.hub.display_frame = f
         else:
             self.hub.display_frame = None
@@ -511,7 +562,9 @@ class Timeline(QtWidgets.QWidget):
             if vp is None:
                 vp = getattr(self.hub, "viewport", None)
             if vp is not None:
-                vp.render_now()        # every visible view (and stores the frames in the cache)
+                vp.render_now()        # every visible view (image mode stores the frames here)
+            if playcache.enabled() and playcache.geometry_mode():
+                geocache.capture(f)
         self.cur.blockSignals(True)
         self.cur.setValue(f)
         self.cur.blockSignals(False)

@@ -19,9 +19,58 @@ from . import bridge
 KEY_ENABLED = "playback/cache"
 KEY_LIMIT = "playback/cache_mb"
 KEY_AUTO = "playback/cache_auto"
+KEY_MODE = "playback/cache_mode"          # "GEOMETRY" (camera-independent, default) or "IMAGE"
 
 _bytes = 0
 _full_warned = False
+_sig_cache = (0.0, None)
+
+
+def anim_signature():
+    """Hash of every animated object's keys (positions, handles, interpolation, mute). Edits that are
+    evaluated by a frame change right away (e.g. Graph editor) never reach depsgraph_update_post, so the
+    caches also compare this. Throttled to 4× per second."""
+    global _sig_cache
+    import time
+    import zlib
+    import numpy as np
+    now = time.perf_counter()
+    if _sig_cache[1] is not None and now - _sig_cache[0] < 0.25:
+        return _sig_cache[1]
+    from .graph_editor import fcurves_of
+    h = 0
+    try:
+        for ob in bpy.context.scene.objects:
+            ad = ob.animation_data
+            if ad is None or ad.action is None:
+                continue
+            h = zlib.crc32(ob.name.encode(), h)
+            for fc in fcurves_of(ob):
+                n = len(fc.keyframe_points)
+                a = np.empty(n * 6, np.float32)
+                if n:
+                    kp = fc.keyframe_points
+                    kp.foreach_get("co", a[:n * 2])
+                    kp.foreach_get("handle_left", a[n * 2:n * 4])
+                    kp.foreach_get("handle_right", a[n * 4:])
+                h = zlib.crc32(a.tobytes(), h)
+                h = zlib.crc32(f"{fc.data_path}{fc.array_index}{fc.mute}{len(fc.modifiers)}".encode(), h)
+                if n:
+                    ip = np.empty(n, np.int32)
+                    try:
+                        kp.foreach_get("interpolation", ip)
+                        h = zlib.crc32(ip.tobytes(), h)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    _sig_cache = (now, h)
+    return h
+
+
+def scene_version():
+    """Changes whenever the cached frames would look different: scene edits / undo / load and key edits."""
+    return (bridge.Flags.edit_version, anim_signature())
 
 
 def _settings():
@@ -77,8 +126,30 @@ def pending_edits(frame=None):
     return False
 
 
+def mode():
+    v = _settings().value(KEY_MODE, "GEOMETRY")
+    return v if v in ("GEOMETRY", "IMAGE") else "GEOMETRY"
+
+
+def set_mode(m):
+    _settings().setValue(KEY_MODE, m)
+    flush()
+    from . import geocache
+    geocache.flush()
+
+
+def geometry_mode():
+    return mode() == "GEOMETRY"
+
+
+def full_bytes(extra=0):
+    """Image + geometry cache together against the memory limit."""
+    return _bytes + extra >= limit_bytes() * 0.98
+
+
 def full():
-    return _bytes >= limit_bytes() * 0.98
+    from . import geocache
+    return full_bytes(geocache.used_bytes())
 
 
 def limit_bytes():
@@ -90,7 +161,12 @@ def limit_bytes():
 
 
 def used_mb():
-    return _bytes / (1024 * 1024)
+    try:
+        from . import geocache
+        g = geocache.used_bytes()
+    except Exception:
+        g = 0
+    return (_bytes + g) / (1024 * 1024)
 
 
 # ---------------------------------------------------------------- per view
@@ -136,7 +212,7 @@ def view_signature(vp):
 def _valid(vp, st, sig=None):
     """Drops the view's frames when the scene or the view changed. True when the cache may be used."""
     sig = view_signature(vp) if sig is None else sig
-    ver = bridge.Flags.edit_version
+    ver = scene_version()
     if sig is None:
         _drop(st)
         return False
@@ -149,7 +225,7 @@ def _valid(vp, st, sig=None):
 def store(vp, frame, img, transparent):
     """Called after a view rendered `frame`."""
     global _bytes, _full_warned
-    if not enabled() or img is None:
+    if not enabled() or img is None or geometry_mode():
         return
     st = _state(vp)
     if not _valid(vp, st):

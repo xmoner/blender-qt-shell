@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.26.1 on 2026-10-21; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.27.0 on 2026-10-21; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -73,7 +73,8 @@ Don't dig through old chat history.
 - `viewport.py` – offscreen 3D view, navigation, selection, interactive G/R/S (`start_modal` …).
 - `gizmo.py` – toolbar + transform gizmos (`pivot()` per mode).
 - `editmesh.py` (Edit Mesh), `posetransform.py` (Pose G/R/S, clear, select), `keying.py` (keys of the
-  selection: I / Alt+I, Timeline, Graph editor filter), `playcache.py` (cached playback), `wirepick.py`
+  selection: I / Alt+I, Timeline, Graph editor filter), `playcache.py` (cached playback, image mode), `geocache.py` (geometry cache drawn with our own
+  GPU shader – camera-independent), `wirepick.py`
   (picking bones / rig controls / curves by their lines).
 - `outliner.py`, `properties.py`, `rna_widgets.py` (RNA → Qt widgets, tooltips), `qt_ui.py`
   (Blender layouts/menus → Qt, `LazyMenu`), `fake_ui.py` (records Blender `draw()` calls).

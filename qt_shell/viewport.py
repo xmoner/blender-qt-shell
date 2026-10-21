@@ -277,22 +277,9 @@ class Viewport(QtWidgets.QWidget):
             ctx = bpy.context
             transparent = space.shading.type in ("SOLID", "WIREFRAME")
             self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent)
-            with self._off.bind():
-                fb = gpu.state.active_framebuffer_get()
-                buf = fb.read_color(0, 0, w, h, 4, 0, "UBYTE")
-            try:
-                arr = np.frombuffer(buf, dtype=np.uint8)
-            except TypeError:
-                arr = np.asarray(buf.to_list(), dtype=np.uint8)
-            fmt = QtGui.QImage.Format_RGBA8888_Premultiplied if transparent else QtGui.QImage.Format_RGBX8888
-            # Qt owns the image memory; numpy flips the rows (GPU rows are bottom-up) while copying
-            # straight into it – one copy per frame, and no Qt image pointing at freed numpy memory.
-            img = QtGui.QImage(w, h, fmt)
-            dst = np.frombuffer(img.bits(), dtype=np.uint8, count=h * img.bytesPerLine())
-            dst = dst.reshape(h, img.bytesPerLine())[:, :w * 4].reshape(h, w, 4)
-            dst[:] = arr.reshape(h, w, 4)[::-1]
-            img.setDevicePixelRatio(dpr)
+            img = self._read_image(w, h, dpr, transparent)
             self._image = img
+            self._geo_frame = False
             if getattr(self.hub, "playing", False):
                 f = ctx.scene.frame_current
                 if f != self._fps_last_frame:
@@ -304,6 +291,66 @@ class Viewport(QtWidgets.QWidget):
                 playcache.store(self, ctx.scene.frame_current, img, self._img_transparent)
         except Exception as ex:
             self._failed = f"Viewport render failed: {ex}"
+
+    def _offscreen_size(self):
+        scale = getattr(self.prefs, "viewport_scale", 1.0) if self.prefs else 1.0
+        dpr = self.devicePixelRatioF() * scale
+        w = max(2, min(4096, int(self.width() * dpr)))
+        h = max(2, min(4096, int(self.height() * dpr)))
+        if self._off is None or self._off.width != w or self._off.height != h:
+            if self._off is not None:
+                self._off.free()
+            self._off = gpu.types.GPUOffScreen(w, h)
+        return w, h, dpr
+
+    def _read_image(self, w, h, dpr, transparent):
+        """The offscreen's pixels as a QImage."""
+        with self._off.bind():
+            fb = gpu.state.active_framebuffer_get()
+            buf = fb.read_color(0, 0, w, h, 4, 0, "UBYTE")
+        try:
+            arr = np.frombuffer(buf, dtype=np.uint8)
+        except TypeError:
+            arr = np.asarray(buf.to_list(), dtype=np.uint8)
+        fmt = QtGui.QImage.Format_RGBA8888_Premultiplied if transparent else QtGui.QImage.Format_RGBX8888
+        # Qt owns the image memory; numpy flips the rows (GPU rows are bottom-up) while copying
+        # straight into it – one copy per frame, and no Qt image pointing at freed numpy memory.
+        img = QtGui.QImage(w, h, fmt)
+        dst = np.frombuffer(img.bits(), dtype=np.uint8, count=h * img.bytesPerLine())
+        dst = dst.reshape(h, img.bytesPerLine())[:, :w * 4].reshape(h, w, 4)
+        dst[:] = arr.reshape(h, w, 4)[::-1]
+        img.setDevicePixelRatio(dpr)
+        return img
+
+    def geo_cache_usable(self):
+        """Geometry-cache playback draws solid shading only."""
+        space, _r = self.space()
+        return space is not None and space.shading.type == "SOLID"
+
+    def show_geo(self, frame):
+        """Cached playback from the geometry cache: draws the stored geometry from the current camera."""
+        from . import geocache
+        if not self.isVisible() or not self.geo_cache_usable():
+            return False
+        space, _r = self.space()
+        try:
+            w, h, dpr = self._offscreen_size()
+            vm, pm = self.matrices(w, h)
+            if not geocache.draw(self._off, frame, vm, pm, space, dpr):
+                return False
+            self._image = self._read_image(w, h, dpr, True)
+            self._img_transparent = True
+            self._geo_frame = True              # Blender's floor grid isn't in the picture → Qt draws it
+        except Exception as ex:
+            bridge.log(f"Geometry cache draw: {ex}", "WARNING")
+            return False
+        self._dirty = False
+        self._extra_frames = 0
+        if frame != self._fps_last_frame:
+            self._fps_last_frame = frame
+            self._fps_samples.append((time.perf_counter(), frame))
+        self.repaint()
+        return True
 
     def _draw(self, scene, view_layer, space, region, vm, pm, transparent):
         attempts = []
@@ -333,7 +380,8 @@ class Viewport(QtWidgets.QWidget):
         grad.setColorAt(1, QtGui.QColor("#333333"))
         p.fillRect(r, QtGui.QBrush(grad))
         mats = self.matrices(self.width(), self.height())
-        if self.show_grid and self._image is not None and getattr(self, "_img_transparent", False):
+        if ((self.show_grid or getattr(self, "_geo_frame", False)) and self._image is not None
+                and getattr(self, "_img_transparent", False)):
             self._paint_grid(p, mats)
         if self._image is not None:
             p.drawImage(r, self._image)
@@ -571,6 +619,7 @@ class Viewport(QtWidgets.QWidget):
         if hit is None:
             return False
         self._image, self._img_transparent = hit
+        self._geo_frame = False
         self._dirty = False
         self._extra_frames = 0
         if frame != self._fps_last_frame:
