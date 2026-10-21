@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.29.1 on 2026-10-21; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.30.0 on 2026-10-21; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -64,6 +64,8 @@ Don't dig through old chat history.
   dock out of the way (`dock.setFloating(True); dock.setGeometry(…)`).
 - Screenshot coordinates ≠ Qt coordinates (Windows scaling 125 %, screenshot downscaled). For precise
   hit tests compute positions in Qt (e.g. project points) instead of guessing pixels.
+- After typing in the Console, keyboard focus stays there: to send a key to another widget use
+  `QTimer.singleShot(500, lambda: widget.setFocus())`, then `computer_key`.
 - Console input line is at about y = 739 (screenshot frame 1456×819) when the Console tab is open.
 - `computer_type` pastes via clipboard (no key handlers); use `computer_key` for shortcuts.
 - Access grants expire after ~30 min of inactivity – request again.

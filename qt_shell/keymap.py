@@ -28,6 +28,7 @@ def _a(aid, ctx, label, *keys):
 
 W, V, VM, VP, TL, GE, NE, UV, TE = ("Window", "3D View", "3D View · Edit Mesh", "3D View · Pose",
                                     "Timeline", "Graph Editor", "Node Editor", "UV Editor", "Text Editor")
+OL = "Outliner"
 # window (work everywhere in the Qt Shell window)
 _a("window.new", W, "New File", "Ctrl+N")
 _a("window.open", W, "Open…", "Ctrl+O")
@@ -149,6 +150,9 @@ MAYA_DEFAULTS = {
 }
 PROFILES = {"BLENDER": "Blender", "MAYA": "Maya"}
 
+# outliner
+_a("outliner.show_selected", OL, "Show Selected", "F", "Num+.")
+_a("outliner.show_all", OL, "Collapse to Collections", "Home")
 # graph editor
 _a("graph.frame_selected", GE, "Frame Selected Keys", "F")
 _a("graph.frame_all", GE, "Frame All Curves", "A", "Home")

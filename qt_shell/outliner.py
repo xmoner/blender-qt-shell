@@ -8,7 +8,7 @@ stay fast.
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, theme
+from . import bridge, keymap, theme
 
 KEY = QtCore.Qt.UserRole          # item key tuple: ("OBJECT", name), ("BONE", ob, bone), …
 ROOT = QtCore.Qt.UserRole + 1     # True for the scene collection row
@@ -75,6 +75,9 @@ class Outliner(QtWidgets.QWidget):
         self.tree.itemChanged.connect(self._on_item_changed)
         self.tree.itemClicked.connect(self._on_clicked)
         self.tree.itemExpanded.connect(self._on_expanded)
+        self.tree.installEventFilter(self)       # own keys (before the tree's type-to-search)
+        keymap.tip(self.filter, "Filter rows by name.\nShow Selected: {outliner.show_selected} · "
+                                "Collapse to Collections: {outliner.show_all}")
         lay.addWidget(self.tree)
         self._sig = None
         self._items = {}          # key → item (first occurrence)
@@ -518,10 +521,76 @@ class Outliner(QtWidgets.QWidget):
         bridge.undo_push("Rename")
         self.refresh(force=True)
 
+    # ------------------------------------------------------------ keys
+    def eventFilter(self, obj, ev):
+        if obj is self.tree:
+            t = ev.type()
+            if t in (QtCore.QEvent.ShortcutOverride, QtCore.QEvent.KeyPress) and \
+                    self.tree.state() != QtWidgets.QAbstractItemView.EditingState:
+                names = keymap.event_names(ev)
+                for aid, fn in (("outliner.show_selected", self.show_selected),
+                                ("outliner.show_all", self.collapse_to_collections)):
+                    if keymap.hit(aid, ev, names):
+                        if t == QtCore.QEvent.KeyPress:
+                            fn()
+                        ev.accept()
+                        return True
+        return super().eventFilter(obj, ev)
+
+    def _selected_keys(self):
+        """Row keys of the current selection: bones in Pose mode, objects otherwise; active first."""
+        ctx = bpy.context
+        active = ctx.view_layer.objects.active
+        keys = []
+        if ctx.mode == "POSE":
+            for o in ctx.view_layer.objects:
+                if o.type == "ARMATURE" and o.mode == "POSE" and o.pose is not None:
+                    keys += [("BONE", o.name, pb.name) for pb in o.pose.bones if pb.select]
+            if active is not None and active.type == "ARMATURE" and active.data.bones.active:
+                act = ("BONE", active.name, active.data.bones.active.name)
+                if act in keys:
+                    keys.remove(act)
+                keys.insert(0, act)
+        if not keys:
+            keys = [("OBJECT", o.name) for o in ctx.selected_objects]
+            if active is not None and ("OBJECT", active.name) in keys:
+                keys.remove(("OBJECT", active.name))
+                keys.insert(0, ("OBJECT", active.name))
+        return keys
+
+    def show_selected(self):
+        """Open the rows down to every selected object / bone and scroll to the active one (Blender: Show Active)."""
+        keys = self._selected_keys()
+        if not keys:
+            return
+        self._updating = True
+        try:
+            for key in reversed(keys):          # the active one last, so the scroll ends on it
+                self._reveal(key)
+        finally:
+            self._updating = False
+        self.sync_selection()
+        first = self._items.get(keys[0])
+        if first is not None and _alive(first):
+            self.tree.scrollToItem(first, QtWidgets.QAbstractItemView.PositionAtCenter)
+
+    def collapse_to_collections(self):
+        """Collapse everything except collections (Blender: Show One Level / Home)."""
+        for key, it in self._all:
+            if _alive(it) and key[0] != "COLLECTION" and it.isExpanded():
+                it.setExpanded(False)
+        self._expanded = {k for k in self._expanded if k[0] == "COLLECTION"}
+        self.tree.scrollToTop()
+
     # ------------------------------------------------------------ context menu
     def _context_menu(self, pos):
         it = self.tree.itemAt(pos)
         m = QtWidgets.QMenu(self)
+        # "\t" puts the current key in the menu's shortcut column (display only)
+        m.addAction("Show Selected\t" + keymap.text("outliner.show_selected"), self.show_selected)
+        m.addAction("Collapse to Collections\t" + keymap.text("outliner.show_all"),
+                    self.collapse_to_collections)
+        m.addSeparator()
         m.addAction("New Collection", self._new_collection)
         if it is not None:
             key = it.data(0, KEY) or ("",)
