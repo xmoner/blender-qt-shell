@@ -3,7 +3,7 @@
 `qt_shell.api` lets scripts and add-ons extend the Qt Shell window: add dockable panels and menu items,
 control the 3D views, draw over the viewport, react to events and show messages.
 
-- **API version:** `1.3` (`qt_shell.api.API_VERSION == (1, 3)`), Qt Shell 0.31.1
+- **API version:** `1.4` (`qt_shell.api.API_VERSION == (1, 4)`), Qt Shell 0.33.0
 - **Requires:** Blender 4.2+, PySide6 (installed from the add-on preferences)
 
 ---
@@ -685,6 +685,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 |---|---|---|
 | 1.2 | 0.9.0 – 0.9.1 | `set_viewport_layout()`, `viewport_layout()`, `viewports()`; overlays drawn in every view. 0.9.1: `status_history()`, status messages also in the Console. |
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
+| 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
 | 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
 | 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
 
@@ -693,6 +694,21 @@ Check the version in your code:
 ```python
 if qs.API_VERSION >= (1, 2):
     qs.set_viewport_layout("quad")
+```
+
+## Render View from a script
+
+`qt_shell.api.render_view()` (API 1.4) returns Qt Shell's render window (Blender's Image Editor with the Render Result):
+
+```python
+import qt_shell
+rv = qt_shell.api.render_view()
+rv.present()                         # show it (F11)
+rv.set_slot(1)                       # Slot 2 – the next render goes there (J / Alt+J cycle the slots)
+rv.set_channel("ALPHA")              # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
+rv.zoom(1); rv.fit()                 # 1:1, Frame All
+rv.save_as("C:/renders/frame.png")   # the format follows the extension (.png .jpg .exr .tif .webp .bmp)
+rv.copy_to_clipboard()
 ```
 
 ## Outliner from a script

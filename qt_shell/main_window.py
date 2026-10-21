@@ -24,6 +24,7 @@ from .qt_ui import LazyMenu, PopoverMenu
 from .timeline import Timeline
 from .graph_editor import GraphEditor
 from .viewport import ViewportArea
+from .render_view import RenderView
 
 MODE_MENUS = {
     "add": {"OBJECT": "VIEW3D_MT_add", "EDIT_MESH": "VIEW3D_MT_mesh_add",
@@ -69,68 +70,6 @@ class _HeaderScroll(QtWidgets.QScrollArea):
         step = d.y() if abs(d.y()) >= abs(d.x()) else d.x()
         sb.setValue(sb.value() - int(step / 2))
         ev.accept()
-
-
-# ---------------------------------------------------------------- render window
-class RenderWindow(QtWidgets.QDialog):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.setWindowTitle("Render")
-        self.resize(960, 600)
-        lay = QtWidgets.QVBoxLayout(self)
-        self.label = QtWidgets.QLabel("Nothing rendered yet.")
-        self.label.setAlignment(QtCore.Qt.AlignCenter)
-        self.label.setMinimumSize(1, 1)
-        self.label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Ignored)
-        lay.addWidget(self.label, 1)
-        row = QtWidgets.QHBoxLayout()
-        self.info = QtWidgets.QLabel("")
-        self.info.setProperty("dim", True)
-        row.addWidget(self.info, 1)
-        save = QtWidgets.QPushButton("Save Image…")
-        save.clicked.connect(self.save)
-        row.addWidget(save)
-        lay.addLayout(row)
-        self.pixmap = None
-
-    def load_result(self):
-        img = bpy.data.images.get("Render Result")
-        if img is None:
-            self.label.setText("Render Result does not exist.")
-            return False
-        path = os.path.join(tempfile.gettempdir(), "qtshell_render.png")
-        try:
-            img.save_render(filepath=path)
-        except Exception as ex:
-            self.label.setText(f"Cannot load the result: {ex}")
-            return False
-        self.pixmap = QtGui.QPixmap(path)
-        self._fit()
-        self.info.setText(f"{self.pixmap.width()} × {self.pixmap.height()} px")
-        return True
-
-    def _fit(self):
-        if self.pixmap is not None and not self.pixmap.isNull():
-            self.label.setPixmap(self.pixmap.scaled(self.label.size(), QtCore.Qt.KeepAspectRatio,
-                                                    QtCore.Qt.SmoothTransformation))
-
-    def resizeEvent(self, ev):
-        super().resizeEvent(ev)
-        self._fit()
-
-    def save(self):
-        if self.pixmap is None:
-            return
-        start = os.path.join(os.path.dirname(bpy.data.filepath) or os.path.expanduser("~"), "render.png")
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save Render", start,
-                                                        "Images (*.png *.jpg *.exr *.tif)")
-        if not path:
-            return
-        img = bpy.data.images.get("Render Result")
-        try:
-            img.save_render(filepath=path)
-        except Exception as ex:
-            QtWidgets.QMessageBox.warning(self, "Error", str(ex))
 
 
 # ---------------------------------------------------------------- last operation (redo)
@@ -613,7 +552,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.shelf = ShelfBar(hub)
         self._dock("shelf", "Shelf", self.shelf, QtCore.Qt.TopDockWidgetArea)
 
-        self.render_window = RenderWindow(self)
+        self.render_window = RenderView(self)      # Blender's render window (Render Result)
         self._build_menus()
         self._build_shortcuts()
         self.status_right = QtWidgets.QLabel(self.statusBar())
@@ -1306,13 +1245,18 @@ class MainWindow(QtWidgets.QMainWindow):
             if "RUNNING_MODAL" in res:
                 self._rendering = True
                 self._render_anim = animation
-                self.statusBar().showMessage("Renderuji…")
+                self.statusBar().showMessage("Rendering…")
+                if not animation:
+                    self.render_window.render_started()     # like Blender: the render window opens
+                    self.render_window.present()
                 return
         except Exception as ex:
             bridge.log(f"Asynchronous render failed ({ex}), rendering in blocking mode.", "WARNING")
         finally:
             view.render_display_type = old
         # fallback: blocking render
+        if not animation:
+            self.render_window.render_started()
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
             with bridge.blender_context():
@@ -1333,12 +1277,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Animation rendered to {bpy.context.scene.render.filepath}", 8000)
             return
         self.statusBar().showMessage("Render finished.", 4000)
-        self.show_render()
+        self.render_window.render_finished()
+        self.render_window.present()
 
     def show_render(self):
-        self.render_window.load_result()
-        self.render_window.show()
-        self.render_window.raise_()
+        """View Render (F11): opens the render window with the last result; F11 again closes it."""
+        rv = self.render_window
+        if rv.isVisible() and rv.isActiveWindow():
+            rv.close()
+            return
+        rv.load_result(keep_view=rv.isVisible())
+        rv.present()
 
     # ------------------------------------------------------------ misc
     def search(self):

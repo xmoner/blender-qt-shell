@@ -36,10 +36,10 @@ __all__ = [
     "view_matrix", "projection_matrix", "project", "viewport_size",
     "viewport_layout", "set_viewport_layout", "viewports", "status_history",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
-    "owner", "current_owner", "cleanup", "owned", "outliner", "graph_editor",
+    "owner", "current_owner", "cleanup", "owned", "outliner", "graph_editor", "render_view",
 ]
 
-API_VERSION = (1, 3)
+API_VERSION = (1, 4)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -211,6 +211,21 @@ def graph_editor():
     Tangents / infinity apply to the selected keys, or to all shown curves when no key is selected."""
     w = main_window()
     return getattr(w, "graph_editor", None) if w is not None else None
+
+
+def render_view():
+    """The Render View window of Qt Shell (Blender's render window), None when Qt Shell is not open.
+
+        import qt_shell
+        rv = qt_shell.api.render_view()
+        rv.present()                      # show it (F11)
+        rv.set_slot(1)                    # Slot 2 – the next render goes there (J / Alt+J cycle)
+        rv.set_channel("ALPHA")           # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
+        rv.zoom(1); rv.fit()              # 1:1, Frame All
+        rv.save_as("C:/renders/frame.png")   # the format follows the extension
+        rv.copy_to_clipboard()"""
+    w = main_window()
+    return getattr(w, "render_window", None) if w is not None else None
 
 
 def outliner():

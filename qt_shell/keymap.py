@@ -29,6 +29,7 @@ def _a(aid, ctx, label, *keys):
 W, V, VM, VP, TL, GE, NE, UV, TE = ("Window", "3D View", "3D View · Edit Mesh", "3D View · Pose",
                                     "Timeline", "Graph Editor", "Node Editor", "UV Editor", "Text Editor")
 OL = "Outliner"
+RV = "Render View"
 # window (work everywhere in the Qt Shell window)
 _a("window.new", W, "New File", "Ctrl+N")
 _a("window.open", W, "Open…", "Ctrl+O")
@@ -173,6 +174,18 @@ _a("outliner.exclude", OL, "Exclude from View Layer", "E")
 _a("outliner.include", OL, "Include in View Layer", "Alt+E")
 _a("outliner.parent", OL, "Parent to Active", "P")
 _a("outliner.unparent", OL, "Clear Parent", "Shift+P")
+# render view (Blender's render window / Image Editor with the Render Result)
+_a("render.fit", RV, "Frame All", "Home")
+_a("render.zoom_in", RV, "Zoom In", "Num++", "Ctrl+=")
+_a("render.zoom_out", RV, "Zoom Out", "Num+-", "Ctrl+-")
+_a("render.zoom_1_1", RV, "Zoom 1:1", "Num+1")
+_a("render.next_slot", RV, "Next Render Slot", "J")
+_a("render.prev_slot", RV, "Previous Render Slot", "Alt+J")
+_a("render.sidebar", RV, "Sidebar", "N")
+_a("render.save", RV, "Save", "Alt+S")
+_a("render.save_as", RV, "Save As", "Shift+Alt+S")
+_a("render.copy", RV, "Copy to Clipboard", "Ctrl+C")
+_a("render.close", RV, "Close Render View", "Esc")
 # graph editor
 _a("graph.frame_selected", GE, "Frame Selected Keys", "F")
 _a("graph.frame_all", GE, "Frame All Curves", "A", "Home")

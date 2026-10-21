@@ -83,6 +83,9 @@ _ICONS = {
                   '<path fill="{c}" d="M14.5 1.5 V6.4 L9.6 1.5 Z"/>',
     "tool_transform": f'<rect x="4.5" y="4.5" width="7" height="7" rx="1" {S}/><path {S} d="M8 0.8 V3 M8 13 V15.2 M0.8 8 H3 M13 8 H15.2"/>'
                       '<circle cx="8" cy="8" r="1.4" fill="{a}"/>',
+    # sidebar toggle: a frame with a panel on the right
+    "sidebar": '<rect x="1.5" y="2.5" width="13" height="11" rx="1.2" fill="none" stroke="{c}" stroke-width="1.2"/>'
+               '<rect x="10" y="3.2" width="4" height="9.6" fill="{c}" fill-opacity=".55"/>',
     # select variants (the arrow = the same pointer as in tool_select)
     "tool_tweak": '<path fill="{c}" d="M4 1.5 L12.2 8.8 L8.4 9.2 L10.9 13.9 L9.2 14.8 L6.8 10.1 L4 12.8 Z"/>',
     "tool_select_circle": '<circle cx="7" cy="7" r="5.2" fill="none" stroke="{c}" stroke-width="1.2" '
