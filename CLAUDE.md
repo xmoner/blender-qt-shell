@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.31.0 on 2026-10-21; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.31.1 on 2026-10-21; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -62,6 +62,8 @@ Don't dig through old chat history.
 - The **Claude app window covers the top-right of the screen** while it works – clicks there don't reach
   Blender, and `zoom` there can show a stale image. Drive things from the Console instead, or float a
   dock out of the way (`dock.setFloating(True); dock.setGeometry(…)`).
+  **Dock it back (`setFloating(False)`) before `devreload` or closing** – the reload saves the window layout to the
+  shared settings and the owner's Qt Shell then starts with that dock floating.
 - Screenshot coordinates ≠ Qt coordinates (Windows scaling 125 %, screenshot downscaled). For precise
   hit tests compute positions in Qt (e.g. project points) instead of guessing pixels.
 - After typing in the Console, keyboard focus stays there: to send a key to another widget use
@@ -71,6 +73,8 @@ Don't dig through old chat history.
   first, otherwise the press lands wherever the cursor was (e.g. the Console) and the drag goes nowhere.
 - `computer_type` pastes via clipboard (no key handlers); use `computer_key` for shortcuts.
 - Access grants expire after ~30 min of inactivity – request again.
+- `computer_open_application` always starts a **new** Blender – never use it to bring a test instance to the front
+  (a Windows notification can steal the foreground: grant "File Explorer" click access and click the Blender window).
 - Before quitting a Blender with `os._exit`, make sure it is **yours**: check its process uptime in the Console
   (`GetProcessTimes` via ctypes – set `kernel32.GetCurrentProcess.restype = wintypes.HANDLE`, otherwise the call
   fails and returns 0; a few seconds/minutes = the instance you just started).

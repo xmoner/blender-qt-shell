@@ -3,7 +3,7 @@
 `qt_shell.api` lets scripts and add-ons extend the Qt Shell window: add dockable panels and menu items,
 control the 3D views, draw over the viewport, react to events and show messages.
 
-- **API version:** `1.2` (`qt_shell.api.API_VERSION == (1, 2)`), Qt Shell 0.9.2
+- **API version:** `1.3` (`qt_shell.api.API_VERSION == (1, 3)`), Qt Shell 0.31.1
 - **Requires:** Blender 4.2+, PySide6 (installed from the add-on preferences)
 
 ---
@@ -684,6 +684,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 | API | Qt Shell | Changes |
 |---|---|---|
 | 1.2 | 0.9.0 – 0.9.1 | `set_viewport_layout()`, `viewport_layout()`, `viewports()`; overlays drawn in every view. 0.9.1: `status_history()`, status messages also in the Console. |
+| 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
 | 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
 
@@ -693,6 +694,31 @@ Check the version in your code:
 if qs.API_VERSION >= (1, 2):
     qs.set_viewport_layout("quad")
 ```
+
+## Outliner from a script
+
+`qt_shell.api.outliner()` (API 1.3) returns the Outliner of the Qt Shell window (None when Qt Shell is closed).
+These are also the commands the Outliner's Python tooltips show:
+
+```python
+import qt_shell, bpy
+ol = qt_shell.api.outliner()
+ol.set_mode("BLENDER_FILE")        # VIEW_LAYER, BLENDER_FILE, ORPHAN
+ol.search("*foot*")                # wildcards * and ?; "" clears the search
+ol.set_option("sort_alpha", False) # filter / display options, keys in qt_shell.outliner.DEFAULTS
+ol.show_column("select", True)     # exclude, select, hide, viewport, render, holdout, indirect
+ol.show_selected(); ol.show_hierarchy(); ol.one_level(True); ol.expand_toggle()
+ol.new_collection()
+ol.move_to(bpy.data.collections["Props"])   # selected objects / collections
+ol.parent_to_active(); ol.clear_parent()     # keep the world transform
+ol.hide_selected(); ol.unhide_all()
+ol.isolate(("OBJECT", "Cube"))     # like Ctrl+click on the eye
+ol.collection_visibility(bpy.data.collections["Props"], hide=True, inside=True)
+ol.duplicate_collection(bpy.data.collections["Props"]); ol.instance_collection(bpy.data.collections["Props"])
+ol.delete(hierarchy=False)
+```
+
+Blender's own `bpy.ops.outliner.*` operators need a Blender Outliner area and fail from a script in Qt Shell.
 
 ## Graph editor from a script
 

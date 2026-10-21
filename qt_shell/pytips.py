@@ -12,6 +12,9 @@ event filter adds that command to the tooltip:
 
 Shift + middle click on a button / field / menu item copies its command to the clipboard (always on).
 
+Widgets whose parts are not widgets (tree rows, cells) define qtshell_python_at(widget, pos) and return
+(tooltip, command) for the spot under the mouse – see outliner._Tree.
+
 Usage in code:  pytips.tag(widget_or_action, "bpy.ops.object.delete()")
                 pytips.tag_op(widget, "mesh.primitive_cube_add", {"size": 2})
                 pytips.tag_prop(widget, data, "location", index=-1)
@@ -66,7 +69,7 @@ def data_path(data):
     """Python path of an RNA struct, e.g. bpy.data.objects["Cube"].modifiers["Subdivision"]."""
     try:
         r = repr(data)
-        if r.startswith("bpy."):
+        if r.startswith("bpy.") and "..." not in r:   # Blender shortens some paths with "..." – not runnable
             return r.replace("'", '"')
     except Exception:
         pass
@@ -74,7 +77,7 @@ def data_path(data):
         idd = data.id_data
         base = repr(idd).replace("'", '"') if idd is not None else ""
         sub = data.path_from_id()
-        if base.startswith("bpy."):
+        if base.startswith("bpy.") and "..." not in base:
             return f"{base}.{sub}" if sub else base
     except Exception:
         pass
@@ -122,6 +125,25 @@ def _get(obj):
     return v if isinstance(v, str) and v else None
 
 
+def _hook_at(obj, pos):
+    """(tooltip, command) from a widget that provides commands per position – e.g. the Outliner tree,
+    whose rows and cells are not widgets. The widget (or one of its parents) defines
+    qtshell_python_at(widget, pos) → (tooltip, command) or None; pos is in `widget` coordinates."""
+    w, depth = obj, 0
+    while w is not None and depth < 4:
+        fn = getattr(w, "qtshell_python_at", None)
+        if callable(fn):
+            try:
+                r = fn(obj, pos)
+            except Exception:
+                return None
+            return r if r and r[1] else None
+        if w.isWindow():
+            return None
+        w, depth = w.parentWidget(), depth + 1
+    return None
+
+
 # ---------------------------------------------------------------- tooltip filter
 def _rich(text):
     try:
@@ -164,6 +186,10 @@ def handle(obj, ev):
             return True
         if not isinstance(obj, QtWidgets.QWidget):
             return False
+        hooked = _hook_at(obj, ev.pos())
+        if hooked is not None:
+            QtWidgets.QToolTip.showText(ev.globalPos(), _compose(hooked[0], hooked[1]), obj)
+            return True
         # the command may sit on the widget or on a parent (e.g. a field inside a vector row)
         w, py, depth = obj, None, 0
         while w is not None and depth < 4:
@@ -190,6 +216,9 @@ def _command_at(obj, pos):
         return _get(act) if act is not None else None
     if not isinstance(obj, QtWidgets.QWidget):
         return None
+    hooked = _hook_at(obj, pos)
+    if hooked is not None:
+        return hooked[1]
     w, depth = obj, 0
     while w is not None and depth < 4:
         py = _get(w)

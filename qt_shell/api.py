@@ -36,10 +36,10 @@ __all__ = [
     "view_matrix", "projection_matrix", "project", "viewport_size",
     "viewport_layout", "set_viewport_layout", "viewports", "status_history",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
-    "owner", "current_owner", "cleanup", "owned",
+    "owner", "current_owner", "cleanup", "owned", "outliner", "graph_editor",
 ]
 
-API_VERSION = (1, 2)
+API_VERSION = (1, 3)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -211,6 +211,24 @@ def graph_editor():
     Tangents / infinity apply to the selected keys, or to all shown curves when no key is selected."""
     w = main_window()
     return getattr(w, "graph_editor", None) if w is not None else None
+
+
+def outliner():
+    """The Outliner of the Qt Shell window (None when Qt Shell is not open).
+
+        import qt_shell
+        ol = qt_shell.api.outliner()
+        ol.set_mode("BLENDER_FILE")       # VIEW_LAYER, BLENDER_FILE, ORPHAN
+        ol.search("*foot*")               # wildcards * ?, "" clears
+        ol.set_option("sort_alpha", False)  # keys: qt_shell.outliner.DEFAULTS
+        ol.show_column("select", True)    # exclude, select, hide, viewport, render, holdout, indirect
+        ol.show_selected(); ol.show_hierarchy(); ol.one_level(True); ol.expand_toggle()
+        ol.new_collection(); ol.move_to(bpy.data.collections["Props"]); ol.parent_to_active(); ol.clear_parent()
+        ol.hide_selected(); ol.unhide_all(); ol.isolate(("OBJECT", "Cube")); ol.delete(hierarchy=False)
+
+    Commands that act on a selection use the Outliner's selected rows (or the selected objects)."""
+    w = main_window()
+    return getattr(w, "outliner", None) if w is not None else None
 
 
 def set_viewport_layout(mode):

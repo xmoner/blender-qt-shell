@@ -18,7 +18,7 @@ import fnmatch
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, icons, keymap, theme
+from . import bridge, icons, keymap, pytips, theme
 
 KEY = QtCore.Qt.UserRole          # item key tuple: ("OBJECT", name), ("BONE", ob, bone), …
 ROOT = QtCore.Qt.UserRole + 1     # True for the scene collection row
@@ -134,6 +134,16 @@ def _evpos(ev):
     return ev.position().toPoint() if hasattr(ev, "position") else ev.pos()
 
 
+def _api(call):
+    """Python command for Python tooltips: Qt Shell's Outliner from a script (Blender's bpy.ops.outliner.*
+    operators need a Blender Outliner area and fail from a script in Qt Shell)."""
+    return f"import qt_shell; qt_shell.api.outliner().{call}"
+
+
+def _path(data):
+    return pytips.data_path(data) if data is not None else ""
+
+
 def _section(menu, text):
     """Menu section title (QMenu.addSection draws only a line in the Fusion style)."""
     lab = QtWidgets.QLabel(text, menu)
@@ -147,7 +157,7 @@ def _section(menu, text):
     return wa
 
 
-def _check_item(menu, label, icon, checked, on_toggle, tip=None):
+def _check_item(menu, label, icon, checked, on_toggle, tip=None, py=None):
     """Menu row with an icon and a real checkbox – Qt hides the check mark of checkable actions that have
     an icon, so the state would not be visible. Ticking it keeps the menu open (like Maya's Show menu)."""
     w = QtWidgets.QWidget(menu)
@@ -162,6 +172,8 @@ def _check_item(menu, label, icon, checked, on_toggle, tip=None):
     if tip:
         cb.setToolTip(tip)
     cb.toggled.connect(on_toggle)
+    if py:
+        pytips.tag(cb, py)
     lay.addWidget(cb)
     wa = QtWidgets.QWidgetAction(menu)
     wa.setDefaultWidget(w)
@@ -244,6 +256,16 @@ class _Tree(QtWidgets.QTreeWidget):
             if it is None:
                 return None, "EMPTY"
         return it, where
+
+    def qtshell_python_at(self, w, pos):
+        """Python tooltip of the row / cell under the mouse (pytips hook)."""
+        if w is not self.viewport():
+            return None
+        it = self.itemAt(pos)
+        if it is None:
+            return None
+        col = self.columnAt(pos.x())
+        return it.toolTip(col), self.o.cell_python(it, col)
 
     def dragEnterEvent(self, ev):
         if ev.source() is self:
@@ -365,6 +387,7 @@ class Outliner(QtWidgets.QWidget):
             a.setData(mid)
             self._mode_group.addAction(a)
             a.triggered.connect(lambda _c=False, m=mid: self.set_mode(m))
+            pytips.tag(a, _api(f"set_mode({mid!r})"))
         self.mode_menu.setToolTipsVisible(True)
         self.mode_btn.setMenu(self.mode_menu)
         h.addWidget(self.mode_btn)
@@ -375,6 +398,7 @@ class Outliner(QtWidgets.QWidget):
         if not zi.isNull():
             self.filter.addAction(zi, QtWidgets.QLineEdit.LeadingPosition)
         self.filter.textChanged.connect(lambda _t: self._apply_filter())
+        pytips.tag(self.filter, _api('search("*name*")   # wildcards * ?, "" clears'))
         h.addWidget(self.filter, 1)
         self.filter_btn = QtWidgets.QToolButton(self)
         self.filter_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
@@ -384,11 +408,14 @@ class Outliner(QtWidgets.QWidget):
         self.filter_menu.aboutToShow.connect(self._fill_filter_menu)
         self.filter_btn.setMenu(self.filter_menu)
         self.filter_btn.setToolTip("Filter: restriction columns, sorting, search options, what to show")
+        pytips.tag(self.filter_btn, _api("set_option('sort_alpha', True)   # keys: Outliner.DEFAULTS") + "\n"
+                   + _api("show_column('select', True)   # exclude, select, hide, viewport, render, holdout, indirect"))
         h.addWidget(self.filter_btn)
         self.new_btn = QtWidgets.QToolButton(self)
         self.new_btn.setAutoRaise(True)
         self.new_btn.setIcon(_ic("collection_new"))
         self.new_btn.clicked.connect(self.new_collection)
+        pytips.tag(self.new_btn, _api("new_collection()"))
         h.addWidget(self.new_btn)
         self.purge_btn = QtWidgets.QToolButton(self)
         self.purge_btn.setAutoRaise(True)
@@ -397,6 +424,7 @@ class Outliner(QtWidgets.QWidget):
         self.purge_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.purge_btn.setToolTip("Delete all data-blocks without users (and the ones that become unused)")
         self.purge_btn.clicked.connect(self.purge_orphans)
+        pytips.tag(self.purge_btn, "bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)")
         h.addWidget(self.purge_btn)
         for b in (self.mode_btn, self.filter_btn, self.new_btn, self.purge_btn):
             b.setIconSize(QtCore.QSize(theme.px(16), theme.px(16)))
@@ -408,6 +436,7 @@ class Outliner(QtWidgets.QWidget):
         info = next((m for m in MODES if m[0] == mode), MODES[0])
         self.mode_btn.setIcon(_ic(info[2]))
         self.mode_btn.setToolTip(f"Display Mode: {info[1]} – {info[3]}")
+        pytips.tag(self.mode_btn, _api(f"set_mode({mode!r})   # VIEW_LAYER, BLENDER_FILE, ORPHAN"))
         for a in self._mode_group.actions():
             a.setChecked(a.data() == mode)
         changed = any(self.st[k] != DEFAULTS[k] for k in _FILTER_KEYS)
@@ -433,14 +462,16 @@ class Outliner(QtWidgets.QWidget):
                 self._set_opt(k, on, r)
                 if after is not None:
                     after()
-            return _check_item(menu, label, icon, self.st[key], toggled)
+            return _check_item(menu, label, icon, self.st[key], toggled,
+                               py=_api(f"set_option({key!r}, {not self.st[key]!r})"))
 
         if mode == "VIEW_LAYER":
             _section(m, "Restriction Toggles")
             cols = self._cols_setting()
             for cid, label, base, tip in COLUMNS:
                 _check_item(m, label, base + "_on", cid in cols,
-                            lambda on, c=cid: self._toggle_column(c, on), tip)
+                            lambda on, c=cid: self._toggle_column(c, on), tip,
+                            py=_api(f"show_column({cid!r}, {cid not in cols!r})"))
         _section(m, "Options")
         check(m, "Sort Alphabetically", "sort_alpha", "sort_alpha")
         check(m, "Sync Selection", "sync", "sync", rebuild=False)
@@ -460,6 +491,7 @@ class Outliner(QtWidgets.QWidget):
                 a.setChecked(self.st["state"] == sid)
                 g.addAction(a)
                 a.triggered.connect(lambda _c=False, s=sid: self._set_opt("state", s))
+                pytips.tag(a, _api(f"set_option('state', {sid!r})"))
             sm.addSeparator()
             check(sm, "Invert", "invert")
             m.addMenu(sm)
@@ -468,7 +500,7 @@ class Outliner(QtWidgets.QWidget):
             for key, label, icon, _types in TYPE_FILTERS:
                 check(m, label, key, icon)
         m.addSeparator()
-        m.addAction("Reset Filters", self.reset_filters)
+        pytips.tag(m.addAction("Reset Filters", self.reset_filters), _api("reset_filters()"))
 
     def _toggle_column(self, cid, on):
         cols = self._cols_setting()
@@ -1960,6 +1992,217 @@ class Outliner(QtWidgets.QWidget):
                         self._parent_keep(o, None)
             self.move_to(target, link, objs, colls)
 
+    # ------------------------------------------------------------ public API (qt_shell.api.outliner())
+    def set_option(self, key, value):
+        """Filter / display option, e.g. set_option("sort_alpha", False). Keys: Outliner.DEFAULTS."""
+        if key not in DEFAULTS:
+            raise KeyError(f"unknown Outliner option {key!r} – one of {', '.join(DEFAULTS)}")
+        self._set_opt(key, value)
+
+    def show_column(self, cid, on=True):
+        """Show / hide a restriction column: exclude, select, hide, viewport, render, holdout, indirect."""
+        if cid not in _COL_INFO:
+            raise KeyError(f"unknown column {cid!r} – one of {', '.join(_COL_INFO)}")
+        self._toggle_column(cid, bool(on))
+
+    def search(self, text=""):
+        """Filter the rows by name (wildcards * and ?); "" clears the search."""
+        self.filter.setText(text)
+
+    def isolate(self, key, cid="hide"):
+        """Like Ctrl+click in a restriction column, e.g. isolate(("OBJECT", "Cube"))."""
+        self._isolate(tuple(key), cid)
+
+    def duplicate_collection(self, c):
+        self._duplicate_collection(c)
+
+    def instance_collection(self, c):
+        self._instance_collection(c)
+
+    def collection_visibility(self, c, hide, inside=False):
+        """Hide / show a collection in this view layer (inside=True: also everything in it)."""
+        self._coll_hide(c, hide, inside)
+
+    # ------------------------------------------------------------ python tooltips
+    def _row_data(self, key):
+        """RNA struct shown by a row (for its Python path), or None."""
+        kind = key[0]
+        try:
+            if kind == "COLLECTION":
+                return bpy.data.collections.get(key[1]) or bpy.context.scene.collection
+            if kind == "IDTYPE":
+                return None
+            if kind == "ID":
+                return self._id(key)
+            ob = bpy.data.objects.get(key[1])
+            if ob is None:
+                return None
+            if kind == "OBJECT":
+                return ob
+            if kind == "DATA":
+                return ob.data
+            if kind == "ACTION":
+                ad = ob.animation_data
+                return ad.action if ad is not None else None
+            if kind == "MAT":
+                return ob.material_slots[key[2]].material
+            if kind == "MOD":
+                return ob.modifiers.get(key[2])
+            if kind == "CON":
+                return ob.constraints.get(key[2])
+            if kind == "VGROUP":
+                return ob.vertex_groups.get(key[2])
+            if kind == "BONE":
+                _ob, b, pb = self._pbone(key)
+                return pb if pb is not None else b
+        except (ReferenceError, IndexError, AttributeError, TypeError):
+            pass
+        return None
+
+    def _lc_path(self, name):
+        """Python path of a collection's LayerCollection in the current view layer."""
+        def find(l, path):
+            if l.collection.name == name:
+                return path
+            for ch in l.children:
+                r = find(ch, f'{path}.children["{ch.collection.name}"]')
+                if r:
+                    return r
+            return None
+        try:
+            return find(bpy.context.view_layer.layer_collection, "bpy.context.view_layer.layer_collection") or ""
+        except Exception:
+            return ""
+
+    def _row_path(self, key):
+        kind = key[0]
+        if kind == "IDTYPE":
+            return f"bpy.data.{key[1]}"
+        if kind in ("MODS", "CONS", "VGROUPS"):
+            ob = bpy.data.objects.get(key[1])
+            attr = {"MODS": "modifiers", "CONS": "constraints", "VGROUPS": "vertex_groups"}[kind]
+            return f"{_path(ob)}.{attr}" if ob is not None else ""
+        return _path(self._row_data(key))
+
+    def cell_python(self, it, col):
+        """Python path of a row (column 0) or the command a click in a restriction column runs."""
+        key = it.data(0, KEY)
+        if not key or key[0] == "LAZY":
+            return None
+        if col <= 0 or col - 1 >= len(self._cols):
+            return self._row_path(key) or None
+        cid = self._cols[col - 1]
+        if cid == "users":
+            return f"{self._row_path(key)}.users"
+        ok, on = self._get(key, cid)
+        if not ok:
+            return None
+        new = not on                              # what a click sets
+        kind = key[0]
+        if cid == "fake":
+            return f"{self._row_path(key)}.use_fake_user = {new}"
+        if kind == "COLLECTION":
+            c = bpy.data.collections.get(key[1])
+            lcp = self._lc_path(key[1])
+            cp = _path(c)
+            return {"exclude": f"{lcp}.exclude = {not new}", "select": f"{cp}.hide_select = {not new}",
+                    "hide": f"{lcp}.hide_viewport = {not new}", "viewport": f"{cp}.hide_viewport = {not new}",
+                    "render": f"{cp}.hide_render = {not new}", "holdout": f"{lcp}.holdout = {new}",
+                    "indirect": f"{lcp}.indirect_only = {new}"}.get(cid)
+        p = self._row_path(key)
+        if kind == "OBJECT":
+            return {"select": f"{p}.hide_select = {not new}", "hide": f"{p}.hide_set({not new})",
+                    "viewport": f"{p}.hide_viewport = {not new}", "render": f"{p}.hide_render = {not new}",
+                    "holdout": f"{p}.is_holdout = {new}"}.get(cid)
+        if kind == "BONE":
+            _ob, b, pb = self._pbone(key)
+            if cid == "select":
+                return f"{_path(b)}.hide_select = {not new}"
+            if cid == "hide":
+                return f"{_path(self._bone_hide_target(b, pb))}.hide = {not new}"
+        if kind == "MOD":
+            return f"{p}.show_{'viewport' if cid == 'viewport' else 'render'} = {new}"
+        if kind == "CON":
+            return f"{p}.enabled = {new}"
+        return None
+
+    def _tag_menu(self, menu, key):
+        """Python tooltips for every action of the context menu (also in submenus)."""
+        kind = key[0] if key else ""
+        p = self._row_path(key) if key else ""
+        is_coll = kind == "COLLECTION" and bpy.data.collections.get(key[1]) is not None
+        coll = _path(bpy.data.collections.get(key[1])) if is_coll else ""
+        lcp = self._lc_path(key[1]) if is_coll else ""
+        T = {
+            "Show Selected": _api("show_selected()"),
+            "Show Object Hierarchy": _api("show_hierarchy()"),
+            "Show One Level": _api("one_level(True)"),
+            "Hide One Level": _api("one_level(False)"),
+            "Expand / Collapse All": _api("expand_toggle()"),
+            "New Collection": _api("new_collection()"),
+            "Unhide All": _api("unhide_all()"),
+            "Delete Hierarchy": _api("delete(hierarchy=True)"),
+            "Purge Unused Data": "bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)",
+        }
+        if p:
+            T["Rename"] = f'{p}.name = "New Name"'
+        if kind == "ID" and p:
+            T["Delete"] = f"bpy.data.{key[1]}.remove({p})"
+            T["Fake User"] = f"{p}.use_fake_user = True"
+        elif kind == "OBJECT" and p:
+            T.update({
+                "Select": f"{p}.select_set(True)",
+                "Select Hierarchy": f"[o.select_set(True) for o in ({p}, *{p}.children_recursive)]",
+                "Deselect": f"{p}.select_set(False)",
+                "Duplicate": "bpy.ops.object.duplicate()",
+                "Delete": f"bpy.data.objects.remove({p})",
+                "Parent to Active": _api("parent_to_active()   # keeps the world transform"),
+                "Clear Parent": _api("clear_parent()   # keeps the world transform"),
+                "Move to Collection": _api('move_to(bpy.data.collections["Target"])'),
+                "Link to Collection": f'bpy.data.collections["Target"].objects.link({p})',
+                "Hide": f"{p}.hide_set(True)",
+                "Frame in Viewport": "import qt_shell; qt_shell.api.frame_selected()",
+            })
+        elif kind == "BONE" and p:
+            T["Hide"] = f"{p}.hide = True"
+        elif is_coll:
+            T.update({
+                "Delete": _api("delete()   # its objects move to the parent collection"),
+                "Duplicate Collection": _api(f"duplicate_collection({coll})"),
+                "Select Objects": f"[o.select_set(True) for o in {coll}.all_objects]",
+                "Deselect Objects": f"[o.select_set(False) for o in {coll}.all_objects]",
+                "Instance to Scene": _api(f"instance_collection({coll})"),
+                "Move to Collection": _api('move_to(bpy.data.collections["Target"])'),
+                "Isolate": _api(f"isolate({tuple(key)!r})"),
+                "Show": f"{lcp}.hide_viewport = False",
+                "Hide": f"{lcp}.hide_viewport = True",
+                "Show All Inside": _api(f"collection_visibility({coll}, hide=False, inside=True)"),
+                "Hide All Inside": _api(f"collection_visibility({coll}, hide=True, inside=True)"),
+                "Enable in Viewports": f"{coll}.hide_viewport = False",
+                "Disable in Viewports": f"{coll}.hide_viewport = True",
+                "Enable in Render": f"{coll}.hide_render = False",
+                "Disable in Render": f"{coll}.hide_render = True",
+                "Exclude": f"{lcp}.exclude = True",
+                "Include": f"{lcp}.exclude = False",
+                "Set Holdout": f"{lcp}.holdout = True",
+                "Clear Holdout": f"{lcp}.holdout = False",
+                "Set Indirect Only": f"{lcp}.indirect_only = True",
+                "Clear Indirect Only": f"{lcp}.indirect_only = False",
+            })
+            for tid, label, _color in COLOR_TAGS:
+                T[label] = f"{coll}.color_tag = {tid!r}"
+
+        def walk(m):
+            for a in m.actions():
+                if a.menu() is not None:
+                    walk(a.menu())
+                    continue
+                label = a.text().split("\t")[0].replace("&", "").rstrip("…").strip()
+                py = T.get(label)
+                if py:
+                    pytips.tag(a, py)
+        walk(menu)
+
     # ------------------------------------------------------------ context menu
     @staticmethod
     def _kl(label, aid):
@@ -1991,6 +2234,7 @@ class Outliner(QtWidgets.QWidget):
                 m.addAction(_ic("trash"), "Purge Unused Data…", self.purge_orphans)
             m.addSeparator()
             self._view_menu(m, it)
+            self._tag_menu(m, key)
             m.exec(self.tree.viewport().mapToGlobal(pos))
             return
         if kind == "OBJECT":
@@ -2028,6 +2272,7 @@ class Outliner(QtWidgets.QWidget):
             m.addAction(_ic("eye_on"), K("Unhide All", "outliner.unhide_all"), self.unhide_all)
         m.addSeparator()
         self._view_menu(m, it)
+        self._tag_menu(m, key)
         m.exec(self.tree.viewport().mapToGlobal(pos))
 
     def _collection_menu_items(self, m, key, c):
