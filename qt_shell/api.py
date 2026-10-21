@@ -221,6 +221,7 @@ def render_view():
         rv.present()                      # show it (F11)
         rv.set_slot(1)                    # Slot 2 – the next render goes there (J / Alt+J cycle)
         rv.set_channel("ALPHA")           # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
+        rv.passes(); rv.set_pass("Depth")  # the passes enabled in View Layer Properties → Passes
         rv.zoom(1); rv.fit()              # 1:1, Frame All
         rv.save_as("C:/renders/frame.png")   # the format follows the extension
         rv.copy_to_clipboard()"""

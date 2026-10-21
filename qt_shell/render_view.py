@@ -10,8 +10,8 @@ and Metadata.
 How the pixels get here (no image buffer of the Render Result is readable from Python):
 - Combined: Image.save_render() to a PNG – with the scene's view transform, i.e. what Blender shows;
 - View Layers / Passes: a multilayer OpenEXR written by save_render and read with OpenImageIO
-  (bundled with Blender). The list shows what that file contains – Blender 5.2 writes the Combined
-  pass of each view layer there.
+  (bundled with Blender). Blender 5.x writes it as a multi-part file – one part per pass – so every
+  part is read. The passes are the ones enabled in View Layer Properties → Passes.
 - Render slots: Image.render_slots.active_index (save_render reads the active slot).
 
 All keys live in keymap.py (area "Render View").
@@ -68,12 +68,28 @@ class _Layers:
         inp = oiio.ImageInput.open(path)
         if inp is None:
             raise RuntimeError(oiio.geterror())
+        # Blender 5.x writes multilayer OpenEXR as a multi-part file: every pass is its own part
+        # (subimage) – reading only the first one gives just the Combined pass
+        names, planes, size = [], [], None
         try:
-            spec = inp.spec()
-            self.names = list(spec.channelnames)
-            self.pixels = inp.read_image("float")
+            sub = 0
+            while inp.seek_subimage(sub, 0):
+                spec = inp.spec()
+                part = spec.getattribute("oiio:subimagename") or spec.getattribute("name") or ""
+                if size is None:
+                    size = (spec.height, spec.width)
+                px = inp.read_image("float")
+                if px is not None and (spec.height, spec.width) == size:
+                    px = np.asarray(px, dtype=np.float32).reshape(spec.height, spec.width, -1)
+                    for c, ch in enumerate(spec.channelnames):
+                        full = ch if ("." in ch or not part) else f"{part}.{ch}"
+                        names.append(full)
+                        planes.append(px[:, :, c])
+                sub += 1
         finally:
             inp.close()
+        self.names = names
+        self.pixels = np.dstack(planes) if planes else None
         layers = {}
         for i, n in enumerate(self.names):
             parts = n.split(".")
@@ -392,6 +408,7 @@ class RenderView(QtWidgets.QWidget):
         self.pass_combo = QtWidgets.QComboBox(bar)
         self.pass_combo.setMinimumContentsLength(9)
         self.pass_combo.activated.connect(lambda _i: self._pick_pass(self.pass_combo.currentData()))
+        pytips.tag(self.pass_combo, _api('set_pass("Depth")   # passes(): what the result has'))
         h.addWidget(self.pass_combo)
         h.addStretch(1)
         self.channel_combo = QtWidgets.QComboBox(bar)
@@ -426,8 +443,8 @@ class RenderView(QtWidgets.QWidget):
                 "Render slot – the next render goes into the active slot.\n"
                 "Next / previous slot: {render.next_slot} / {render.prev_slot}"))
             self.pass_combo.setToolTip(
-                "Render pass of the view layer. The passes come from a multilayer OpenEXR copy of the "
-                "result – Blender 5.2 puts the Combined pass of each view layer there.")
+                "Render pass of the view layer – the passes enabled in View Layer Properties → Passes.\n"
+                "Data passes (Depth, Mist) are shown normalised, Normal as colours.")
         except RuntimeError:
             pass
 
@@ -615,7 +632,30 @@ class RenderView(QtWidgets.QWidget):
 
     def _pick_pass(self, pas):
         self.pas = pas
+        i = self.pass_combo.findData(pas)
+        if i >= 0 and i != self.pass_combo.currentIndex():
+            self.pass_combo.blockSignals(True)
+            self.pass_combo.setCurrentIndex(i)
+            self.pass_combo.blockSignals(False)
         self._show()
+
+    def passes(self):
+        """{view layer: [passes]} of the shown result (the passes enabled in View Layer Properties)."""
+        if self._exr_ok:
+            return {k: list(v) for k, v in self._exr.layers.items()}
+        return {bpy.context.view_layer.name: ["Combined"]}
+
+    def set_layer(self, layer):
+        if self._exr_ok and layer not in self._exr.layers:
+            raise KeyError(f"no view layer {layer!r} – one of {', '.join(self._exr.layers)}")
+        self._pick_layer(layer)
+
+    def set_pass(self, pas):
+        """Show a render pass of the current view layer, e.g. set_pass("Depth")."""
+        avail = self.passes().get(self.layer, ["Combined"]) if self._exr_ok else ["Combined"]
+        if pas not in avail:
+            raise KeyError(f"no pass {pas!r} – one of {', '.join(avail)}")
+        self._pick_pass(pas)
 
     def set_channel(self, channel):
         if channel not in dict(CHANNELS):

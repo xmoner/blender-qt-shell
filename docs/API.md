@@ -706,6 +706,8 @@ rv = qt_shell.api.render_view()
 rv.present()                         # show it (F11)
 rv.set_slot(1)                       # Slot 2 – the next render goes there (J / Alt+J cycle the slots)
 rv.set_channel("ALPHA")              # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
+rv.passes()                          # {"ViewLayer": ["Combined", "Depth", "Normal", …]}
+rv.set_pass("Depth"); rv.set_layer("ViewLayer")
 rv.zoom(1); rv.fit()                 # 1:1, Frame All
 rv.save_as("C:/renders/frame.png")   # the format follows the extension (.png .jpg .exr .tif .webp .bmp)
 rv.copy_to_clipboard()
