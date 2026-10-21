@@ -163,6 +163,22 @@ class Timeline(QtWidgets.QWidget):
         cm.aboutToShow.connect(lambda: self._fill_cache_menu(cm))
         self.cache_btn.setMenu(cm)
         row.addWidget(self.cache_btn)
+        self.auto_cache_btn = QtWidgets.QToolButton(self)
+        self.auto_cache_btn.setText("Auto")
+        self.auto_cache_btn.setCheckable(True)
+        self.auto_cache_btn.setChecked(playcache.auto_enabled())
+        self.auto_cache_btn.setToolTip("Background caching (like Maya): while you don't work in the scene, the "
+                                       "frames of the scene range are cached automatically – no playback needed. "
+                                       "Your view and current frame don't change.")
+        pytips.tag(self.auto_cache_btn, 'import qt_shell.playcache as pc; pc.set_auto_enabled(True)')
+        self.auto_cache_btn.toggled.connect(self._set_auto_cache)
+        row.addWidget(self.auto_cache_btn)
+        self._ac_key = None
+        self._ac_since = 0.0
+        self._ac_timer = QtCore.QTimer(self)
+        self._ac_timer.setInterval(40)
+        self._ac_timer.timeout.connect(self._auto_cache_step)
+        self._ac_timer.start()
         row.addStretch(1)
         row.addWidget(QtWidgets.QLabel("Frame"))
         self.cur = self._spin(-1048574, 1048574)
@@ -213,6 +229,71 @@ class Timeline(QtWidgets.QWidget):
         playcache.set_enabled(on)
         self.bar.update()
 
+    def _set_auto_cache(self, on):
+        playcache.set_auto_enabled(on)
+        if on and not playcache.enabled():
+            self.cache_btn.setChecked(True)
+        self._ac_key = None
+
+    def _auto_cache_step(self):
+        """Background caching: renders a few missing frames (≈35 ms of work) when the user is idle,
+        then puts the scene back on its frame and the views back on their picture."""
+        try:
+            if not (playcache.auto_enabled() and playcache.enabled()) or playcache.full():
+                return
+            if self.is_playing() or bridge.is_rendering() or not self.isVisible():
+                return
+            app = QtWidgets.QApplication
+            if (app.mouseButtons() != QtCore.Qt.NoButton or app.activePopupWidget() is not None
+                    or app.activeModalWidget() is not None):
+                return
+            views = self._views()
+            if not views:
+                return
+            for v in views:
+                if getattr(v, "_modal", None) is not None or v._dirty or v._extra_frames > 0:
+                    return                    # the user is transforming / the view isn't drawn yet
+                space, _r = v.space()
+                if space is not None and space.shading.type == "RENDERED":
+                    return
+            key = (bridge.Flags.edit_version, tuple(playcache.view_signature(v) for v in views))
+            now = time.perf_counter()
+            if key != self._ac_key:
+                self._ac_key = key           # something changed – wait until things settle
+                self._ac_since = now
+                return
+            if now - self._ac_since < 0.6:
+                return
+            sc = bpy.context.scene
+            keep = sc.frame_current
+            rng = list(range(sc.frame_start, sc.frame_end + 1))
+            if not rng:
+                return
+            i0 = rng.index(keep) if keep in rng else 0
+            missing = [f for f in rng[i0:] + rng[:i0] if not playcache.ready(views, f)]
+            if not missing:
+                return
+            saved = [(v._image, v._img_transparent) for v in views]
+            dirty_flag = bridge.Flags.depsgraph
+            t0 = time.perf_counter()
+            try:
+                for f in missing:
+                    sc.frame_set(f)
+                    for v in views:
+                        v.render_frame()          # stores the frame in the cache
+                    if playcache.full() or time.perf_counter() - t0 > 0.035:
+                        break
+            finally:
+                sc.frame_set(keep)
+                for v, (img, tr) in zip(views, saved):
+                    v._image, v._img_transparent = img, tr
+                    v._dirty = False
+                bridge.Flags.depsgraph = dirty_flag   # frame hops are not edits – no UI refresh storm
+            self.bar.update()
+        except Exception as ex:
+            bridge.log(f"Background caching: {ex}", "WARNING")
+            self._ac_since = time.perf_counter() + 5.0
+
     def _fill_cache_menu(self, m):
         m.clear()
         n = len(self.cached_frames())
@@ -220,6 +301,10 @@ class Timeline(QtWidgets.QWidget):
                            f"{playcache.limit_bytes() // (1024 * 1024)} MB")
         info.setEnabled(False)
         m.addSeparator()
+        auto = m.addAction("Background Caching (Auto)")
+        auto.setCheckable(True)
+        auto.setChecked(playcache.auto_enabled())
+        auto.toggled.connect(self.auto_cache_btn.setChecked)
         a = m.addAction("Cache All Frames")
         a.setToolTip("Draws every frame of the scene range once, so the next playback is real time")
         a.triggered.connect(self.cache_all)

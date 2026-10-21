@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Qt Shell – Blender UI in PySide6",
     "author": "Lukas Bilek",
-    "version": (0, 25, 0),
+    "version": (0, 26, 0),
     "blender": (4, 2, 0),
     "location": "F3 → Open Qt Shell / Preferences → Add-ons → Qt Shell",
     "description": "Replaces the Blender UI with a Qt (PySide6) window: viewport, outliner, "

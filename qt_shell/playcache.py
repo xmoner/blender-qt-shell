@@ -18,6 +18,7 @@ from . import bridge
 
 KEY_ENABLED = "playback/cache"
 KEY_LIMIT = "playback/cache_mb"
+KEY_AUTO = "playback/cache_auto"
 
 _bytes = 0
 _full_warned = False
@@ -36,6 +37,20 @@ def set_enabled(on):
     _settings().setValue(KEY_ENABLED, bool(on))
     if not on:
         flush()
+
+
+def auto_enabled():
+    """Background caching: fill the cache while the user is idle (Timeline → Auto)."""
+    v = _settings().value(KEY_AUTO, False)
+    return v not in (False, "false", "0", 0)
+
+
+def set_auto_enabled(on):
+    _settings().setValue(KEY_AUTO, bool(on))
+
+
+def full():
+    return _bytes >= limit_bytes() * 0.98
 
 
 def limit_bytes():
