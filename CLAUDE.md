@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.21.0 on 2026-10-20).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.22.0 on 2026-10-21).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -84,6 +84,8 @@ Don't dig through old chat history.
   `bpy_extras.anim_utils.action_get_channelbag_for_slot`.
 - Qt: making a hidden tree row current expands all its parents (autoscroll) – check visibility first.
 - Qt SVG Tiny: no `dominant-baseline`, no `hsl()`, `<defs>` before use.
+- Some Blender menus are C-only (no Python class, e.g. `TOPBAR_MT_file_open_recent`) – fill them in Qt via `qt_ui.QT_MENUS`.
+- Granting computer access: resolve Blender by its **full path** (`c:\\program files\\blender foundation\\blender 5.2\\blender.exe`), the name "Blender" resolves to an old 4.3 install.
 
 ## Open ideas / next steps
 - Pose mode: rotate twice (R R) trackball, local axes on double axis key, IK-heavy rigs not tested.

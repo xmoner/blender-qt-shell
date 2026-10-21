@@ -1095,6 +1095,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.addAction(a)
         sc("Ctrl+N", lambda: run_op("wm.read_homefile", {"app_template": ""}))
         sc("Ctrl+O", lambda: run_op("wm.open_mainfile"))
+        sc("Ctrl+Shift+O", lambda: LazyMenu("TOPBAR_MT_file_open_recent", self).exec(QtGui.QCursor.pos()))
         sc("Ctrl+S", lambda: run_op("wm.save_mainfile"))
         sc("Ctrl+Shift+S", lambda: run_op("wm.save_as_mainfile"))
         sc("Ctrl+Z", lambda: run_op("ed.undo"))

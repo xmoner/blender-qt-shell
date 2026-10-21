@@ -259,6 +259,12 @@ def _on_depsgraph(*_args):
 def _on_load(*_args):
     Flags.file_loaded = True
     Flags.depsgraph = True
+    add_recent(bpy.data.filepath)
+
+
+@bpy.app.handlers.persistent
+def _on_save(*_args):
+    add_recent(bpy.data.filepath)
 
 
 @bpy.app.handlers.persistent
@@ -283,6 +289,7 @@ _HANDLERS = (
     ("depsgraph_update_post", _on_depsgraph),
     ("frame_change_post", _on_depsgraph),
     ("load_post", _on_load),
+    ("save_post", _on_save),
     ("undo_post", _on_undo),
     ("redo_post", _on_undo),
     # Render handlers (render_stats/complete/cancel) are called from the render thread;
@@ -327,12 +334,75 @@ def user_modules_dir():
 
 
 def recent_files():
+    """Blender's own recent-files list (CONFIG/recent-files.txt)."""
     try:
         path = os.path.join(bpy.utils.user_resource("CONFIG"), "recent-files.txt")
         with open(path, encoding="utf-8") as fh:
             return [ln.strip() for ln in fh if ln.strip()]
     except Exception:
         return []
+
+
+# Qt Shell keeps its own history too (CONFIG/qt_shell_recent.txt, newest first), so files opened or
+# saved from Qt are listed even when Blender doesn't add them to recent-files.txt.
+RECENT_MAX = 30
+
+
+def _recent_store():
+    return os.path.join(bpy.utils.user_resource("CONFIG", create=True), "qt_shell_recent.txt")
+
+
+def _read_lines(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return [ln.strip() for ln in fh if ln.strip()]
+    except Exception:
+        return []
+
+
+def _norm(p):
+    return os.path.normcase(os.path.normpath(p))
+
+
+def add_recent(path):
+    if not path:
+        return
+    try:
+        path = os.path.abspath(bpy.path.abspath(path))
+        lst = [p for p in _read_lines(_recent_store()) if _norm(p) != _norm(path)]
+        lst.insert(0, path)
+        with open(_recent_store(), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lst[:RECENT_MAX]) + "\n")
+    except Exception:
+        log(traceback.format_exc(), "ERROR")
+
+
+def recent_list(limit=20):
+    """Recently opened / saved .blend files, newest first: Qt Shell's history, then the rest of
+    Blender's list. Missing files are included (the menu shows them disabled)."""
+    out, seen = [], set()
+    for p in _read_lines(_recent_store()) + recent_files():
+        k = _norm(p)
+        if k not in seen:
+            seen.add(k)
+            out.append(p)
+    return out[:limit]
+
+
+def clear_recent():
+    try:
+        with open(_recent_store(), "w", encoding="utf-8") as fh:
+            fh.write("")
+    except Exception:
+        pass
+    try:
+        bpy.ops.wm.clear_recent_files("EXEC_DEFAULT")
+    except Exception:
+        try:
+            path = os.path.join(bpy.utils.user_resource("CONFIG"), "recent-files.txt")
+            open(path, "w", encoding="utf-8").close()
+        except Exception:
+            pass
 
 
 def object_keyframes(ob):

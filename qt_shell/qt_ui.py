@@ -674,9 +674,14 @@ def _fill(menu, node, top=False):
         fill_operator_enum_menu(sub, a["idname"], a["prop"], a.get("props"), f.get("ctx_ptrs"))
     elif k == "menu":
         cls = fake_ui.find_menu_class(a["menu"])
-        if cls is None or not fake_ui.safe_poll(cls, bpy.context):
-            return
-        text = a.get("text") or tr(getattr(cls, "bl_label", a["menu"]))
+        if a["menu"] in QT_MENUS:          # filled by Qt (Blender defines some of these in C only)
+            if cls is not None and not fake_ui.safe_poll(cls, bpy.context):
+                return
+            text = a.get("text") or tr(getattr(cls, "bl_label", None) or QT_MENU_LABELS.get(a["menu"], a["menu"]))
+        else:
+            if cls is None or not fake_ui.safe_poll(cls, bpy.context):
+                return
+            text = a.get("text") or tr(getattr(cls, "bl_label", a["menu"]))
         sub = LazyMenu(a["menu"], menu, title=text)
         if blicons.has(a.get("icon")):
             sub.setIcon(blicons.icon(a["icon"]))
@@ -746,6 +751,9 @@ class LazyMenu(QtWidgets.QMenu):
         for child in self.findChildren(QtWidgets.QMenu, options=QtCore.Qt.FindDirectChildrenOnly):
             child.deleteLater()
         mid = self.resolver() if self.resolver else self.menu_id
+        if mid in QT_MENUS:                 # menus Blender draws in C – filled by Qt
+            QT_MENUS[mid](self)
+            return
         node, _label = fake_ui.record_menu(mid)
         if node is None:
             act = self.addAction("—")
@@ -757,6 +765,44 @@ class LazyMenu(QtWidgets.QMenu):
             api.extend_menu(self)    # items added by add-ons through qt_shell.api
         except Exception:
             pass
+
+
+def fill_recent_menu(menu, limit=20):
+    """File → Open Recent (like Maya's Recent Files): numbered list of recently opened / saved files,
+    newest first; missing files are greyed out; Clear Recent Files List at the bottom."""
+    import os
+    from . import bridge
+    menu.setToolTipsVisible(True)
+    files = bridge.recent_list(limit)
+    if not files:
+        act = menu.addAction("No recent files")
+        act.setEnabled(False)
+    fm = menu.fontMetrics()
+    names = [os.path.basename(p) for p in files]
+    for i, path in enumerate(files):
+        name = names[i]
+        folder = os.path.dirname(path)
+        # same file name in several folders → show the folder too
+        label = name if names.count(name) == 1 else f"{name}  ({os.path.basename(folder)})"
+        label = fm.elidedText(label, QtCore.Qt.ElideMiddle, theme.px(420))
+        prefix = f"&{i + 1}  " if i < 9 else ("1&0  " if i == 9 else f"{i + 1}  ")
+        act = menu.addAction(prefix + label)
+        act.setToolTip(path)
+        act.setStatusTip(path)
+        if blicons.has("FILE_BLEND"):
+            act.setIcon(blicons.icon("FILE_BLEND"))
+        if not os.path.exists(path):
+            act.setEnabled(False)
+            act.setToolTip(path + "\n(file not found)")
+        act.triggered.connect(lambda _=False, p=path: run_op("wm.open_mainfile", {"filepath": p}))
+    menu.addSeparator()
+    clear = menu.addAction("Clear Recent Files List")
+    clear.setEnabled(bool(files))
+    clear.triggered.connect(lambda: bridge.clear_recent())
+
+
+QT_MENUS = {"TOPBAR_MT_file_open_recent": fill_recent_menu}
+QT_MENU_LABELS = {"TOPBAR_MT_file_open_recent": "Open Recent"}
 
 
 class PopoverMenu(QtWidgets.QMenu):

@@ -18,6 +18,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 |---|---|
 | 3D viewport | Blender renders the scene into a GPUOffScreen (`draw_view3d`) and the image is shown in Qt. Navigation (MMB / Alt+LMB orbit, Shift pan, Ctrl/wheel zoom, touchpad), numpad views 1/3/7/0/5/9, 2/4/6/8 rotation in 15° steps (Ctrl = pan), click and box selection, G/R/S with X/Y/Z axes and numeric input, Shift+D, X/Delete, Shift+A, H/Alt+H, Tab, Z (shading), right click = context menu |
 | Menus | File, Edit, Add, Object, Select, Render and Help are generated **from Blender's original menus** (including add-on entries), depending on the mode |
+| Recent files | File → Open Recent (also Ctrl+Shift+O): the last 20 opened / saved files, newest first, like Maya's Recent Files; Qt Shell keeps its own history next to Blender's |
 | Properties | The Render, Output, Scene, World, Object, Data, Material, Physics… tabs are generated **from Blender's original Python panels** through a stand-in `UILayout` |
 | Modifiers, constraints | Own Qt version (Blender draws these in C), including Geometry Nodes inputs; Add Modifier menu with categories, icons and a modifier-only Search… |
 | Outliner | Collections, objects, parenting (children from other collections greyed under the parent, like Blender), object contents: data, armature bone hierarchy, materials, modifiers, constraints, vertex groups; bone selection in Pose mode, visibility, renaming, moving to a collection |
