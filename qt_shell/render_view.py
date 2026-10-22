@@ -2,8 +2,11 @@
 
 Header like Blender 5.2: View and Image menus, the Render Result image, render slots (Slot 1–8),
 View Layer and Pass, Display Channels (Color & Alpha, Color, Alpha, Red, Green, Blue), zoom and the
-sidebar toggle. The canvas: checkerboard behind transparent renders, mouse wheel zooms around the
-mouse, middle mouse pans, left mouse samples the pixel under it (footer: X / Y and R G B A).
+sidebar toggle, Gizmos and Overlays toggles. The canvas: checkerboard behind transparent renders, mouse
+wheel zooms around the mouse, middle mouse pans; the navigation gizmo (top right) zooms / pans by dragging.
+Toolbar on the left (T) like Blender's Image Editor: Sample (left mouse shows the pixel under it – footer:
+X / Y and R G B A) and Annotate (Annotate / Line / Polygon / Eraser – notes drawn over the render, one set
+per render slot, colour and thickness in the header; Ctrl+Z removes the last change).
 Top left: Frame | Time | Scene | View Layer | Camera like Blender's render stats. Sidebar (N): Image
 and Metadata.
 
@@ -29,6 +32,18 @@ from . import bridge, icons, keymap, pytips, theme
 
 CHANNELS = [("COLOR_ALPHA", "Color & Alpha"), ("COLOR", "Color"), ("ALPHA", "Alpha"),
             ("RED", "Red"), ("GREEN", "Green"), ("BLUE", "Blue")]
+TOOLS = [("SAMPLE", "Sample", "tool_sample",
+          "Sample – hold the left mouse button to read the pixel under it (footer: X / Y, R G B A)"),
+         ("ANNOTATE", "Annotate", "tool_annotate", "Annotate – draw notes over the render")]
+ANNOTATE_VARIANTS = [
+    ("FREEHAND", "Annotate", "tool_annotate", "Draw a free-hand note"),
+    ("LINE", "Annotate Line", "tool_annotate_line", "Drag to draw a straight line"),
+    ("POLYGON", "Annotate Polygon", "tool_annotate_polygon",
+     "Click to add points; double-click, Enter or right click finishes"),
+    ("ERASER", "Annotate Eraser", "tool_annotate_eraser", "Drag over strokes to erase them"),
+]
+NOTE_COLOR = "#619bc7"         # Blender's default annotation colour
+ERASER_RADIUS = 20
 ZOOM_RATIOS = [(8, "8:1"), (4, "4:1"), (2, "2:1"), (1, "1:1"), (0.5, "1:2"), (0.25, "1:4"), (0.125, "1:8")]
 # Save As: filter → (media type, file format)
 SAVE_FORMATS = [
@@ -160,6 +175,12 @@ class _Canvas(QtWidgets.QWidget):
         self.offset = QtCore.QPointF(0, 0)   # image centre relative to the widget centre (screen px)
         self._pan = None
         self._sampling = False
+        self._stroke = None           # annotation being drawn (image coordinates)
+        self._poly = None             # Annotate Polygon: points so far (the last follows the mouse)
+        self._erasing = False
+        self._nav = None              # navigation gizmo drag: ("zoom" | "pan", last mouse position)
+        self._nav_hover = None
+        self._mouse = None
         self.overlay = ""
         self.busy = ""
         self.setMouseTracking(True)
@@ -227,6 +248,62 @@ class _Canvas(QtWidgets.QWidget):
             return x, y
         return None
 
+    def to_image(self, pos):
+        """Screen → image coordinates (float pixels from the top-left corner)."""
+        r = self.image_rect()
+        return ((pos.x() - r.x()) / r.width() * self.image.width(),
+                (pos.y() - r.y()) / r.height() * self.image.height())
+
+    def to_screen(self, x, y):
+        r = self.image_rect()
+        return QtCore.QPointF(r.x() + x / self.image.width() * r.width(),
+                              r.y() + y / self.image.height() * r.height())
+
+    def nav_buttons(self):
+        """The navigation gizmo (top right): zoom and pan buttons (centre, radius)."""
+        R = theme.px(14)
+        x = self.width() - theme.px(24)
+        return {"zoom": (QtCore.QPointF(x, theme.px(24)), R), "pan": (QtCore.QPointF(x, theme.px(58)), R)}
+
+    def _nav_at(self, pos):
+        if not self.view.show_gizmos:
+            return None
+        for k, (c, R) in self.nav_buttons().items():
+            if math.hypot(pos.x() - c.x(), pos.y() - c.y()) <= R:
+                return k
+        return None
+
+    def _paint_notes(self, p):
+        strokes = list(self.view.annotations())
+        if self._stroke:
+            strokes.append({"pts": self._stroke, "color": self.view.note_color, "width": self.view.note_width})
+        if self._poly:
+            strokes.append({"pts": self._poly, "color": self.view.note_color, "width": self.view.note_width})
+        p.setBrush(QtCore.Qt.NoBrush)
+        for st in strokes:
+            pts = [self.to_screen(x, y) for x, y in st["pts"]]
+            if not pts:
+                continue
+            pen = QtGui.QPen(QtGui.QColor(st["color"]), max(1.0, st["width"] * theme.ui_scale))
+            pen.setCapStyle(QtCore.Qt.RoundCap)
+            pen.setJoinStyle(QtCore.Qt.RoundJoin)
+            p.setPen(pen)
+            if len(pts) == 1:
+                p.drawPoint(pts[0])
+            else:
+                p.drawPolyline(QtGui.QPolygonF(pts))
+
+    def _paint_gizmo(self, p):
+        for k, (c, R) in self.nav_buttons().items():
+            hov = self._nav_hover == k or (self._nav is not None and self._nav[0] == k)
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(255, 255, 255, 60) if hov else QtGui.QColor(0, 0, 0, 90))
+            p.drawEllipse(c, R, R)
+            pm = icons.pixmap("zoom" if k == "zoom" else "pan", theme.px(16))
+            if not pm.isNull():
+                p.drawPixmap(QtCore.QRectF(c.x() - theme.px(8), c.y() - theme.px(8), theme.px(16), theme.px(16)),
+                             pm, QtCore.QRectF(pm.rect()))
+
     # --- painting
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
@@ -240,11 +317,24 @@ class _Canvas(QtWidgets.QWidget):
             p.setPen(QtGui.QPen(QtGui.QColor(20, 20, 20), 1))
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawRect(r.adjusted(-0.5, -0.5, 0.5, 0.5))
+            if self.view.show_overlays:
+                p.setRenderHint(QtGui.QPainter.Antialiasing)
+                self._paint_notes(p)
+            if (self.view.tool == "ANNOTATE" and self.view.annotate_variant == "ERASER" and self._mouse is not None
+                    and self.underMouse()):
+                p.setRenderHint(QtGui.QPainter.Antialiasing)
+                p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
+                p.setBrush(QtGui.QColor(255, 255, 255, 18 if self._erasing else 0))
+                rr = ERASER_RADIUS * theme.ui_scale
+                p.drawEllipse(self._mouse, rr, rr)
         else:
             p.setPen(QtGui.QColor(150, 150, 150))
             p.drawText(self.rect(), QtCore.Qt.AlignCenter,
                        keymap.render("Nothing rendered yet – Render Image ({window.render})"))
-        text = self.busy or self.overlay
+        if self.view.show_gizmos:
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            self._paint_gizmo(p)
+        text = self.busy or (self.overlay if self.view.show_overlays else "")
         if text:
             f = p.font()
             f.setPixelSize(theme.fs(12))
@@ -266,40 +356,203 @@ class _Canvas(QtWidgets.QWidget):
 
     def mousePressEvent(self, ev):
         self.setFocus()
-        if ev.button() == QtCore.Qt.MiddleButton or (
+        pos = ev.position()
+        nav = self._nav_at(pos) if ev.button() == QtCore.Qt.LeftButton else None
+        if nav is not None:                   # navigation gizmo: drag to zoom / pan
+            self._nav = (nav, pos)
+            self.setCursor(QtCore.Qt.SizeVerCursor if nav == "zoom" else QtCore.Qt.ClosedHandCursor)
+            self.update()
+        elif ev.button() == QtCore.Qt.MiddleButton or (
                 ev.button() == QtCore.Qt.LeftButton and ev.modifiers() & QtCore.Qt.AltModifier):
-            self._pan = ev.position()
+            self._pan = pos
             self.setCursor(QtCore.Qt.ClosedHandCursor)
+        elif ev.button() == QtCore.Qt.LeftButton and self.view.tool == "ANNOTATE" and self.image is not None:
+            v = self.view.annotate_variant
+            if v == "ERASER":
+                self._erasing = True
+                self.view.annotation_snapshot()
+                self._erase(pos)
+            elif v == "POLYGON":
+                if self._poly is None:
+                    self._poly = [self.to_image(pos)]
+                else:
+                    self._poly[-1] = self.to_image(pos)     # the point following the mouse becomes fixed
+                self._poly.append(self.to_image(pos))
+            else:
+                self._stroke = [self.to_image(pos)]
+            self.update()
         elif ev.button() == QtCore.Qt.LeftButton:
             self._sampling = True             # Blender: left mouse samples the pixel
-            self.sampled.emit(self.pixel_at(ev.position()))
+            self.sampled.emit(self.pixel_at(pos))
         elif ev.button() == QtCore.Qt.RightButton:
+            if self._poly:
+                self.finish_polygon()
+                return
             self.view.context_menu(ev.globalPosition().toPoint())
 
     def mouseMoveEvent(self, ev):
-        if self._pan is not None:
-            d = ev.position() - self._pan
-            self._pan = ev.position()
+        pos = ev.position()
+        self._mouse = pos
+        if self._nav is not None:
+            kind, last = self._nav
+            d = pos - last
+            self._nav = (kind, pos)
+            if kind == "zoom":
+                self.zoom_step(1.01 ** (-d.y() + d.x()), QtCore.QPointF(self.width() / 2, self.height() / 2))
+            else:
+                self.offset += d
+                self.update()
+        elif self._pan is not None:
+            d = pos - self._pan
+            self._pan = pos
             self.offset += d
             self.update()
         elif self._sampling:
-            self.sampled.emit(self.pixel_at(ev.position()))
+            self.sampled.emit(self.pixel_at(pos))
+        elif self._erasing:
+            self._erase(pos)
+        elif self._stroke is not None:
+            q = self.to_image(pos)
+            if self.view.annotate_variant == "LINE":
+                self._stroke[1:] = [q]
+            else:
+                last = self.to_screen(*self._stroke[-1])
+                if abs(pos.x() - last.x()) + abs(pos.y() - last.y()) >= 2:
+                    self._stroke.append(q)
+            self.update()
+        elif self._poly:
+            self._poly[-1] = self.to_image(pos)
+            self.update()
+        else:
+            hov = self._nav_at(pos)
+            if hov != self._nav_hover:
+                self._nav_hover = hov
+                self.setToolTip({"zoom": "Zoom – drag up / down", "pan": "Move the view – drag"}.get(hov, ""))
+                self.update()
+            if self.view.tool == "ANNOTATE" and self.view.annotate_variant == "ERASER":
+                self.update()
 
     def mouseReleaseEvent(self, ev):
+        if self._nav is not None:
+            self._nav = None
+            self.unsetCursor()
+            self.update()
+            return
         if self._pan is not None:
             self._pan = None
             self.unsetCursor()
-        if ev.button() == QtCore.Qt.LeftButton and self._sampling:
+        if ev.button() != QtCore.Qt.LeftButton:
+            return
+        if self._sampling:
             self._sampling = False
             self.sampled.emit(None)
+        elif self._erasing:
+            self._erasing = False
+            self.update()
+        elif self._stroke is not None:
+            pts, self._stroke = self._stroke, None
+            if self.view.annotate_variant == "LINE" and len(pts) < 2:
+                pts = []
+            if len(pts) == 1:
+                pts = [pts[0], (pts[0][0] + 0.5, pts[0][1])]
+            if pts:
+                self.view.add_annotation(pts)
 
     def mouseDoubleClickEvent(self, ev):
         if ev.button() == QtCore.Qt.MiddleButton:
             self.fit()
+        elif ev.button() == QtCore.Qt.LeftButton and self._poly:
+            self.finish_polygon()
+
+    def leaveEvent(self, ev):
+        self._nav_hover = None
+        self.update()
+        super().leaveEvent(ev)
+
+    def finish_polygon(self):
+        pts, self._poly = self._poly, None
+        if pts and len(pts) > 2:
+            self.view.add_annotation(pts[:-1])      # the last point follows the mouse
+        self.update()
+
+    def cancel_annotation(self):
+        busy = bool(self._poly or self._stroke)
+        self._poly = None
+        self._stroke = None
+        self.update()
+        return busy
+
+    def _erase(self, pos):
+        notes = self.view.annotations()
+        r = ERASER_RADIUS * theme.ui_scale
+        out, changed = [], False
+        for st in notes:
+            cur, hit = [], False
+            for x, y in st["pts"]:
+                q = self.to_screen(x, y)
+                if math.hypot(q.x() - pos.x(), q.y() - pos.y()) <= r:
+                    hit = True
+                    if len(cur) > 1:
+                        out.append(dict(st, pts=cur))
+                    cur = []
+                else:
+                    cur.append((x, y))
+            if not hit:
+                out.append(st)
+                continue
+            changed = True
+            if len(cur) > 1:
+                out.append(dict(st, pts=cur))
+        if changed:
+            self.view.set_annotations(out, snapshot=False)
+        self._mouse = pos
+        self.update()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self.update()
+
+
+class _VariantButton(QtWidgets.QToolButton):
+    """The Annotate button of the toolbar: hold or right click it for Annotate / Line / Polygon / Eraser."""
+
+    def __init__(self, parent, view):
+        super().__init__(parent)
+        self.view = view
+        m = QtWidgets.QMenu(self)
+        m.setToolTipsVisible(True)
+        m.aboutToShow.connect(self._fill)
+        self.setMenu(m)
+        self.setPopupMode(QtWidgets.QToolButton.DelayedPopup)
+
+    def _fill(self):
+        m = self.menu()
+        m.clear()
+        for vid, name, icon, tip in ANNOTATE_VARIANTS:
+            a = m.addAction(icons.icon(icon), name)
+            a.setToolTip(tip)
+            if self.view.annotate_variant == vid:      # no check mark next to an icon: bold
+                f = a.font()
+                f.setBold(True)
+                a.setFont(f)
+            pytips.tag(a, _api(f"set_tool('ANNOTATE', '{vid}')"))
+            a.triggered.connect(lambda _c=False, v=vid: self.view.set_tool("ANNOTATE", v))
+
+    def contextMenuEvent(self, ev):
+        self.showMenu()
+        ev.accept()
+
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(225, 225, 225, 200))
+        r = self.rect()
+        k = theme.px(5)
+        x, y = r.right() - theme.px(2), r.bottom() - theme.px(2)
+        p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, y - k), QtCore.QPointF(x, y), QtCore.QPointF(x - k, y)]))
+        p.end()
 
 
 # ---------------------------------------------------------------- window
@@ -322,6 +575,22 @@ class RenderView(QtWidgets.QWidget):
         self._slot_info = {}              # slot index → metadata of the render in that slot (like Blender)
         self._render_start = None
         self._save_path = ""
+        st = QtCore.QSettings("QtShell", "QtShell")
+        self.tool = str(st.value("render_view/tool", "SAMPLE"))
+        if self.tool not in [t[0] for t in TOOLS]:
+            self.tool = "SAMPLE"
+        self.annotate_variant = str(st.value("render_view/annotate_variant", "FREEHAND"))
+        if self.annotate_variant not in [v[0] for v in ANNOTATE_VARIANTS]:
+            self.annotate_variant = "FREEHAND"
+        self.show_overlays = str(st.value("render_view/overlays", "true")).lower() == "true"
+        self.show_gizmos = str(st.value("render_view/gizmos", "true")).lower() == "true"
+        self.note_color = str(st.value("render_view/annotate_color", NOTE_COLOR))
+        try:
+            self.note_width = int(st.value("render_view/annotate_thickness", 3))
+        except (TypeError, ValueError):
+            self.note_width = 3
+        self._notes = {}                  # render slot → annotation strokes {"pts", "color", "width"}
+        self._notes_undo = {}             # render slot → earlier stroke lists (Ctrl+Z)
         self._timer = QtCore.QTimer(self)
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._tick)
@@ -333,6 +602,8 @@ class RenderView(QtWidgets.QWidget):
         body = QtWidgets.QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
+        self.toolbar = self._build_toolbar()
+        body.addWidget(self.toolbar)
         self.canvas = _Canvas(self)
         self.canvas.zoom_changed.connect(self._zoom_changed)
         self.canvas.sampled.connect(self._sampled)
@@ -346,6 +617,9 @@ class RenderView(QtWidgets.QWidget):
         lay.addWidget(self.footer)
         self.sidebar.setVisible(str(QtCore.QSettings("QtShell", "QtShell").value(
             "render_view/sidebar", "false")).lower() == "true")
+        self.toolbar.setVisible(str(QtCore.QSettings("QtShell", "QtShell").value(
+            "render_view/toolbar", "true")).lower() == "true")
+        self._sync_tools()
         keymap.notifier.changed.connect(self._update_tips)
         self._update_tips()
         self._update_footer()
@@ -410,7 +684,45 @@ class RenderView(QtWidgets.QWidget):
         self.pass_combo.activated.connect(lambda _i: self._pick_pass(self.pass_combo.currentData()))
         pytips.tag(self.pass_combo, _api('set_pass("Depth")   # passes(): what the result has'))
         h.addWidget(self.pass_combo)
+        h.addSpacing(theme.px(8))
+        # options of the Annotate tool (like Blender's tool header)
+        self.note_opts = QtWidgets.QWidget(bar)
+        no = QtWidgets.QHBoxLayout(self.note_opts)
+        no.setContentsMargins(0, 0, 0, 0)
+        no.setSpacing(theme.px(4))
+        self.note_color_btn = QtWidgets.QToolButton(self.note_opts)
+        self.note_color_btn.setAutoRaise(True)
+        self.note_color_btn.setToolTip("Annotation colour")
+        self.note_color_btn.clicked.connect(self._pick_note_color)
+        pytips.tag(self.note_color_btn, _api('set_annotation_style(color="#619bc7", width=3)'))
+        no.addWidget(self.note_color_btn)
+        self.note_width_spin = QtWidgets.QSpinBox(self.note_opts)
+        self.note_width_spin.setRange(1, 10)
+        self.note_width_spin.setPrefix("Thickness ")
+        self.note_width_spin.setValue(self.note_width)
+        self.note_width_spin.setToolTip("Thickness of new annotation strokes (px)")
+        self.note_width_spin.valueChanged.connect(lambda v: self.set_annotation_style(width=v))
+        pytips.tag(self.note_width_spin, _api("set_annotation_style(width=3)"))
+        no.addWidget(self.note_width_spin)
+        clear = self._tool("trash", "", "Clear the annotations of this render slot")
+        if clear.icon().isNull():
+            clear.setText("✕")
+        clear.clicked.connect(self.clear_annotations)
+        pytips.tag(clear, _api("clear_annotations()"))
+        no.addWidget(clear)
+        h.addWidget(self.note_opts)
         h.addStretch(1)
+        self.gizmo_btn = self._tool("gizmo", "", "", checkable=True)
+        self.gizmo_btn.setChecked(self.show_gizmos)
+        self.gizmo_btn.toggled.connect(self.set_gizmos)
+        pytips.tag(self.gizmo_btn, _api("set_gizmos(True)"))
+        h.addWidget(self.gizmo_btn)
+        self.overlay_btn = self._tool("overlays", "", "", checkable=True)
+        self.overlay_btn.setChecked(self.show_overlays)
+        self.overlay_btn.toggled.connect(self.set_overlays)
+        pytips.tag(self.overlay_btn, _api("set_overlays(True)"))
+        h.addWidget(self.overlay_btn)
+        h.addSpacing(theme.px(6))
         self.channel_combo = QtWidgets.QComboBox(bar)
         for cid, label in CHANNELS:
             self.channel_combo.addItem(label, cid)
@@ -435,8 +747,172 @@ class RenderView(QtWidgets.QWidget):
         h.addWidget(self.sidebar_btn)
         return bar
 
+    # ------------------------------------------------------------ toolbar (left)
+    def _build_toolbar(self):
+        w = QtWidgets.QFrame(self)
+        w.setObjectName("qtshell_render_toolbar")
+        w.setStyleSheet(
+            "QFrame#qtshell_render_toolbar { background: #2b2b2b; border-right: 1px solid #1d1d1d; }"
+            "QToolButton { background: transparent; border: 1px solid transparent; border-radius: 3px; }"
+            "QToolButton::menu-indicator { image: none; width: 0px; }"
+            f"QToolButton:checked {{ background: {theme.C['highlight']}; }}\n" + theme.hover_qss())
+        v = QtWidgets.QVBoxLayout(w)
+        m = theme.px(3)
+        v.setContentsMargins(m, theme.px(6), m, m)
+        v.setSpacing(theme.px(2))
+        self.tool_buttons = {}
+        group = QtWidgets.QButtonGroup(w)
+        group.setExclusive(True)
+        for tid, name, icon, tip in TOOLS:
+            b = _VariantButton(w, self) if tid == "ANNOTATE" else QtWidgets.QToolButton(w)
+            b.setCheckable(True)
+            b.setFixedSize(theme.px(30), theme.px(30))
+            icons.set_icon(b, icon)
+            if b.icon().isNull():
+                b.setText(name[0])
+            b.clicked.connect(lambda _c=False, t=tid: self.set_tool(t))
+            group.addButton(b)
+            v.addWidget(b)
+            self.tool_buttons[tid] = b
+        v.addStretch(1)
+        return w
+
+    def _sync_tools(self):
+        try:
+            for tid, b in self.tool_buttons.items():
+                b.setChecked(tid == self.tool)
+            vinfo = dict((x[0], x) for x in ANNOTATE_VARIANTS)[self.annotate_variant]
+            icons.set_icon(self.tool_buttons["ANNOTATE"], vinfo[2])
+            self.note_opts.setVisible(self.tool == "ANNOTATE")
+            pm = QtGui.QPixmap(theme.px(28), theme.px(14))
+            pm.fill(QtGui.QColor(self.note_color))
+            self.note_color_btn.setIcon(QtGui.QIcon(pm))
+            self.note_color_btn.setIconSize(pm.size())
+            self.canvas.setCursor(QtCore.Qt.CrossCursor if self.tool == "ANNOTATE" else QtCore.Qt.ArrowCursor)
+            self._update_tips()
+        except (RuntimeError, AttributeError):
+            pass
+
+    def set_tool(self, tool, variant=None):
+        """Toolbar tool: 'SAMPLE' or 'ANNOTATE' (variant FREEHAND, LINE, POLYGON or ERASER)."""
+        tool = str(tool).upper()
+        if tool not in [t[0] for t in TOOLS]:
+            raise ValueError(f"Unknown tool {tool!r} – SAMPLE or ANNOTATE")
+        st = QtCore.QSettings("QtShell", "QtShell")
+        if variant is not None:
+            variant = str(variant).upper()
+            if variant not in [x[0] for x in ANNOTATE_VARIANTS]:
+                raise ValueError(f"Unknown variant {variant!r} – FREEHAND, LINE, POLYGON or ERASER")
+            self.annotate_variant = variant
+            st.setValue("render_view/annotate_variant", variant)
+        self.canvas.finish_polygon() if self.canvas._poly else None
+        self.tool = tool
+        st.setValue("render_view/tool", tool)
+        self._sync_tools()
+        self.canvas.update()
+
+    def set_toolbar(self, on):
+        self.toolbar.setVisible(bool(on))
+        QtCore.QSettings("QtShell", "QtShell").setValue("render_view/toolbar", "true" if on else "false")
+
+    def set_overlays(self, on):
+        """Overlays: annotations and the render info text on the image."""
+        self.show_overlays = bool(on)
+        QtCore.QSettings("QtShell", "QtShell").setValue("render_view/overlays", "true" if on else "false")
+        self._sync_toggle(self.overlay_btn, on)
+        self.canvas.update()
+
+    def set_gizmos(self, on):
+        """Gizmos: the navigation gizmo (zoom / pan buttons) at the top right of the image."""
+        self.show_gizmos = bool(on)
+        QtCore.QSettings("QtShell", "QtShell").setValue("render_view/gizmos", "true" if on else "false")
+        self._sync_toggle(self.gizmo_btn, on)
+        self.canvas.update()
+
+    @staticmethod
+    def _sync_toggle(btn, on):
+        if btn.isChecked() != bool(on):
+            btn.blockSignals(True)
+            btn.setChecked(bool(on))
+            btn.blockSignals(False)
+
+    # ------------------------------------------------------------ annotations
+    def annotations(self, slot=None):
+        """Annotation strokes of a render slot (default: the active one): [{"pts": [(x, y), …] in image
+        pixels from the top-left corner, "color": "#rrggbb", "width": px}, …]."""
+        return self._notes.get(self._active_slot() if slot is None else slot, [])
+
+    def annotation_snapshot(self):
+        slot = self._active_slot()
+        stack = self._notes_undo.setdefault(slot, [])
+        stack.append([dict(s) for s in self._notes.get(slot, [])])
+        del stack[:-64]
+
+    def set_annotations(self, strokes, snapshot=True):
+        if snapshot:
+            self.annotation_snapshot()
+        self._notes[self._active_slot()] = list(strokes)
+        self.canvas.update()
+
+    def add_annotation(self, points, color=None, width=None):
+        """Adds a stroke to the active slot's annotations (points in image pixels, top-left origin)."""
+        pts = [(float(x), float(y)) for x, y in points]
+        if not pts:
+            return
+        self.set_annotations(self.annotations() + [{"pts": pts, "color": str(color or self.note_color),
+                                                    "width": int(width or self.note_width)}])
+
+    def clear_annotations(self):
+        if self.annotations():
+            self.set_annotations([])
+
+    def undo_annotation(self):
+        stack = self._notes_undo.get(self._active_slot())
+        if not stack:
+            return False
+        self._notes[self._active_slot()] = stack.pop()
+        self.canvas.update()
+        return True
+
+    def set_annotation_style(self, color=None, width=None):
+        """Colour ("#rrggbb") and thickness (px) of new annotation strokes."""
+        st = QtCore.QSettings("QtShell", "QtShell")
+        if color is not None:
+            self.note_color = QtGui.QColor(color).name()
+            st.setValue("render_view/annotate_color", self.note_color)
+        if width is not None:
+            self.note_width = max(1, min(10, int(width)))
+            st.setValue("render_view/annotate_thickness", self.note_width)
+            if self.note_width_spin.value() != self.note_width:
+                self.note_width_spin.blockSignals(True)
+                self.note_width_spin.setValue(self.note_width)
+                self.note_width_spin.blockSignals(False)
+        self._sync_tools()
+
+    def _pick_note_color(self):
+        col = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.note_color), self, "Annotation Colour")
+        if col.isValid():
+            self.set_annotation_style(color=col.name())
+
     def _update_tips(self):
         try:
+            for tid, name, icon, tip in TOOLS:
+                b = self.tool_buttons[tid]
+                aid = f"render.tool_{tid.lower()}"
+                lines = [tip]
+                if tid == "ANNOTATE":
+                    vinfo = dict((x[0], x) for x in ANNOTATE_VARIANTS)[self.annotate_variant]
+                    lines = [f"{vinfo[1]} – {vinfo[3]}",
+                             "Hold or right click: " + ", ".join(x[1] for x in ANNOTATE_VARIANTS),
+                             "Undo the last change: {window.undo}"]
+                    pytips.tag(b, _api(f"set_tool('ANNOTATE', '{self.annotate_variant}')"))
+                else:
+                    pytips.tag(b, _api("set_tool('SAMPLE')"))
+                lines.append(f"Key: {{{aid}}}")
+                lines.append("{render.toolbar} shows / hides the toolbar")
+                b.setToolTip(keymap.render("\n".join(lines)))
+            self.gizmo_btn.setToolTip("Show Gizmos – the navigation gizmo (zoom / pan) at the top right")
+            self.overlay_btn.setToolTip("Show Overlays – annotations and the render info on the image")
             self.fit_btn.setToolTip(keymap.render("Frame All – the whole image in the view ({render.fit})"))
             self.sidebar_btn.setToolTip(keymap.render("Sidebar: Image and Metadata ({render.sidebar})"))
             self.slot_combo.setToolTip(keymap.render(
@@ -464,6 +940,28 @@ class RenderView(QtWidgets.QWidget):
                       _api("set_sidebar(True)"))
         a.setCheckable(True)
         a.setChecked(self.sidebar.isVisible())
+        a = self._act(m, "Toolbar", lambda: self.set_toolbar(not self.toolbar.isVisible()), "render.toolbar",
+                      _api("set_toolbar(True)"), "toolbar")
+        a.setCheckable(True)
+        a.setChecked(self.toolbar.isVisible())
+        for label, on, fn, py in (("Gizmos", self.show_gizmos, self.set_gizmos, "set_gizmos(True)"),
+                                  ("Overlays", self.show_overlays, self.set_overlays, "set_overlays(True)")):
+            a = self._act(m, label, lambda _c=False, f=fn, o=on: f(not o), None, _api(py))
+            a.setCheckable(True)
+            a.setChecked(on)
+        m.addSeparator()
+        tools = m.addMenu("Tools")
+        for tid, name, icon, _tip in TOOLS[:1]:
+            a = self._act(tools, name, lambda _c=False, t=tid: self.set_tool(t), f"render.tool_{tid.lower()}",
+                          _api(f"set_tool('{tid}')"), icon)
+            a.setCheckable(True)
+            a.setChecked(self.tool == tid)
+        for vid, name, icon, _tip in ANNOTATE_VARIANTS:
+            a = self._act(tools, name, lambda _c=False, v=vid: self.set_tool("ANNOTATE", v), None,
+                          _api(f"set_tool('ANNOTATE', '{vid}')"), icon)
+            a.setCheckable(True)
+            a.setChecked(self.tool == "ANNOTATE" and self.annotate_variant == vid)
+        self._act(m, "Clear Annotations", self.clear_annotations, None, _api("clear_annotations()"))
         m.addSeparator()
         self._act(m, "Zoom In", lambda: self.canvas.zoom_step(1.25), "render.zoom_in", _api("zoom(2.0)"))
         self._act(m, "Zoom Out", lambda: self.canvas.zoom_step(0.8), "render.zoom_out", _api("zoom(0.5)"))
@@ -962,8 +1460,23 @@ class RenderView(QtWidgets.QWidget):
         def H(aid):
             return keymap.hit(aid, ev, names)
 
-        if H("render.close") or H("window.show_render"):
+        if self.canvas._poly and ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Escape):
+            self.canvas.finish_polygon()
+        elif H("render.close") or H("window.show_render"):
             self.close()
+        elif H("render.toolbar"):
+            self.set_toolbar(not self.toolbar.isVisible())
+        elif H("render.tool_sample"):
+            self.set_tool("SAMPLE")
+        elif H("render.tool_annotate"):
+            if self.tool == "ANNOTATE":          # again: next variant (like the 3D view's tools)
+                ids = [x[0] for x in ANNOTATE_VARIANTS]
+                self.set_tool("ANNOTATE", ids[(ids.index(self.annotate_variant) + 1) % len(ids)])
+            else:
+                self.set_tool("ANNOTATE")
+        elif H("window.undo"):
+            if not self.undo_annotation():
+                self.mw.statusBar().showMessage("Render View: nothing to undo", 2000)
         elif H("render.fit"):
             self.canvas.fit()
         elif H("render.zoom_in"):

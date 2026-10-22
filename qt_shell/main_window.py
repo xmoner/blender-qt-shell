@@ -10,7 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import app as shell_app
 from . import icons
 from . import pytips
-from . import api, bridge, fake_ui, rna_widgets as rw, theme
+from . import annotate, api, bridge, fake_ui, rna_widgets as rw, theme
 from .bridge import run_op, tr
 from .console import Console
 from .node_editor import NodeEditor
@@ -705,6 +705,9 @@ class MainWindow(QtWidgets.QMainWindow):
         mb.setSpacing(0)
         lay.addWidget(self.menu_box)
         self._menus_mode = None
+        # options of the active tool (Annotate: colour / thickness / placement, Add: base and height, Measure)
+        self.tool_header = annotate.ToolHeader(self, bar)
+        lay.addWidget(self.tool_header)
         self.selmode_buttons = []
         for i, (txt, tip) in enumerate((("•", "Vertices (1)"), ("╱", "Edges (2)"), ("■", "Faces (3)"))):
             b = QtWidgets.QToolButton()

@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
+from . import annotate, bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -108,6 +108,8 @@ class Viewport(QtWidgets.QWidget):
         self.tools = gizmo.tool_state(hub)
         self.toolbar = gizmo.Toolbar(self)
         self.tools.changed.connect(self.update)
+        self.ann_tools = annotate.ViewTools(self)   # Annotate / Measure / Add tools
+        self.tools.changed.connect(self.ann_tools.cancel)
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -393,6 +395,7 @@ class Viewport(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         if self.show_boxes:
             self._paint_selection(p, mats)
+        self.ann_tools.paint(p, mats)        # annotations, rulers, the Add tool's box
         if self._modal is None and not getattr(self.hub, "playing", False):
             try:
                 gizmo.paint(self, p, self.tools.tool, self._gz_hover)
@@ -1264,6 +1267,8 @@ class Viewport(QtWidgets.QWidget):
             self._last = pos
             self.setCursor(QtCore.Qt.ClosedHandCursor)
         elif b == QtCore.Qt.LeftButton:
+            if self.ann_tools.press(ev, pos):
+                return
             tool = self.tools.tool
             if tool not in ("SELECT", "CURSOR"):
                 hid = gizmo.hit(gizmo.handles(self, tool), pos)
@@ -1287,7 +1292,14 @@ class Viewport(QtWidgets.QWidget):
                 self._tweak = variant == "TWEAK"
             self._press_pos = pos
         elif b == QtCore.Qt.RightButton:
+            if self.ann_tools.press(ev, pos):     # finishes a polygon / cancels Add
+                return
             self._context_menu(ev.globalPosition().toPoint())
+
+    def mouseDoubleClickEvent(self, ev):
+        if self.ann_tools.double_click(ev, ev.position()):
+            return
+        super().mouseDoubleClickEvent(ev)
 
     # Maya navigation: Alt + LMB tumble, Alt + MMB track, Alt + RMB dolly, MMB = drag with the active tool
     _MAYA_TOOL_DRAG = {"MOVE": "G:FREE", "TRANSFORM": "G:FREE", "ROTATE": "R:VIEW", "SCALE": "S:UNIFORM"}
@@ -1324,6 +1336,8 @@ class Viewport(QtWidgets.QWidget):
             return
         if self._cursor_drag:
             self.place_cursor(pos)
+            return
+        if not self._nav and self._press_pos is None and self.ann_tools.move(ev, pos):
             return
         if self._circle is not None:
             self._mouse_pos = pos
@@ -1393,6 +1407,8 @@ class Viewport(QtWidgets.QWidget):
             self._nav = None
             self.unsetCursor()
             return
+        if self.ann_tools.release(ev, pos):
+            return
         if ev.button() == QtCore.Qt.LeftButton:
             if self._cursor_drag:
                 self._cursor_drag = False
@@ -1430,6 +1446,8 @@ class Viewport(QtWidgets.QWidget):
             self.update()
 
     def wheelEvent(self, ev):
+        if self.ann_tools.wheel(ev):
+            return
         if self._circle is not None:
             steps = ev.angleDelta().y() / 120.0
             self.tools.set_circle_radius(self.tools.circle_radius * (1.15 ** steps))
@@ -1489,12 +1507,16 @@ class Viewport(QtWidgets.QWidget):
             return keymap.hit(aid, ev, names)
 
         mode = bpy.context.mode
+        if self.ann_tools.key(ev, H):          # Enter / Esc of Annotate Polygon and Add, Measure: Delete
+            self.update()
+            return
         if H("view3d.tool_menu"):
             gizmo.show_tool_menu(self)       # like Blender: Shift+Space = tool menu
             return
         for aid, tool in (("view3d.tool_select", "SELECT"), ("view3d.tool_cursor", "CURSOR"),
                           ("view3d.tool_move", "MOVE"), ("view3d.tool_rotate", "ROTATE"),
-                          ("view3d.tool_scale", "SCALE")):
+                          ("view3d.tool_scale", "SCALE"), ("view3d.tool_annotate", "ANNOTATE"),
+                          ("view3d.tool_measure", "MEASURE"), ("view3d.tool_add", "ADD")):
             if H(aid):
                 # Blender: W = select tool, W again: Tweak → Box → Circle → Lasso; Maya: Q / W / E / R
                 self.tools.activate(tool)

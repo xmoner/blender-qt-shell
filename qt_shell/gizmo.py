@@ -1,5 +1,7 @@
 """Tools and gizmos in the 3D viewport (like Blender's toolbar: Select – Tweak / Box / Circle / Lasso,
-Cursor, Move, Rotate, Scale – Scale / Scale Cage, Transform).
+Cursor, Move, Rotate, Scale – Scale / Scale Cage, Transform, Annotate – Annotate / Line / Polygon / Eraser,
+Measure, Add – Cube / Cone / Cylinder / UV Sphere / Ico Sphere (Object Mode only)). The Annotate, Measure and
+Add tools live in annotate.py.
 
 - Toolbar: a column of tool buttons on the left of every 3D view (T shows / hides it).
 - Gizmo: drawn at the pivot of the selection (median of the selected objects' origins, or of the
@@ -14,7 +16,7 @@ Cursor, Move, Rotate, Scale – Scale / Scale Cage, Transform).
   to choose the variant; pressing the tool's key again cycles the variants (like Blender).
 
 Shortcuts: Shift+Space opens the tool menu (W Select, Space Cursor, G Move, R Rotate, S Scale,
-T Transform – the key of the active tool again: next variant), W switches to Select (again: next select
+T Transform, D Annotate, M Measure, A Add – the key of the active tool again: next variant), W switches to Select (again: next select
 variant), T shows / hides the toolbar. All keys live in keymap.py.
 - Dragging a handle runs the same interactive transform as G / R / S (with the axis set);
   releasing the mouse confirms, right click / Esc cancels.
@@ -41,12 +43,18 @@ TOOLS = [
     ("ROTATE", "⟳", "Rotate – drag a ring (X / Y / Z) or the outer ring (view axis)", "R"),
     ("SCALE", "⤡", "Scale – drag a handle (X / Y / Z) or the outer ring (uniform)", "S"),
     ("TRANSFORM", "❖", "Transform – arrows move, rings rotate, boxes scale", "T"),
+    ("ANNOTATE", "✎", "Annotate – draw notes over the scene", "D"),
+    ("MEASURE", "📏", "Measure – drag to measure distances, from the middle of a ruler: angles", "M"),
+    ("ADD", "＋", "Add – drag the base, then the height of a new object", "A"),
 ]
+# a gap in the toolbar before these tools (groups like Blender's toolbar)
+GROUP_START = ("ANNOTATE", "ADD")
+OBJECT_ONLY = ("ADD",)          # tools shown only in Object Mode
 _KIND = {"MOVE": "G", "ROTATE": "R", "SCALE": "S", "TRANSFORM": "T"}
 _BUILTIN = {"SELECT": "select_box", "CURSOR": "cursor", "MOVE": "move", "ROTATE": "rotate", "SCALE": "scale",
-            "TRANSFORM": "transform"}
+            "TRANSFORM": "transform", "MEASURE": "measure"}
 TOOL_NAMES = {"SELECT": "Select", "CURSOR": "Cursor", "MOVE": "Move", "ROTATE": "Rotate", "SCALE": "Scale",
-              "TRANSFORM": "Transform"}
+              "TRANSFORM": "Transform", "ANNOTATE": "Annotate", "MEASURE": "Measure", "ADD": "Add"}
 
 # variants: tool → [(variant, name, icon, Blender tool id, tooltip)]
 VARIANTS = {
@@ -68,12 +76,39 @@ VARIANTS = {
          "Drag a side of the box around the selection (one axis) or a corner (all axes) – the opposite "
          "side stays"),
     ],
+    "ANNOTATE": [
+        ("FREEHAND", "Annotate", "tool_annotate", "annotate",
+         "Draw a free-hand note (stored in the scene's annotations, saved with the file)"),
+        ("LINE", "Annotate Line", "tool_annotate_line", "annotate_line", "Drag to draw a straight line"),
+        ("POLYGON", "Annotate Polygon", "tool_annotate_polygon", "annotate_polygon",
+         "Click to add points; double-click, Enter or right click finishes"),
+        ("ERASER", "Annotate Eraser", "tool_annotate_eraser", "annotate_eraser",
+         "Drag over strokes to erase them (Ctrl + mouse wheel: radius)"),
+    ],
+    "ADD": [
+        ("CUBE", "Add Cube", "tool_add_cube", "primitive_cube_add",
+         "Drag the base, release, move the mouse for the height, click to create"),
+        ("CONE", "Add Cone", "tool_add_cone", "primitive_cone_add",
+         "Drag the base, release, move the mouse for the height, click to create"),
+        ("CYLINDER", "Add Cylinder", "tool_add_cylinder", "primitive_cylinder_add",
+         "Drag the base, release, move the mouse for the height, click to create"),
+        ("UV_SPHERE", "Add UV Sphere", "tool_add_uvsphere", "primitive_uv_sphere_add",
+         "Drag the base, release, move the mouse for the height, click to create"),
+        ("ICO_SPHERE", "Add Ico Sphere", "tool_add_icosphere", "primitive_ico_sphere_add",
+         "Drag the base, release, move the mouse for the height, click to create"),
+    ],
 }
-_DEFAULT_VARIANT = {"SELECT": "BOX", "SCALE": "SCALE"}
+_DEFAULT_VARIANT = {"SELECT": "BOX", "SCALE": "SCALE", "ANNOTATE": "FREEHAND", "ADD": "CUBE"}
 # keymap actions of the tools (their keys are shown in tooltips; pressing again cycles the variants)
 TOOL_ACTIONS = {"SELECT": "view3d.tool_select", "CURSOR": "view3d.tool_cursor", "MOVE": "view3d.tool_move",
-                "ROTATE": "view3d.tool_rotate", "SCALE": "view3d.tool_scale"}
+                "ROTATE": "view3d.tool_rotate", "SCALE": "view3d.tool_scale", "ANNOTATE": "view3d.tool_annotate",
+                "MEASURE": "view3d.tool_measure", "ADD": "view3d.tool_add"}
 CIRCLE_RADIUS = 25          # default Select Circle radius (unscaled px)
+
+
+def tool_command(bid):
+    """Python command of a tool (Blender's tool ids; the Add tools are Blender's "builtin.primitive_*")."""
+    return f'bpy.ops.wm.tool_set_by_id(name="builtin.{bid}")'
 
 
 def variant_info(tool, variant):
@@ -112,6 +147,10 @@ class ToolState(QtCore.QObject):
             self.circle_radius = float(s.value("viewport/select_circle_radius", CIRCLE_RADIUS))
         except (TypeError, ValueError):
             self.circle_radius = float(CIRCLE_RADIUS)
+        try:
+            self.eraser_radius = float(s.value("viewport/eraser_radius", 20))
+        except (TypeError, ValueError):
+            self.eraser_radius = 20.0
         self.toolbar_visible = str(s.value("viewport/toolbar", "true")).lower() == "true"
         # toolbar position shared by all views: (fx, fy) = fraction of the free space, None = default
         self.toolbar_pos = None
@@ -157,6 +196,11 @@ class ToolState(QtCore.QObject):
     def set_circle_radius(self, r):
         self.circle_radius = max(4.0, min(400.0, float(r)))
         QtCore.QSettings("QtShell", "QtShell").setValue("viewport/select_circle_radius", self.circle_radius)
+
+    def set_eraser_radius(self, r):
+        self.eraser_radius = max(2.0, min(200.0, float(r)))
+        QtCore.QSettings("QtShell", "QtShell").setValue("viewport/eraser_radius", self.eraser_radius)
+        self.changed.emit()
 
     def set_toolbar_pos(self, pos, horizontal=None):
         self.toolbar_pos = pos
@@ -249,7 +293,7 @@ class _ToolButton(QtWidgets.QToolButton):
                 fnt.setBold(True)
                 a.setFont(fnt)
             a.setToolTip(tip)
-            pytips.tag(a, f'bpy.ops.wm.tool_set_by_id(name="builtin.{bid}")')
+            pytips.tag(a, tool_command(bid))
             a.triggered.connect(lambda _c=False, v=vid: st.set_tool(self.tool, v))
 
     def contextMenuEvent(self, ev):
@@ -272,6 +316,18 @@ class _ToolButton(QtWidgets.QToolButton):
         x, y = r.right() - theme.px(2), r.bottom() - theme.px(2)
         p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, y - k), QtCore.QPointF(x, y), QtCore.QPointF(x - k, y)]))
         p.end()
+
+
+def _style_gap(gap, horizontal):
+    """The thin line between groups of tool buttons."""
+    if horizontal:
+        gap.setFixedSize(theme.px(5), theme.px(22))
+        gap.setStyleSheet(f"background: transparent; border: none; border-left: 1px solid #555; "
+                          f"margin-left: {theme.px(2)}px;")
+    else:
+        gap.setFixedSize(theme.px(22), theme.px(5))
+        gap.setStyleSheet(f"background: transparent; border: none; border-top: 1px solid #555; "
+                          f"margin-top: {theme.px(2)}px;")
 
 
 class Toolbar(QtWidgets.QFrame):
@@ -306,7 +362,13 @@ class Toolbar(QtWidgets.QFrame):
         group.setExclusive(True)
         f = self.font()
         f.setPixelSize(theme.fs(17))
+        self.gaps = {}
         for tool, glyph, tip, key in TOOLS:
+            if tool in GROUP_START:            # a thin line between the groups of tools
+                gap = QtWidgets.QFrame(self)
+                _style_gap(gap, False)
+                lay.addWidget(gap, 0, QtCore.Qt.AlignCenter)
+                self.gaps[tool] = gap
             b = _ToolButton(self, tool)
             b.setText(glyph)
             b.setFont(f)
@@ -317,6 +379,7 @@ class Toolbar(QtWidgets.QFrame):
             lay.addWidget(b)
             self.buttons[tool] = b
         self.state.changed.connect(self.sync)
+        viewport.hub.mode_changed.connect(lambda _m: self.sync())   # Add only in Object Mode
         keymap.notifier.changed.connect(self._update_buttons)     # tooltips follow key changes
         viewport.installEventFilter(self)          # keep the place when the view is resized
         self.sync()
@@ -343,6 +406,8 @@ class Toolbar(QtWidgets.QFrame):
                                else QtWidgets.QBoxLayout.TopToBottom)
         self.grip.horizontal = horizontal
         self.grip.updateGeometry()
+        for gap in self.gaps.values():
+            _style_gap(gap, horizontal)
         self._lay.invalidate()
         self.adjustSize()
 
@@ -364,15 +429,19 @@ class Toolbar(QtWidgets.QFrame):
                     lines.append("Hold or right click: " + ", ".join(x[1] for x in VARIANTS[tool]))
                 lines.append("{view3d.toolbar} shows / hides the toolbar")
                 b.setToolTip(keymap.render("\n".join(lines)))
-                pytips.tag(b, f'bpy.ops.wm.tool_set_by_id(name="builtin.{v[3] if v else _BUILTIN[tool]}")')
+                pytips.tag(b, tool_command(v[3] if v else _BUILTIN[tool]))
         except RuntimeError:          # deleted together with its viewport
             pass
 
     def sync(self):
         try:
             self._update_buttons()
+            obj = bpy.context.mode == "OBJECT"
             for tool, b in self.buttons.items():
                 b.setChecked(tool == self.state.tool)
+                b.setVisible(obj or tool not in OBJECT_ONLY)
+            for tool, gap in self.gaps.items():
+                gap.setVisible(obj or tool not in OBJECT_ONLY)
             if self.grip.horizontal != self.state.toolbar_horizontal:
                 self._set_orientation(self.state.toolbar_horizontal)
             self.setVisible(self.state.toolbar_visible)
@@ -502,7 +571,12 @@ class ToolMenu(QtWidgets.QMenu):
         title = self.addAction("Tools")
         title.setEnabled(False)
         self.addSeparator()
+        obj = bpy.context.mode == "OBJECT"
         for tool, glyph, _tip, key in TOOLS:
+            if tool in OBJECT_ONLY and not obj:
+                continue
+            if tool in GROUP_START:
+                self.addSeparator()
             vs = VARIANTS.get(tool)
             entries = [(v[0], v[1], v[2]) for v in vs] if vs else [(None, TOOL_NAMES[tool], f"tool_{tool.lower()}")]
             for i, (vid, name, icon) in enumerate(entries):

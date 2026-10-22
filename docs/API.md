@@ -686,6 +686,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 | 1.2 | 0.9.0 – 0.9.1 | `set_viewport_layout()`, `viewport_layout()`, `viewports()`; overlays drawn in every view. 0.9.1: `status_history()`, status messages also in the Console. |
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
+| 1.5 | 0.34.0 | `set_tool()`, `active_tool()`, `TOOLS` – the 3D viewport's toolbar tools (incl. Annotate, Measure, Add); Render View: `set_tool()`, annotations (`add_annotation`, `annotations`, `clear_annotations`, `undo_annotation`, `set_annotation_style`), `set_overlays`, `set_gizmos`, `set_toolbar`. |
 | 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
 | 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
 
@@ -711,7 +712,37 @@ rv.set_pass("Depth"); rv.set_layer("ViewLayer")
 rv.zoom(1); rv.fit()                 # 1:1, Frame All
 rv.save_as("C:/renders/frame.png")   # the format follows the extension (.png .jpg .exr .tif .webp .bmp)
 rv.copy_to_clipboard()
+# API 1.5 – toolbar (T), annotations, header toggles
+rv.set_tool("ANNOTATE", "LINE")      # SAMPLE, or ANNOTATE with FREEHAND / LINE / POLYGON / ERASER
+rv.add_annotation([(10, 10), (200, 120)], color="#ff4040", width=4)   # image pixels from the top-left
+rv.annotations()                     # strokes of the active render slot: [{"pts", "color", "width"}, …]
+rv.undo_annotation(); rv.clear_annotations()
+rv.set_annotation_style(color="#619bc7", width=3)   # colour / thickness of new strokes
+rv.set_overlays(False); rv.set_gizmos(True); rv.set_toolbar(True)
 ```
+
+Render View annotations are kept per render slot for the Blender session (like Blender's they are not part of
+the saved image).
+
+## Toolbar tools from a script
+
+`qt_shell.api.set_tool(tool, variant=None)` (API 1.5) activates a tool of the 3D viewport's toolbar (shared by all
+views); `active_tool()` returns `(tool, variant)`; `qt_shell.api.TOOLS` lists the tools and their variants:
+
+```python
+import qt_shell
+qs = qt_shell.api
+qs.set_tool("SELECT", "LASSO")      # TWEAK, BOX, CIRCLE, LASSO
+qs.set_tool("SCALE", "CAGE")
+qs.set_tool("ANNOTATE", "POLYGON")  # FREEHAND, LINE, POLYGON, ERASER
+qs.set_tool("MEASURE")
+qs.set_tool("ADD", "UV_SPHERE")     # CUBE, CONE, CYLINDER, UV_SPHERE, ICO_SPHERE (Object Mode)
+qs.active_tool()                    # ('ADD', 'UV_SPHERE')
+```
+
+3D view annotations are Blender data: `bpy.context.scene.annotation` (layers → frames → strokes → points `co`),
+rulers of the Measure tool are the strokes of its layer `RulerData3D`. `qt_shell.annotate.add_stroke(coords)`
+adds a stroke to the active note layer.
 
 ## Outliner from a script
 

@@ -37,9 +37,10 @@ __all__ = [
     "viewport_layout", "set_viewport_layout", "viewports", "status_history",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
     "owner", "current_owner", "cleanup", "owned", "outliner", "graph_editor", "render_view",
+    "active_tool", "set_tool", "TOOLS",
 ]
 
-API_VERSION = (1, 4)
+API_VERSION = (1, 5)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -224,9 +225,48 @@ def render_view():
         rv.passes(); rv.set_pass("Depth")  # the passes enabled in View Layer Properties → Passes
         rv.zoom(1); rv.fit()              # 1:1, Frame All
         rv.save_as("C:/renders/frame.png")   # the format follows the extension
-        rv.copy_to_clipboard()"""
+        rv.copy_to_clipboard()
+        rv.set_tool("ANNOTATE", "LINE")   # SAMPLE / ANNOTATE (FREEHAND, LINE, POLYGON, ERASER)
+        rv.add_annotation([(10, 10), (200, 120)], color="#ff4040", width=4)   # image pixels, top-left
+        rv.annotations(); rv.clear_annotations(); rv.undo_annotation()
+        rv.set_overlays(False); rv.set_gizmos(True); rv.set_toolbar(True)"""
     w = main_window()
     return getattr(w, "render_window", None) if w is not None else None
+
+
+# 3D viewport tools: tool → its variants (None = no variants)
+TOOLS = {"SELECT": ("TWEAK", "BOX", "CIRCLE", "LASSO"), "CURSOR": None, "MOVE": None, "ROTATE": None,
+         "SCALE": ("SCALE", "CAGE"), "TRANSFORM": None, "ANNOTATE": ("FREEHAND", "LINE", "POLYGON", "ERASER"),
+         "MEASURE": None, "ADD": ("CUBE", "CONE", "CYLINDER", "UV_SPHERE", "ICO_SPHERE")}
+
+
+def active_tool():
+    """(tool, variant) of the 3D viewport's toolbar, e.g. ('SELECT', 'BOX') or ('MEASURE', None)."""
+    w = main_window()
+    if w is None:
+        return None
+    from . import gizmo
+    st = gizmo.tool_state(w.hub)
+    return st.tool, st.variant(st.tool)
+
+
+def set_tool(tool, variant=None):
+    """Activates a toolbar tool of the 3D viewport (shared by all views), see TOOLS:
+
+        qt_shell.api.set_tool("ANNOTATE", "POLYGON")
+        qt_shell.api.set_tool("ADD", "CYLINDER")    # Add tools only work in Object Mode
+        qt_shell.api.set_tool("MEASURE")"""
+    tool = str(tool).upper()
+    if tool not in TOOLS:
+        raise ValueError(f"Unknown tool {tool!r} – one of {', '.join(TOOLS)}")
+    if variant is not None and variant not in (TOOLS[tool] or ()):
+        raise ValueError(f"Tool {tool} has no variant {variant!r}")
+    w = main_window()
+    if w is None:
+        return False
+    from . import gizmo
+    gizmo.tool_state(w.hub).set_tool(tool, variant)
+    return True
 
 
 def outliner():

@@ -107,6 +107,59 @@ _ICONS = {
                        '<rect x="6.6" y="1.6" width="2.8" height="2.8"/><rect x="11.6" y="6.6" width="2.8" height="2.8"/>'
                        '<rect x="6.6" y="11.6" width="2.8" height="2.8"/><rect x="1.6" y="6.6" width="2.8" height="2.8"/></g>',
 
+    # annotate: a pencil with its stroke (Annotate / Line / Polygon / Eraser)
+    "tool_annotate": '<path fill="none" stroke="{a}" stroke-width="1.3" stroke-linecap="round" '
+                     'd="M1.5 13.5 C3 11 4.5 14.5 6.5 12.5"/><path fill="none" stroke="{c}" stroke-width="1.2" '
+                     'stroke-linejoin="round" d="M7.5 11.5 L14 5 L12 3 L5.5 9.5 Z M5.5 9.5 L4.8 12.2 L7.5 11.5"/>',
+    "tool_annotate_line": '<path fill="none" stroke="{a}" stroke-width="1.3" stroke-linecap="round" d="M1.5 14 L7 8.5"/>'
+                          '<circle cx="1.8" cy="13.8" r="1.1" fill="{a}"/><path fill="none" stroke="{c}" '
+                          'stroke-width="1.2" stroke-linejoin="round" d="M9.5 9.5 L15 4 L13 2 L7.5 7.5 Z '
+                          'M7.5 7.5 L6.8 10.2 L9.5 9.5"/>',
+    "tool_annotate_polygon": '<path fill="none" stroke="{a}" stroke-width="1.3" stroke-linejoin="round" '
+                             'd="M1.5 14.5 L2.5 8 L6.5 10.5 L4.5 14.5 Z"/><g fill="{a}"><circle cx="1.5" cy="14.5" '
+                             'r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="6.5" cy="10.5" r="1"/></g>'
+                             '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                             'd="M10 9 L15 4 L13 2 L8 7 Z M8 7 L7.3 9.7 L10 9"/>',
+    "tool_annotate_eraser": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                            'd="M2 10.5 L8.5 4 L13 8.5 L8 13.5 H5 Z M5.2 7.3 L9.7 11.8"/>'
+                            '<path fill="{a}" d="M2 10.5 L5.2 7.3 L9.7 11.8 L8 13.5 H5 Z"/>'
+                            '<path fill="none" stroke="{c}" stroke-width="1.1" stroke-linecap="round" d="M9 14.5 H15"/>',
+    # measure: a ruler lying diagonally with ticks
+    "tool_measure": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                    'd="M1.5 11 L11 1.5 L14.5 5 L5 14.5 Z"/><path fill="none" stroke="{c}" stroke-width="1" '
+                    'stroke-linecap="round" d="M4 8.5 L5.6 10.1 M6 6.5 L7 7.5 M8 4.5 L9.6 6.1 M10 2.5 L11 3.5"/>'
+                    '<circle cx="3.2" cy="12.8" r="1" fill="{a}"/>',
+    # add primitive tools: the shape plus a small accent "+"
+    "tool_add_cube": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                     'd="M7 4 L12 6.5 V12 L7 14.5 L2 12 V6.5 Z M2 6.5 L7 9 L12 6.5 M7 9 V14.5"/>'
+                     '<path fill="none" stroke="{a}" stroke-width="1.4" stroke-linecap="round" d="M13 0.8 V5.2 M10.8 3 H15.2"/>',
+    "tool_add_cone": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                     'd="M7 3.5 L12 12 M7 3.5 L2 12"/><ellipse cx="7" cy="12" rx="5" ry="2" fill="none" '
+                     'stroke="{c}" stroke-width="1.2"/><path fill="none" stroke="{a}" stroke-width="1.4" '
+                     'stroke-linecap="round" d="M13 0.8 V5.2 M10.8 3 H15.2"/>',
+    "tool_add_cylinder": '<ellipse cx="7" cy="5.5" rx="5" ry="2" fill="none" stroke="{c}" stroke-width="1.2"/>'
+                         '<path fill="none" stroke="{c}" stroke-width="1.2" d="M2 5.5 V12.5 A5 2 0 0 0 12 12.5 V5.5"/>'
+                         '<path fill="none" stroke="{a}" stroke-width="1.4" stroke-linecap="round" '
+                         'd="M13 0.8 V5.2 M10.8 3 H15.2"/>',
+    "tool_add_uvsphere": '<circle cx="7" cy="9" r="5.5" fill="none" stroke="{c}" stroke-width="1.2"/>'
+                         '<ellipse cx="7" cy="9" rx="5.5" ry="2" fill="none" stroke="{c}" stroke-width="1"/>'
+                         '<ellipse cx="7" cy="9" rx="2.2" ry="5.5" fill="none" stroke="{c}" stroke-width="1"/>'
+                         '<path fill="none" stroke="{a}" stroke-width="1.4" stroke-linecap="round" '
+                         'd="M13 0.8 V5.2 M10.8 3 H15.2"/>',
+    "tool_add_icosphere": '<path fill="none" stroke="{c}" stroke-width="1.1" stroke-linejoin="round" '
+                          'd="M7 3.5 L12 6.3 V11.7 L7 14.5 L2 11.7 V6.3 Z M7 3.5 L4.5 9.6 L9.5 9.6 Z M4.5 9.6 L2 6.3 '
+                          'M4.5 9.6 L2 11.7 M4.5 9.6 L7 14.5 L9.5 9.6 L12 11.7 M9.5 9.6 L12 6.3"/>'
+                          '<path fill="none" stroke="{a}" stroke-width="1.4" stroke-linecap="round" '
+                          'd="M13 0.8 V5.2 M10.8 3 H15.2"/>',
+    # sample: an eyedropper
+    "tool_sample": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                   'd="M9 4.5 L11.5 7 L5 13.5 L2.5 14 L3 11.5 Z"/><path fill="{c}" d="M9.5 3.5 L11.8 1.2 '
+                   'C12.6 0.4 13.8 0.4 14.6 1.2 C15.4 2 15.4 3.2 14.6 4 L12.3 6.3 L13 7 L12 8 L8 4 L9 3 Z"/>'
+                   '<path fill="{a}" d="M3 11.5 L5.8 8.7 L7.2 10.1 L4.6 12.7 Z"/>',
+    # toolbar toggle: a frame with a panel of tools on the left
+    "toolbar": '<rect x="1.5" y="2.5" width="13" height="11" rx="1.2" fill="none" stroke="{c}" stroke-width="1.2"/>'
+               '<rect x="2.2" y="3.2" width="4" height="9.6" fill="{c}" fill-opacity=".55"/>',
+
     # --- navigation
     "zoom": f'<circle cx="6.8" cy="6.8" r="4.6" {S}/><path d="M10.3 10.3 L14.4 14.4" stroke="{{c}}" stroke-width="2.2" '
             'stroke-linecap="round"/>',
