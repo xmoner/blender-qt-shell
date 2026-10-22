@@ -378,20 +378,83 @@ class TabColumn(QtWidgets.QWidget):
     """Vertical column of tabs + QStackedWidget (replacement for QTabWidget with the API we use)."""
     currentChanged = QtCore.Signal(int)
 
+    WIDTH_KEY = "properties/tab_width"
+
     def __init__(self):
         super().__init__()
         lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        self.nav = QtWidgets.QListWidget()
-        self.nav.setFixedWidth(theme.px(96))
-        self.nav.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        # the tab column and the page are in a splitter: drag the border to make the names fit;
+        # when the column is narrower than a name (or the dock is short) scroll bars appear
+        self.split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
+        self.split.setChildrenCollapsible(False)
+        self.split.setHandleWidth(theme.px(4))
+        self.nav = QtWidgets.QListWidget(self.split)
+        self.nav.setMinimumWidth(theme.px(34))            # icons only
+        self.nav.setTextElideMode(QtCore.Qt.ElideNone)    # full names – scroll instead of "Constrai…"
+        self.nav.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.nav.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.nav.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.nav.setStyleSheet("QListWidget{background:#232323;} "
                                f"QListWidget::item{{padding:{theme.px(5)}px {theme.px(4)}px;}}")
-        self.stack = QtWidgets.QStackedWidget()
-        lay.addWidget(self.nav)
-        lay.addWidget(self.stack, 1)
+        self.nav.setToolTip("Drag the border on the right to make the names fit")
+        self.stack = QtWidgets.QStackedWidget(self.split)
+        self.split.addWidget(self.nav)
+        self.split.addWidget(self.stack)
+        self.split.setStretchFactor(0, 0)
+        self.split.setStretchFactor(1, 1)
+        lay.addWidget(self.split)
+        self._want = None                 # wanted width of the tab column (px), None = fit the names
+        self._applying = False
+        self.split.splitterMoved.connect(self._moved)
         self.nav.currentRowChanged.connect(self._row)
+
+    def _fit_width(self):
+        """Width that shows the longest name (icon + text + padding + a possible scroll bar)."""
+        fm = self.nav.fontMetrics()
+        names = [self.nav.item(i).text() for i in range(self.nav.count())]
+        text = max((fm.horizontalAdvance(t) for t in names), default=theme.px(60))
+        return text + self.nav.iconSize().width() + theme.px(30) + self.nav.verticalScrollBar().sizeHint().width()
+
+    def _wanted(self):
+        if self._want is None:
+            try:
+                v = float(QtCore.QSettings("QtShell", "QtShell").value(self.WIDTH_KEY, 0) or 0)
+            except (TypeError, ValueError):
+                v = 0
+            self._want = theme.px(v) if v > 0 else min(self._fit_width(), theme.px(150))
+        return self._want
+
+    def _apply_width(self):
+        """Keeps the tab column at its width when the panel is resized (the page gets the rest)."""
+        total = sum(self.split.sizes())
+        if total <= 0 or not self.nav.count():
+            return
+        w = max(self.nav.minimumWidth(), min(self._wanted(), total - theme.px(80)))
+        if self.split.sizes()[0] != w:
+            self._applying = True
+            try:
+                self.split.setSizes([w, max(1, total - w)])
+            finally:
+                self._applying = False
+
+    def _moved(self, *_a):
+        """The user dragged the border: remember the width (for all Properties panels)."""
+        if self._applying:
+            return
+        w = self.split.sizes()[0]
+        if w > 0:
+            self._want = w
+            QtCore.QSettings("QtShell", "QtShell").setValue(self.WIDTH_KEY, round(w / theme.ui_scale, 1))
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        QtCore.QTimer.singleShot(0, self._apply_width)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._apply_width()
 
     def _row(self, row):
         if row >= 0:
