@@ -1,10 +1,20 @@
-"""Timeline: playback, frame range, keyframes of the active object."""
+"""Timeline: playback, frame range, frame rate, keyframes of the selection.
+
+Keys (like Blender's Timeline): the diamonds are the keys of the selected objects (selected bones in Pose
+mode). Click a key to select it (Shift: add / remove), drag a key to move the selected keys by whole frames
+(a key landing on another key of the same curve replaces it), Shift + drag on empty space selects the keys
+in a frame range, {timeline.select_all} selects all, {timeline.delete_keys} deletes the selected keys.
+Esc / right click while dragging cancels. A click on empty space moves the current frame (scrub).
+
+Frame rate: the fps button sets Blender's scene frame rate (Properties → Output → Frame Rate) – the same
+presets as Blender (23.98 … 240) and Custom.
+"""
 import time
 
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, geocache, playcache, theme
+from . import bridge, geocache, keymap, playcache, theme
 from . import icons
 from . import pytips
 from .rna_widgets import DragSpin
@@ -21,13 +31,151 @@ def _runs(frames):
     return out
 
 
+# Blender's frame rate presets: label → (fps, fps_base)
+FPS_PRESETS = [("23.98", 24, 1.001), ("24", 24, 1.0), ("25", 25, 1.0), ("29.97", 30, 1.001), ("30", 30, 1.0),
+               ("50", 50, 1.0), ("59.94", 60, 1.001), ("60", 60, 1.0), ("120", 120, 1.0), ("240", 240, 1.0)]
+
+
+def fps_label(render=None):
+    r = render or bpy.context.scene.render
+    base = r.fps_base or 1.0
+    if abs(base - 1.0) < 1e-6:
+        return f"{r.fps} fps"
+    v = r.fps / base
+    return f"{v:.2f} fps" if abs(v - round(v)) > 1e-3 else f"{round(v)} fps"
+
+
+def timeline_curves():
+    """(object, F-curve) pairs the Timeline shows: the selected objects (and the active one); in Pose mode
+    only the curves of the selected bones (like Blender's Timeline with Only Show Selected)."""
+    from .graph_editor import fcurves_of
+    from . import keying
+    ctx = bpy.context
+    vl = ctx.view_layer
+    obs = [o for o in vl.objects if o.select_get()]     # (ctx.selected_objects is missing in some contexts)
+    act = vl.objects.active
+    if act is not None and act not in obs:
+        obs.append(act)
+    out = []
+    for ob in obs:
+        names = keying.selected_bone_names(ob) if ob.type == "ARMATURE" else None
+        for fc in fcurves_of(ob):
+            if keying.fcurve_visible(ob, fc, names):
+                out.append((ob, fc))
+    return out
+
+
+def _reevaluate():
+    sc = bpy.context.scene
+    try:
+        sc.frame_set(sc.frame_current)      # the animation follows the moved / deleted keys
+    except Exception:
+        pass
+
+
 class TimeBar(QtWidgets.QWidget):
     def __init__(self, timeline):
         super().__init__()
         self.tl = timeline
         self.setMinimumHeight(theme.px(46))
-        self.setMouseTracking(False)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(QtCore.Qt.ClickFocus)
         self.keys = []
+        self.sel = set()          # selected key frames
+        self._drag = None         # moving keys: {"start", "delta", "points", "sel"}
+        self._range_sel = None    # Shift + drag on empty space: (x0, x1)
+        self._scrubbing = False
+        self._hover = None
+        keymap.tip(self, "Click a key to select it (Shift: add), drag keys to move them, Shift + drag on empty "
+                         "space: select a range · {timeline.select_all}: select all · {timeline.delete_keys}: "
+                         "delete the selected keys · click elsewhere: set the frame")
+
+    # --- keys
+    def key_y(self):
+        return self.height() * 0.65
+
+    def key_at(self, pos):
+        if abs(pos.y() - self.key_y()) > theme.px(9):
+            return None
+        best = None
+        for k in self.keys:
+            d = abs(self.frame_to_x(k) - pos.x())
+            if d <= theme.px(7) and (best is None or d < best[0]):
+                best = (d, k)
+        return best[1] if best else None
+
+    def _start_drag(self, frame):
+        pts = []
+        for ob, fc in timeline_curves():
+            for kp in fc.keyframe_points:
+                if int(round(kp.co.x)) in self.sel:
+                    pts.append((ob, fc, kp, kp.co.x, kp.handle_left.x, kp.handle_right.x))
+        self._drag = {"start": frame, "delta": 0, "points": pts, "sel": set(self.sel)}
+
+    def _apply_drag(self, delta):
+        d = self._drag
+        if delta == d["delta"]:
+            return
+        d["delta"] = delta
+        for _ob, _fc, kp, x, hl, hr in d["points"]:
+            kp.co.x = x + delta
+            kp.handle_left.x = hl + delta
+            kp.handle_right.x = hr + delta
+        self.sel = {f + delta for f in d["sel"]}
+        for ob in {p[0] for p in d["points"]}:
+            ob.update_tag()
+        _reevaluate()
+        self.tl.sync()
+
+    def _end_drag(self, cancel=False):
+        d, self._drag = self._drag, None
+        if d is None:
+            return
+        if cancel:
+            self._drag = d
+            self._apply_drag(0)
+            self._drag = None
+            return
+        if d["delta"] == 0:
+            return
+        moved = {}
+        for _ob, fc, kp, *_r in d["points"]:
+            moved.setdefault(fc, set()).add(kp.as_pointer())
+        for fc, ptrs in moved.items():
+            frames = {int(round(kp.co.x)) for kp in fc.keyframe_points if kp.as_pointer() in ptrs}
+            # a moved key replaces a key of the same curve on its new frame (Blender merges them too)
+            for kp in reversed(list(fc.keyframe_points)):
+                if kp.as_pointer() not in ptrs and int(round(kp.co.x)) in frames:
+                    fc.keyframe_points.remove(kp, fast=True)
+            fc.update()
+        _reevaluate()
+        n = len(d["sel"])
+        bridge.undo_push("Move Keyframes")
+        self.tl.status(f"Moved {n} key frame{'s' if n != 1 else ''} by {d['delta']:+d}")
+        self.tl.sync()
+
+    def delete_selected(self):
+        if not self.sel:
+            return 0
+        n = 0
+        for ob, fc in timeline_curves():
+            for kp in reversed(list(fc.keyframe_points)):
+                if int(round(kp.co.x)) in self.sel:
+                    fc.keyframe_points.remove(kp, fast=True)
+                    n += 1
+            fc.update()
+            ob.update_tag()
+        self.sel.clear()
+        if n:
+            _reevaluate()
+            bridge.undo_push("Delete Keyframes")
+            self.tl.status(f"Deleted {n} key{'s' if n != 1 else ''}")
+        self.tl.sync()
+        return n
+
+    def select_all(self):
+        self.sel = set() if self.sel >= set(self.keys) and self.keys else set(self.keys)
+        self.update()
 
     def _range(self):
         sc = bpy.context.scene
@@ -79,14 +227,28 @@ class TimeBar(QtWidgets.QWidget):
                 p.drawRect(QtCore.QRectF(xa, self.height() - hb, xb - xa, hb))
         # keys
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        y = self.height() * 0.65
+        y = self.key_y()
+        if self._range_sel is not None:
+            a, b = sorted(self._range_sel)
+            p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
+            p.setBrush(QtGui.QColor(255, 255, 255, 25))
+            p.drawRect(QtCore.QRectF(a, 14, b - a, self.height() - 18))
         for k in self.keys:
             x = self.frame_to_x(k)
-            poly = QtGui.QPolygonF([QtCore.QPointF(x, y - 5), QtCore.QPointF(x + 5, y),
-                                    QtCore.QPointF(x, y + 5), QtCore.QPointF(x - 5, y)])
+            r = 6 if (k in self.sel or k == self._hover) else 5
+            poly = QtGui.QPolygonF([QtCore.QPointF(x, y - r), QtCore.QPointF(x + r, y),
+                                    QtCore.QPointF(x, y + r), QtCore.QPointF(x - r, y)])
             p.setPen(QtGui.QColor("#000"))
-            p.setBrush(QtGui.QColor("#e9c44a" if k == sc.frame_current else "#d0d0d0"))
+            p.setBrush(QtGui.QColor("#ffa13d" if k in self.sel else (
+                "#ffffff" if k == self._hover else "#d0d0d0")))
             p.drawPolygon(poly)
+        if self._drag is not None and self._drag["delta"]:
+            f = p.font()
+            f.setPixelSize(theme.fs(11))
+            p.setFont(f)
+            p.setPen(QtGui.QColor("#ffa13d"))
+            k = min(self.sel) if self.sel else 0
+            p.drawText(QtCore.QPointF(self.frame_to_x(k) + 8, y - 8), f"{self._drag['delta']:+d}")
         # current frame (the cached frame being shown during cached playback)
         x = self.frame_to_x(self.tl.shown_frame())
         p.setPen(QtGui.QPen(QtGui.QColor("#4772b3"), 2))
@@ -94,11 +256,89 @@ class TimeBar(QtWidgets.QWidget):
         p.end()
 
     def mousePressEvent(self, ev):
-        self._scrub(ev.position().x())
+        pos = ev.position()
+        if self._drag is not None:            # right click while moving: cancel
+            self._end_drag(cancel=ev.button() != QtCore.Qt.LeftButton)
+            self.update()
+            return
+        if ev.button() != QtCore.Qt.LeftButton:
+            return
+        shift = bool(ev.modifiers() & QtCore.Qt.ShiftModifier)
+        k = self.key_at(pos)
+        if k is not None:
+            if shift:
+                self.sel ^= {k}
+                self.update()
+                if k not in self.sel:
+                    return
+            elif k not in self.sel:
+                self.sel = {k}
+            self._start_drag(k)
+            self.update()
+            return
+        if shift:
+            self._range_sel = (pos.x(), pos.x())
+            self.update()
+            return
+        self.sel.clear()
+        self._scrubbing = True
+        self._scrub(pos.x())
 
     def mouseMoveEvent(self, ev):
-        if ev.buttons() & QtCore.Qt.LeftButton:
-            self._scrub(ev.position().x())
+        pos = ev.position()
+        if self._drag is not None:
+            self._apply_drag(self.x_to_frame(pos.x()) - self._drag["start"])
+            self.update()
+        elif self._range_sel is not None:
+            self._range_sel = (self._range_sel[0], pos.x())
+            self.update()
+        elif self._scrubbing and ev.buttons() & QtCore.Qt.LeftButton:
+            self._scrub(pos.x())
+        else:
+            h = self.key_at(pos)
+            if h != self._hover:
+                self._hover = h
+                self.setCursor(QtCore.Qt.SizeHorCursor if h is not None else QtCore.Qt.ArrowCursor)
+                self.update()
+
+    def mouseReleaseEvent(self, ev):
+        if ev.button() != QtCore.Qt.LeftButton:
+            return
+        if self._drag is not None:
+            self._end_drag()
+        elif self._range_sel is not None:
+            a, b = sorted(self._range_sel)
+            self._range_sel = None
+            self.sel |= {k for k in self.keys if a <= self.frame_to_x(k) <= b}
+        self._scrubbing = False
+        self.update()
+
+    def keyPressEvent(self, ev):
+        names = keymap.event_names(ev)
+        if self._drag is not None and ev.key() == QtCore.Qt.Key_Escape:
+            self._end_drag(cancel=True)
+        elif keymap.hit("timeline.delete_keys", ev, names):
+            self.delete_selected()
+        elif keymap.hit("timeline.select_all", ev, names):
+            self.select_all()
+        elif keymap.hit("timeline.deselect_all", ev, names):
+            self.sel.clear()
+        else:
+            super().keyPressEvent(ev)
+            return
+        self.update()
+        ev.accept()
+
+    def event(self, ev):
+        # the Timeline's keys win over window shortcuts while it has the focus
+        if ev.type() == QtCore.QEvent.ShortcutOverride:
+            names = keymap.event_names(ev)
+            if any(keymap.hit(a, ev, names) for a in ("timeline.delete_keys", "timeline.select_all",
+                                                      "timeline.deselect_all")) or (
+                    self._drag is not None and ev.key() == QtCore.Qt.Key_Escape):
+                ev.accept()
+                return True
+        return super().event(ev)
 
     def _scrub(self, x):
         bpy.context.scene.frame_set(self.x_to_frame(x))
@@ -199,6 +439,17 @@ class Timeline(QtWidgets.QWidget):
         self.end.valueChanged.connect(lambda v: self._set("frame_end", v))
         self.end.editingFinished.connect(lambda: bridge.undo_push("Frame Range"))
         row.addWidget(self.end)
+        row.addSpacing(6)
+        self.fps_btn = QtWidgets.QToolButton(self)
+        self.fps_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.fps_btn.setToolTip("Frame Rate – playback speed (frames per second), the same setting as "
+                                "Properties → Output → Format → Frame Rate")
+        pytips.tag(self.fps_btn, "bpy.context.scene.render.fps = 24; bpy.context.scene.render.fps_base = 1.0")
+        fm = QtWidgets.QMenu(self.fps_btn)
+        fm.setToolTipsVisible(True)
+        fm.aboutToShow.connect(lambda: self._fill_fps_menu(fm))
+        self.fps_btn.setMenu(fm)
+        row.addWidget(self.fps_btn)
         lay.addLayout(row)
         self.bar = TimeBar(self)
         lay.addWidget(self.bar)
@@ -431,10 +682,74 @@ class Timeline(QtWidgets.QWidget):
         self.auto_key.blockSignals(True)
         self.auto_key.setChecked(sc.tool_settings.use_keyframe_insert_auto)
         self.auto_key.blockSignals(False)
-        ob = bpy.context.view_layer.objects.active
-        from . import keying
-        self.bar.keys = keying.key_frames(ob) if ob else []
+        label = fps_label(sc.render)
+        if self.fps_btn.text() != label:
+            self.fps_btn.setText(label)
+        frames = set()
+        for _ob, fc in timeline_curves():
+            for kp in fc.keyframe_points:
+                frames.add(int(round(kp.co.x)))
+        self.bar.keys = sorted(frames)
+        if self.bar._drag is None:
+            self.bar.sel &= frames
         self.bar.update()
+
+    # ------------------------------------------------------------ frame rate
+    def _fill_fps_menu(self, m):
+        m.clear()
+        r = bpy.context.scene.render
+        grp = QtGui.QActionGroup(m)
+        found = False
+        for label, fps, base in FPS_PRESETS:
+            a = m.addAction(f"{label} fps")
+            a.setCheckable(True)
+            on = r.fps == fps and abs((r.fps_base or 1.0) - base) < 1e-4
+            found |= on
+            a.setChecked(on)
+            grp.addAction(a)
+            pytips.tag(a, f"bpy.context.scene.render.fps = {fps}; bpy.context.scene.render.fps_base = {base}")
+            a.triggered.connect(lambda _c=False, f=fps, b=base: self.set_fps(f, b))
+        m.addSeparator()
+        a = m.addAction("Custom…" if found else f"Custom ({fps_label(r)})…")
+        a.setCheckable(True)
+        a.setChecked(not found)
+        grp.addAction(a)
+        a.setToolTip("Any frame rate: FPS and Base (fps / base = frames per second)")
+        a.triggered.connect(self._custom_fps)
+
+    def _custom_fps(self):
+        r = bpy.context.scene.render
+        v, ok = QtWidgets.QInputDialog.getDouble(self, "Custom Frame Rate", "Frames per second:",
+                                                 r.fps / (r.fps_base or 1.0), 0.01, 1000.0, 3)
+        if not ok:
+            return
+        fps = max(1, round(v))
+        self.set_fps(fps, fps / v)
+
+    def set_fps(self, fps, base=1.0):
+        """Scene frame rate (Properties → Output → Frame Rate): fps / base frames per second."""
+        r = bpy.context.scene.render
+        r.fps = int(fps)
+        r.fps_base = float(base)
+        bridge.undo_push("Frame Rate")
+        if self.is_playing():                 # keep playing at the new speed from the shown frame
+            self._t0 = time.perf_counter()
+            self._f0 = getattr(self, "_play_frame", bpy.context.scene.frame_current)
+            self._next = self._t0
+        mw = getattr(self.hub, "main_window", None)
+        props = getattr(mw, "properties", None)
+        if props is not None:
+            try:
+                props.refresh(force=True)     # Output → Frame Rate shows the new value
+            except Exception:
+                pass
+        self.status(f"Frame rate: {fps_label(r)}")
+        self.sync()
+
+    def status(self, text):
+        mw = getattr(self.hub, "main_window", None)
+        if mw is not None:
+            mw.statusBar().showMessage(text, 3000)
 
     @staticmethod
     def _spin(lo, hi):

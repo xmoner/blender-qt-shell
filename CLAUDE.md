@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.34.0 on 2026-10-22; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.35.0 on 2026-10-23; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -122,7 +122,7 @@ Don't dig through old chat history.
 - Graph editor: tangent handle drag, MMB move, Infinity, Frame/Value boxes not tested live.
 - Leftover debug files on the PC: `qt_shell\_inspect.py`, `_inspect.json`, `_ol_research.py`, `_ol_research.json`,
   `_rv_probe.py`, `_rv_probe5.py`–`_rv_probe8.py`, `_rv_bg.py`, `_rv_probe.json`, `_rv_shot_*.png`,
-  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`
+  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`, `_t035.py`, `_t035.json`, `_t035_*.png`
   (deleting needs the owner's permission).
 - Outliner: drag & drop and restriction columns tested with synthetic mouse input; Ctrl / middle-mouse drag variants not tested live.
 
