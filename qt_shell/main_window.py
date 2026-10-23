@@ -1060,7 +1060,10 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("window.render_anim", lambda: self.render_image(True))
         sc("window.show_render", self.show_render)
         sc("window.quit", self.close)
-        sc("window.play", self.timeline.toggle_play)
+        sc("window.play", lambda: self.timeline.toggle_play())
+        sc("window.play_reverse", lambda: self.timeline.toggle_play(reverse=True))
+        sc("window.frame_prev", lambda: self.timeline.step(-1))
+        sc("window.frame_next", lambda: self.timeline.step(1))
         sc("window.maximize", self._toggle_maximize_viewport)
         sc("window.quad", self.viewports.toggle_quad)
 

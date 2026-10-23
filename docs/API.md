@@ -687,6 +687,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
 | 1.5 | 0.34.0 | `set_tool()`, `active_tool()`, `TOOLS` – the 3D viewport's toolbar tools (incl. Annotate, Measure, Add); Render View: `set_tool()`, annotations (`add_annotation`, `annotations`, `clear_annotations`, `undo_annotation`, `set_annotation_style`), `set_overlays`, `set_gizmos`, `set_toolbar`. |
+| 1.6 | 0.36.0 | `timeline()` – the Timeline: view range / zoom, play / stop / step, loop mode, preview range, frame rate, seconds, key selection / moving, markers. |
 | 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
 | 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
 
@@ -723,6 +724,24 @@ rv.set_overlays(False); rv.set_gizmos(True); rv.set_toolbar(True)
 
 Render View annotations are kept per render slot for the Blender session (like Blender's they are not part of
 the saved image).
+
+## Timeline from a script
+
+`qt_shell.api.timeline()` (API 1.6) returns the Timeline of the Qt Shell window (None when Qt Shell is closed):
+
+```python
+import qt_shell
+tl = qt_shell.api.timeline()
+tl.set_view_range(0, 120)          # visible frames (zoom / pan); tl.view_range()
+tl.zoom(0.5); tl.frame_all()       # < 1 zooms in; Frame All = the scene (or preview) range
+tl.play(); tl.play(reverse=True); tl.stop(); tl.step(1)
+tl.set_loop_mode("OSCILLATE")      # LOOP, ONCE, OSCILLATE (Maya)
+tl.set_preview_range(True, 10, 50); tl.set_preview_range(False)
+tl.set_fps(25); tl.set_fps(30, 1.001)   # 29.97 fps
+tl.set_show_seconds(True)
+tl.select_keys([10, 20]); tl.move_selected_keys(5); tl.selected_keys()
+tl.add_marker("Contact", 24)       # bpy.context.scene.timeline_markers
+```
 
 ## Toolbar tools from a script
 

@@ -37,10 +37,10 @@ __all__ = [
     "viewport_layout", "set_viewport_layout", "viewports", "status_history",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
     "owner", "current_owner", "cleanup", "owned", "outliner", "graph_editor", "render_view",
-    "active_tool", "set_tool", "TOOLS",
+    "active_tool", "set_tool", "TOOLS", "timeline",
 ]
 
-API_VERSION = (1, 5)
+API_VERSION = (1, 6)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -212,6 +212,22 @@ def graph_editor():
     Tangents / infinity apply to the selected keys, or to all shown curves when no key is selected."""
     w = main_window()
     return getattr(w, "graph_editor", None) if w is not None else None
+
+
+def timeline():
+    """The Timeline of the Qt Shell window (None when Qt Shell is not open).
+
+        import qt_shell
+        tl = qt_shell.api.timeline()
+        tl.set_view_range(0, 120); tl.zoom(0.5); tl.frame_all()   # visible frames (zoom / pan)
+        tl.play(); tl.play(reverse=True); tl.stop(); tl.step(1)
+        tl.set_loop_mode("OSCILLATE")     # LOOP, ONCE, OSCILLATE (Maya)
+        tl.set_preview_range(True, 10, 50); tl.set_preview_range(False)
+        tl.set_fps(25); tl.set_show_seconds(True)
+        tl.select_keys([10, 20]); tl.move_selected_keys(5); tl.selected_keys()
+        tl.add_marker("Contact", 24)"""
+    w = main_window()
+    return getattr(w, "timeline", None) if w is not None else None
 
 
 def render_view():

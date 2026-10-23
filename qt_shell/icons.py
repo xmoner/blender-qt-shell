@@ -178,6 +178,19 @@ _ICONS = {
     "key_next": '<path fill="{c}" d="M6.5 3 V13 L13.5 8 Z"/><path fill="{a}" d="M4 5 L6.5 8 L4 11 L1.5 8 Z"/>',
     "play": '<path fill="{c}" d="M4 2.5 L13.5 8 L4 13.5 Z"/>',
     "pause": '<path fill="{c}" d="M4 2.8 H6.8 V13.2 H4 Z M9.2 2.8 H12 V13.2 H9.2 Z"/>',
+    "play_reverse": '<path fill="{c}" d="M12 2.5 L2.5 8 L12 13.5 Z"/>',
+    "frame_prev": '<path fill="{c}" d="M3 3 H4.6 V13 H3 Z M12.5 3 V13 L5.5 8 Z"/>',
+    "frame_next": '<path fill="{c}" d="M11.4 3 H13 V13 H11.4 Z M3.5 3 V13 L10.5 8 Z"/>',
+    "preview_range": '<circle cx="8" cy="8" r="5.6" fill="none" stroke="{c}" stroke-width="1.2"/>'
+                     '<path fill="none" stroke="{a}" stroke-width="1.4" stroke-linecap="round" d="M8 4.6 V8 L10.4 9.6"/>',
+    "loop_continuous": '<path fill="none" stroke="{c}" stroke-width="1.3" stroke-linecap="round" '
+                       'd="M3 9.5 V7.5 A2.5 2.5 0 0 1 5.5 5 H12 M13 6.5 V8.5 A2.5 2.5 0 0 1 10.5 11 H4"/>'
+                       '<path fill="{c}" d="M11 3 L13.8 5 L11 7 Z M5 9 L2.2 11 L5 13 Z"/>',
+    "loop_once": '<path fill="none" stroke="{c}" stroke-width="1.3" stroke-linecap="round" d="M2.5 8 H10.5"/>'
+                 '<path fill="{c}" d="M10 5 L13.5 8 L10 11 Z"/><path fill="{a}" d="M13.6 3.5 H15 V12.5 H13.6 Z"/>',
+    "loop_oscillate": '<path fill="none" stroke="{c}" stroke-width="1.3" stroke-linecap="round" d="M4.5 6 H11.5 M4.5 10 H11.5"/>'
+                      '<path fill="{c}" d="M11 3.5 L14 6 L11 8.5 Z M5 7.5 L2 10 L5 12.5 Z"/>',
+    "marker": '<path fill="{c}" d="M4.5 3 H11.5 V9.5 L8 13 L4.5 9.5 Z"/>',
     "keyframe": '<path fill="{a}" stroke="{c}" stroke-width="1" d="M8 2 L14 8 L8 14 L2 8 Z"/>',
     "key_delete": '<path fill="none" stroke="{c}" stroke-width="1.2" d="M8 2 L14 8 L8 14 L2 8 Z"/>'
                   '<path stroke="#ff6060" stroke-width="1.6" stroke-linecap="round" d="M5.5 5.5 L10.5 10.5 M10.5 5.5 L5.5 10.5"/>',
