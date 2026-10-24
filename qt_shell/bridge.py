@@ -322,6 +322,23 @@ def hold_gpu(seconds=0.25):
     _gpu_hold_until = time.monotonic() + seconds
 
 
+def restore_gpu_context():
+    """After a Blender window was closed no GPU context is active. wm_draw_update() makes a window drawable
+    again when none is (it skips minimized windows, but has this fallback) – run it now through
+    wm.redraw_timer (DRAW_WIN_SWAP = one wm_draw_update) instead of waiting for Blender's next loop."""
+    try:
+        wm = bpy.context.window_manager
+        win = wm.windows[0]
+        import contextlib, io
+        with bpy.context.temp_override(window=win, screen=win.screen), \
+                contextlib.redirect_stdout(io.StringIO()):          # its timing report is not for the user
+            bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)
+        return True
+    except Exception as ex:
+        log(f"GPU context restore failed ({ex})", "WARNING")
+        return False
+
+
 def gpu_held():
     import time
     return time.monotonic() < _gpu_hold_until

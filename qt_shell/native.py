@@ -71,6 +71,53 @@ def _windows(visible):
 _ghost_hwnds = []
 
 
+def ghost_windows():
+    """Blender's native windows of this process (Windows; [] elsewhere)."""
+    if sys.platform != "win32":
+        return []
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    pid = os.getpid()
+    found = []
+    proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def callback(hwnd, _lparam):
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid:
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, buf, 256)
+            if buf.value == "GHOST_WindowClass":
+                found.append(int(hwnd or 0))
+        return True
+
+    try:
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        cb = proc_type(callback)
+        user32.EnumWindows(cb, 0)
+    except Exception:
+        return []
+    return found
+
+
+def hide_windows(hwnds):
+    """Hides windows without minimizing them – Blender still draws a hidden (not minimized) window, so its
+    editors stay up to date (the render helper's Image Editor)."""
+    global _ghost_hwnds
+    if sys.platform != "win32":
+        return
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    for h in hwnds:
+        try:
+            user32.ShowWindow(h, 0)          # SW_HIDE
+        except Exception:
+            pass
+    _ghost_hwnds = ghost_windows()
+
+
 def repaint_blender_windows():
     """Posts WM_PAINT to Blender's (hidden) windows (Windows). Blender handles it as a GHOST WindowUpdate
     and makes that window drawable – its GPU context active again after another window was closed."""

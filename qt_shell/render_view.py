@@ -1453,6 +1453,14 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.canvas.busy = f"Rendering… {int(t // 60):02d}:{t % 60:05.2f}  |  {slot}  |  {self._info.get('engine', '')}"
         self.canvas.update()
 
+    def show_live(self, q):
+        """The picture of a render in progress (a QImage; main window, about once a second)."""
+        if q is None or q.isNull() or self._render_start is None:
+            return False
+        q = q.convertToFormat(QtGui.QImage.Format_RGBA8888)
+        self.canvas.set_image(self._apply_channel(q), True)
+        return True
+
     def set_rendering(self, on, cancellable=True):
         """Main window: a render started / ended – the Cancel button is shown while rendering."""
         self.cancel_btn.setVisible(bool(on))

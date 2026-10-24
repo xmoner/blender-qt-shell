@@ -491,6 +491,10 @@ class StatusHistoryDialog(QtWidgets.QDialog):
         self.refresh()
 
 
+def _render_result_image():
+    return bpy.data.images.get("Render Result")
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, hub):
         super().__init__()
@@ -599,6 +603,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rendering = False
         self._render_win = None             # hidden Blender window the running render was started from
         self._render_cancelled = False
+        # while rendering: end of the render (a render shorter than one hub tick was missed before) and the
+        # live preview of an image render
+        self._render_poll = QtCore.QTimer(self)
+        self._render_poll.setInterval(250)
+        self._render_poll.timeout.connect(self._poll_render)
 
         pytips.install()        # Python tooltips (Edit → Qt Preferences… → Interface)
         # window icon (the Hex Turtle logo, docs/logo/)
@@ -1279,6 +1288,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if ctx is not None:
                 with bpy.context.temp_override(**ctx):
                     res = bpy.ops.render.render("INVOKE_DEFAULT", animation=animation)
+                sp = ctx["area"].spaces.active
+                if getattr(sp, "image", 1) is None and _render_result_image() is not None:
+                    sp.image = _render_result_image()    # created by the render operator on the first render
             else:
                 with bridge.blender_context():
                     res = bpy.ops.render.render("INVOKE_DEFAULT", animation=animation)
@@ -1314,8 +1326,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _render_helper_window(self):
         """A new (hidden) Blender window to start the render from; None if it can't be made."""
         wm = bpy.context.window_manager
+        from . import native
         try:
             before = {w.as_pointer() for w in wm.windows}
+            native_before = set(native.ghost_windows())
             with bridge.blender_context():
                 bpy.ops.wm.window_new()
             new = [w for w in wm.windows if w.as_pointer() not in before]
@@ -1324,11 +1338,31 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         if not new:
             return None
+        win = new[0]
         active = self.isActiveWindow()
-        self._hide_blender_windows()
+        act = getattr(self, "blender_visible_act", None)
+        if act is None or not act.isChecked():
+            # hidden but not minimized: Blender keeps drawing it, so its Image Editor (below) follows the
+            # render – that is what the live preview reads (Blender skips minimized windows)
+            native.hide_windows([h for h in native.ghost_windows() if h not in native_before])
         if active:
             self.activateWindow()                      # the new Blender window took the focus
-        return new[0]
+        try:
+            areas = list(win.screen.areas)
+            area = max(areas, key=lambda a: a.width * a.height)
+            area.type = "IMAGE_EDITOR"
+            sp = area.spaces.active
+            img = _render_result_image()
+            if img is not None:
+                sp.image = img
+            for attr in ("show_region_header", "show_region_tool_header", "show_region_toolbar", "show_region_ui"):
+                if hasattr(sp, attr):
+                    setattr(sp, attr, False)        # the editor is only the picture (live preview capture)
+            if hasattr(sp, "overlay"):
+                sp.overlay.show_overlays = False
+        except Exception as ex:
+            bridge.log(f"Render: helper window has no Image Editor ({ex})", "WARNING")
+        return win
 
     def _hide_blender_windows(self):
         act = getattr(self, "blender_visible_act", None)
@@ -1343,7 +1377,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         if not areas:
             return None
-        area = next((a for a in areas if a.type == "VIEW_3D"), None) or max(areas, key=lambda a: a.width * a.height)
+        area = next((a for a in areas if a.type == "IMAGE_EDITOR"), None) or \
+            max(areas, key=lambda a: a.width * a.height)
         region = next((r for r in area.regions if r.type == "WINDOW"), None)
         ctx = dict(window=win, screen=win.screen, area=area)
         if region is not None:
@@ -1366,6 +1401,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # made the main window drawable again (WM_PAINT → GHOST WindowUpdate), otherwise draw_view3d crashes.
         bridge.hold_gpu()
         self._hide_blender_windows()            # also refreshes the list of Blender's native windows
+        bridge.restore_gpu_context()
         from . import native
         native.repaint_blender_windows()
         return True
@@ -1373,6 +1409,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_rendering(self, on, animation=False):
         self._rendering = on
         self._render_anim = animation
+        if on:
+            self._render_t0 = time.monotonic()
+            self._live_t = 0.0
+            self._render_poll.start()
+        else:
+            self._render_poll.stop()
         cancellable = on and getattr(self, "_render_win", None) is not None
         self.render_cancel_btn.setVisible(on)
         self.render_cancel_btn.setEnabled(cancellable)
@@ -1386,6 +1428,81 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def is_rendering(self):
         return bool(self._rendering)
+
+    def _poll_render(self):
+        if not self._rendering:
+            self._render_poll.stop()
+            return
+        if not bridge.is_rendering():
+            self._on_render_done()
+            return
+        if getattr(self, "_render_anim", False):
+            return
+        now = time.monotonic()
+        rv = self.render_window
+        if now - self._live_t >= 1.0 and rv.is_shown():
+            self._live_t = now
+            self._live_preview()
+            self._live_t = time.monotonic()          # the next one a second after this one finished
+
+    def _live_preview(self):
+        """Image render in progress: the picture so far, about once a second (like Blender's render window).
+
+        Python can't read the Render Result while rendering (Image.pixels / save_render / image.save_as all
+        refuse), so the hidden helper window shows it in an Image Editor (hidden, not minimized → Blender
+        draws it) and its area is captured with screen.screenshot_area, then cropped to the picture."""
+        win = getattr(self, "_render_win", None)
+        if win is None:
+            return False
+        ctx = self._window_context(win)
+        if ctx is None or ctx["area"].type != "IMAGE_EDITOR" or "region" not in ctx:
+            return False
+        area, region = ctx["area"], ctx["region"]
+        sp = area.spaces.active
+        path = os.path.join(tempfile.gettempdir(), "qtshell_render_live.png")
+        import contextlib
+        import io
+        try:
+            if sp.image is None and _render_result_image() is not None:
+                sp.image = _render_result_image()
+            r = bpy.context.scene.render
+            iw, ih = r.resolution_x * r.resolution_percentage / 100.0, r.resolution_y * r.resolution_percentage / 100.0
+            # centred with a margin: the editor draws its render info text over the top of its region
+            margin = 90
+            ratio = min((region.width - 2 * margin) / max(1.0, iw), (region.height - 2 * margin) / max(1.0, ih))
+            with contextlib.redirect_stdout(io.StringIO()):
+                with bpy.context.temp_override(**ctx):
+                    bpy.ops.image.view_all(fit_view=True)
+                    if ratio > 0:
+                        bpy.ops.image.view_zoom_ratio(ratio=ratio)
+                with bpy.context.temp_override(window=win, screen=win.screen):
+                    bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=1)      # draw the helper now
+                if os.path.exists(path):
+                    os.remove(path)
+                with bpy.context.temp_override(**ctx):
+                    bpy.ops.screen.screenshot_area(filepath=path, check_existing=False)
+            zx, zy = tuple(sp.zoom)
+            rx, ry, rw, rh = region.x - area.x, region.y - area.y, region.width, region.height
+            ah = area.height
+        except Exception as ex:
+            bridge.log(f"Render: live preview failed ({ex})", "WARNING")
+            return False
+        from .anim_player import load_image
+        shot = load_image(path)
+        if shot is None or shot.isNull():
+            return False
+        # the screenshot is the whole area (pixels, origin top-left); the picture is centred in the region
+        sx = shot.width() / max(1, area.width)
+        sy = shot.height() / max(1, ah)
+        dw, dh = iw * zx * sx, ih * zy * sy
+        cx = (rx + rw / 2.0) * sx
+        cy = (ah - (ry + rh / 2.0)) * sy
+        rect = QtCore.QRect(int(round(cx - dw / 2)) + 1, int(round(cy - dh / 2)) + 1,
+                            int(round(dw)) - 2, int(round(dh)) - 2)        # without the editor's image frame
+        rect = rect.intersected(shot.rect())
+        if rect.width() < 2 or rect.height() < 2:
+            return False
+        return self.render_window.show_live(shot.copy(rect))
 
     def cancel_render(self):
         """Render → Cancel Render, Esc, the Cancel Render button: stops the running render (image or animation)."""
