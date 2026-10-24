@@ -1107,8 +1107,11 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("window.quad", self.viewports.toggle_quad)
 
     # ------------------------------------------------------------ operator handling
-    def special_op(self, idname, props):
+    def special_op(self, idname, props, ctx=None):
         vp = self.viewport
+        if idname == "wm.properties_edit":          # Blender's dialog can't open from Qt – our own one
+            from . import propedit
+            return propedit.edit_property(self, props, ctx)
         if idname in ("transform.translate", "transform.rotate", "transform.resize"):
             vp.start_modal({"transform.translate": "G", "transform.rotate": "R", "transform.resize": "S"}[idname])
             return True

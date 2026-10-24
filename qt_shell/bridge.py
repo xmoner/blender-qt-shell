@@ -23,7 +23,7 @@ class Flags:
 _log_listeners = []
 # hooks set by the Qt layer
 file_dialog_hook = None      # fn(idname, rna_props, props) -> bool
-special_op_hook = None       # fn(idname, props) -> bool (True = handled in Qt)
+special_op_hook = None       # fn(idname, props, ctx) -> bool (True = handled in Qt)
 after_op_hook = None         # fn(idname, props, result)
 
 
@@ -192,7 +192,11 @@ def run_op(idname, props=None, ctx=None, invoke=False):
         idname = f"{mod.lower()}.{name}"
     if special_op_hook is not None:
         try:
-            if special_op_hook(idname, props):
+            try:
+                handled = special_op_hook(idname, props, ctx)
+            except TypeError:
+                handled = special_op_hook(idname, props)
+            if handled:
                 return {"FINISHED"}
         except Exception:
             log(traceback.format_exc(), "ERROR")
