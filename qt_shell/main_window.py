@@ -1637,17 +1637,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def viewport_render_image(self):
         from . import burnin
         sc = bpy.context.scene
-        if sc.camera is None:
+        vp = self.viewport
+        if sc.camera is None and vp.camera_view:
             self.statusBar().showMessage("Viewport Render: the scene has no camera.", 5000)
             return None
-        img = burnin.viewport_render(sc, overlays=True)
+        img = burnin.viewport_render(sc, overlays=True, vp=vp)
         if img is None:
             self.statusBar().showMessage("Viewport Render: no 3D view to draw with.", 5000)
             return None
         info = self.render_window._collect_info()
         info["engine"] = "Viewport"
+        if not vp.camera_view:
+            info["camera"] = vp.view_name
+        self.render_window.present()               # shown first: the picture is fitted to its real size
         self.render_window.show_external(img, info)
-        self.render_window.present()
         self.statusBar().showMessage("Viewport Render done (Image → Save As saves it).", 5000)
         return img
 
@@ -1655,7 +1658,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from . import burnin
         QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
         try:
-            n, folder = burnin.playblast()
+            n, folder = burnin.playblast(vp=self.viewport)
         except Exception as ex:
             n, folder = 0, f"Viewport Render failed: {ex}"
             bridge.log(folder, "WARNING")

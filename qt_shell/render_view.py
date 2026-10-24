@@ -1324,6 +1324,7 @@ class RenderView(QtWidgets.QWidget, Dockable):
         if info:
             self._info = info
         self._show(False)
+        QtCore.QTimer.singleShot(0, self.canvas.fit)     # after the window got its size
 
     def _show(self, keep_view=True):
         base = self._base_image()

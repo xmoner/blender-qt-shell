@@ -111,11 +111,13 @@ def needs_camera_per_frame(scene=None):
     return False
 
 
-def paint(img, scene, frame, cam_name, mats=None):
-    """Draws the Blue Pencil camera layers and the annotations of `frame` into the QImage img."""
+def paint(img, scene, frame, cam_name, mats=None, view_rect=None):
+    """Draws the Blue Pencil layers of cam_name and the annotations of `frame` into the QImage img.
+    view_rect: where the 3D view lies in the picture (a Viewport Render of a view that isn't a camera view) –
+    then the View layers (cam_name "") and the screen annotations are placed by it."""
     from . import annotate, bluepencil
     w, h = img.width(), img.height()
-    rect = QtCore.QRectF(0, 0, w, h)
+    rect = QtCore.QRectF(view_rect) if view_rect is not None else QtCore.QRectF(0, 0, w, h)
     p = QtGui.QPainter(img)
     p.setRenderHint(QtGui.QPainter.Antialiasing)
     p.setRenderHint(QtGui.QPainter.TextAntialiasing)
@@ -140,7 +142,8 @@ def paint(img, scene, frame, cam_name, mats=None):
                     continue
                 mode = getattr(st, "display_mode", "3DSPACE")
                 if mode == "SCREEN":
-                    xy = np.c_[co[:, 0] / 100.0 * w, h - co[:, 1] / 100.0 * h]
+                    xy = np.c_[rect.left() + co[:, 0] / 100.0 * rect.width(),
+                               rect.bottom() - co[:, 1] / 100.0 * rect.height()]
                     ok = np.ones(len(co), dtype=bool)
                 elif mode == "3DSPACE" and mats is not None:
                     xy, ok = _project(co, mats, w, h)
@@ -149,8 +152,8 @@ def paint(img, scene, frame, cam_name, mats=None):
                 annotate._polyline(p, xy, ok)
                 drew = True
         # Blue Pencil layers of the camera (top of the list = on top)
-        if cam_name:
-            layers = _bp_layers(scene, cam_name)
+        if cam_name or view_rect is not None:
+            layers = _bp_layers(scene, cam_name or "")
             for lay in reversed(layers):
                 k = bluepencil.held_key(lay, frame)
                 if k is None:
@@ -294,19 +297,36 @@ def _space():
     return area.spaces.active, region
 
 
-def viewport_render(scene=None, frame=None, overlays=True):
-    """The scene drawn like the 3D view (its shading) through the scene camera at the render size → QImage
-    (with the drawings when overlays). None without a camera / 3D view."""
+def view_rect_in_image(vp, w, h):
+    """Where a 3D view (widget) lies in a picture w × h drawn with vp.matrices(w, h): the view's field of
+    view is fitted to the larger side (like Blender's sensor fit), the other side is centred."""
+    ww, wh = max(vp.width(), 1), max(vp.height(), 1)
+    if w >= h:
+        s = w / ww
+    else:
+        s = h / wh
+    return QtCore.QRectF(w / 2 - ww * s / 2, h / 2 - wh * s / 2, ww * s, wh * s)
+
+
+def viewport_render(scene=None, frame=None, overlays=True, vp=None):
+    """The scene drawn like the 3D view (its shading, no overlays) at the render size → QImage, with the
+    drawings when overlays. Like Blender's Viewport Render: through the camera when the view looks through
+    it (or when no view is given), else from the view itself (then its Blue Pencil View layers are drawn).
+    None without a camera / 3D view."""
     import gpu
     sc = scene or bpy.context.scene
     cam = sc.camera
     space, region = _space()
-    if cam is None or space is None:
+    from_view = vp is not None and not getattr(vp, "camera_view", False)
+    if space is None or (cam is None and not from_view):
         return None
     if frame is not None and sc.frame_current != frame:
         sc.frame_set(frame)
     w, h = render_size(sc)
-    view, proj = camera_mats(sc, cam, w, h)
+    if from_view:
+        view, proj = vp.matrices(w, h)
+    else:
+        view, proj = camera_mats(sc, cam, w, h)
     off = gpu.types.GPUOffScreen(w, h)
     ov = getattr(space, "overlay", None)
     keep_overlays = getattr(ov, "show_overlays", None)
@@ -337,15 +357,18 @@ def viewport_render(scene=None, frame=None, overlays=True):
     dst[:] = arr.reshape(h, w, 4)[::-1]
     img = img.convertToFormat(QtGui.QImage.Format_ARGB32)
     if overlays:
-        paint(img, sc, sc.frame_current, cam.name, (view, proj))
+        if from_view:
+            paint(img, sc, sc.frame_current, "", (view, proj), view_rect_in_image(vp, w, h))
+        else:
+            paint(img, sc, sc.frame_current, cam.name, (view, proj))
     return img
 
 
-def playblast(scene=None, start=None, end=None, overlays=True):
-    """Viewport Render Animation: PNG frames in the folder `playblast` next to the output frames.
-    Returns (frames written, folder or message)."""
+def playblast(scene=None, start=None, end=None, overlays=True, vp=None):
+    """Viewport Render Animation: PNG frames in the folder `playblast` next to the output frames (from the
+    view vp like viewport_render). Returns (frames written, folder or message)."""
     sc = scene or bpy.context.scene
-    if sc.camera is None:
+    if sc.camera is None and (vp is None or getattr(vp, "camera_view", False)):
         return 0, "The scene has no camera."
     a, b = _frame_range(sc)
     start = a if start is None else start
@@ -356,7 +379,7 @@ def playblast(scene=None, start=None, end=None, overlays=True):
     folder = ""
     try:
         for i, (f, src) in enumerate(paths.items()):
-            img = viewport_render(sc, f, overlays)
+            img = viewport_render(sc, f, overlays, vp)
             if img is None:
                 return done, "No 3D view to draw with."
             dst = playblast_path(sc, f)
