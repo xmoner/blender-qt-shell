@@ -1100,15 +1100,41 @@ class Viewport(QtWidgets.QWidget):
             "pivot": pivot, "start": QtCore.QPointF(pos), "value": None, "edit": edit,
             "pose": pose if ctx.mode == "POSE" else None,
         }
+        self._set_modal_orient(None)                  # the header's transform orientation (taken at start)
         self._numeric = ""
         self.setFocus()
         self.grabMouse()
         self.update()
 
+    def _set_modal_orient(self, kind):
+        """Orientation of the axis constraint: kind None = the header's (scene) orientation."""
+        m = self._modal
+        m["orient_kind"] = kind or gizmo.orientation_type()
+        m["orient"] = gizmo.orientation_matrix(self, m["orient_kind"])
+
+    def _modal_axis_key(self, ax):
+        """X / Y / Z like Blender: 1st press – axis in the header's orientation, 2nd – in Global (Local when
+        the header is Global), 3rd – no constraint."""
+        m = self._modal
+        scene_kind = gizmo.orientation_type()
+        alt = "LOCAL" if scene_kind == "GLOBAL" else "GLOBAL"
+        if m.get("cage"):
+            m["axis"] = None if m["axis"] == ax else ax
+            return
+        if m["axis"] != ax:
+            m["axis"] = ax
+            self._set_modal_orient(scene_kind)
+        elif m.get("orient_kind") == scene_kind:
+            self._set_modal_orient(alt)
+        else:
+            m["axis"] = None
+            self._set_modal_orient(scene_kind)
+
     def _modal_text(self):
         m = self._modal
         names = {"G": "Move", "R": "Rotate", "S": "Scale"}
-        axis = f" along {m['axis']}" if m["axis"] else ""
+        axis = f" along {m['axis']} ({gizmo.orientation_label(m.get('orient_kind', 'GLOBAL'))})" \
+            if m["axis"] else ""
         val = m.get("value")
         if isinstance(val, Vector):
             val = f"{val.x:.3f}, {val.y:.3f}, {val.z:.3f}"
@@ -1121,7 +1147,11 @@ class Viewport(QtWidgets.QWidget):
     def _modal_update(self, pos):
         m = self._modal
         pivot = m["pivot"]
-        axis_vec = {"X": Vector((1, 0, 0)), "Y": Vector((0, 1, 0)), "Z": Vector((0, 0, 1))}.get(m["axis"])
+        axis_vec = None
+        if m["axis"] in ("X", "Y", "Z"):
+            orient = m.get("orient")
+            axis_vec = (orient.col["XYZ".index(m["axis"])].normalized() if orient is not None else
+                        Vector([1.0 if c == m["axis"] else 0.0 for c in "XYZ"]))
         num = None
         if self._numeric not in ("", "-", ".", "-."):
             try:
@@ -1511,8 +1541,7 @@ class Viewport(QtWidgets.QWidget):
             elif key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
                 self._modal_end(True)
             elif key in (QtCore.Qt.Key_X, QtCore.Qt.Key_Y, QtCore.Qt.Key_Z):
-                ax = chr(key)
-                self._modal["axis"] = None if self._modal["axis"] == ax else ax
+                self._modal_axis_key(chr(key))
                 self._modal_update(self.mapFromGlobal(QtGui.QCursor.pos()).toPointF())
             elif key == QtCore.Qt.Key_Backspace:
                 self._numeric = self._numeric[:-1]

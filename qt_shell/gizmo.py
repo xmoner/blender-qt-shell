@@ -5,7 +5,8 @@ Add tools live in annotate.py.
 
 - Toolbar: a column of tool buttons on the left of every 3D view (T shows / hides it).
 - Gizmo: drawn at the pivot of the selection (median of the selected objects' origins, or of the
-  selected vertices in Edit mode), in global orientation:
+  selected vertices in Edit mode), in the transform orientation of the header (Global, Local, Normal,
+  Gimbal, View, Cursor, Parent or a custom one – orientation_matrix()):
     Move   – X / Y / Z arrows, a circle in the middle = free move in the view plane
     Rotate – X / Y / Z rings, the outer white ring = rotate around the view axis
     Scale  – X / Y / Z handles with boxes, the outer white ring = uniform scale
@@ -26,7 +27,7 @@ The tool and the toolbar visibility are shared by all views and remembered (QSet
 import math
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import theme
@@ -141,6 +142,160 @@ AXES = (("X", Vector((1, 0, 0)), QtGui.QColor("#ff3352")),
         ("Y", Vector((0, 1, 0)), QtGui.QColor("#8bdc00")),
         ("Z", Vector((0, 0, 1)), QtGui.QColor("#2890ff")))
 HOVER_COLOR = QtGui.QColor("#ffe066")
+
+
+# ---------------------------------------------------------------- transform orientation
+ORIENT_NAMES = {"GLOBAL": "Global", "LOCAL": "Local", "NORMAL": "Normal", "GIMBAL": "Gimbal", "VIEW": "View",
+                "CURSOR": "Cursor", "PARENT": "Parent"}
+
+
+def orientation_type(ctx=None):
+    """The scene's transform orientation (header: Transform Orientation) – 'GLOBAL', 'LOCAL' … or the name
+    of a custom orientation."""
+    ctx = ctx or bpy.context
+    try:
+        return ctx.scene.transform_orientation_slots[0].type
+    except Exception:
+        return "GLOBAL"
+
+
+def orientation_label(kind):
+    return ORIENT_NAMES.get(kind, kind)
+
+
+def _rot3(m):
+    """Rotation part of a matrix (scale / shear removed), columns = axes."""
+    m3 = m.to_3x3()
+    try:
+        return m3.to_quaternion().to_matrix()
+    except Exception:
+        return Matrix.Identity(3)
+
+
+def _ortho(z, hint):
+    """3x3 with Z = z and X as close to hint as possible."""
+    z = z.normalized()
+    x = hint - z * hint.dot(z)
+    if x.length < 1e-6:
+        x = _perp(z)[0]
+    x.normalize()
+    y = z.cross(x).normalized()
+    return Matrix((x, y, z)).transposed()
+
+
+def _gimbal(ob_world_parent, euler):
+    """Gimbal axes of an Euler rotation: the axis applied last is fixed, the others follow it."""
+    order = euler.order
+    P = _rot3(ob_world_parent)
+    unit = {"X": Vector((1, 0, 0)), "Y": Vector((0, 1, 0)), "Z": Vector((0, 0, 1))}
+    ang = {"X": euler.x, "Y": euler.y, "Z": euler.z}
+    o0, o1, o2 = order[0], order[1], order[2]
+    R2 = Matrix.Rotation(ang[o2], 3, o2)
+    R1 = Matrix.Rotation(ang[o1], 3, o1)
+    axes = {o2: P @ unit[o2], o1: P @ R2 @ unit[o1], o0: P @ R2 @ R1 @ unit[o0]}
+    return Matrix((axes["X"].normalized(), axes["Y"].normalized(), axes["Z"].normalized())).transposed()
+
+
+def _active_bone(ctx):
+    from . import posetransform
+    pb = ctx.active_pose_bone
+    if pb is not None and pb.select:
+        return ctx.active_object, pb
+    bones = posetransform.selected_bones(ctx)
+    return bones[0] if bones else (None, None)
+
+
+def _edit_normal(ob, bm):
+    """(normal, tangent) of the selection in world space (selected faces, else vertex normals)."""
+    mw = ob.matrix_world
+    nm = mw.to_3x3().inverted_safe().transposed()
+    faces = [f for f in bm.faces if f.select and not f.hide]
+    n = Vector()
+    t = Vector()
+    if faces:
+        for f in faces:
+            n += f.normal
+            # the longest edge of the face – like Blender's tangent of a face
+            e = max(f.edges, key=lambda e: e.calc_length())
+            t += mw.to_3x3() @ (e.verts[1].co - e.verts[0].co)
+    else:
+        verts = [v for v in bm.verts if v.select and not v.hide]
+        for v in verts:
+            n += v.normal
+        edges = [e for e in bm.edges if e.select and not e.hide]
+        if edges:
+            t = mw.to_3x3() @ (edges[0].verts[1].co - edges[0].verts[0].co)
+    n = nm @ n
+    return (n if n.length > 1e-9 else None), t
+
+
+def orientation_matrix(vp=None, kind=None, ctx=None):
+    """3x3 matrix whose columns are the X / Y / Z axes of the transform orientation (world space)."""
+    ctx = ctx or bpy.context
+    kind = kind or orientation_type(ctx)
+    I = Matrix.Identity(3)
+    try:
+        mode = ctx.mode
+        if kind == "GLOBAL":
+            return I
+        if kind == "VIEW":
+            if vp is None:
+                return I
+            r, u, f = vp.view_vectors()
+            return Matrix((r, u, -f)).transposed()
+        if kind == "CURSOR":
+            return _rot3(ctx.scene.cursor.matrix)
+        if kind in ORIENT_NAMES:              # LOCAL / NORMAL / GIMBAL / PARENT
+            if mode == "POSE":
+                ob, pb = _active_bone(ctx)
+                if pb is None:
+                    return I
+                if kind == "PARENT":
+                    return _rot3(ob.matrix_world @ pb.parent.matrix) if pb.parent else _rot3(ob.matrix_world)
+                if kind == "GIMBAL" and pb.rotation_mode not in ("QUATERNION", "AXIS_ANGLE"):
+                    parent = ob.matrix_world @ pb.matrix @ pb.matrix_basis.inverted_safe()
+                    return _gimbal(parent, pb.rotation_euler)
+                return _rot3(ob.matrix_world @ pb.matrix)
+            ob = ctx.edit_object if mode.startswith("EDIT") else (ctx.active_object or
+                                                                 (ctx.selected_objects or [None])[0])
+            if ob is None:
+                return I
+            if mode == "EDIT_MESH" and kind == "NORMAL":
+                from . import editmesh
+                r = editmesh.active()
+                if r:
+                    n, t = _edit_normal(*r)
+                    if n is not None:
+                        return _ortho(n, t if t.length > 1e-9 else _rot3(ob.matrix_world).col[0])
+                return _rot3(ob.matrix_world)
+            if kind == "PARENT":
+                return _rot3(ob.parent.matrix_world) if ob.parent else I
+            if kind == "GIMBAL" and ob.rotation_mode not in ("QUATERNION", "AXIS_ANGLE"):
+                parent = ob.matrix_world @ ob.matrix_basis.inverted_safe()
+                return _gimbal(parent, ob.rotation_euler)
+            return _rot3(ob.matrix_world)          # LOCAL, NORMAL (object mode), Gimbal of quaternions
+        # a custom orientation (Transform Orientations → +)
+        co = ctx.scene.transform_orientation_slots[0].custom_orientation
+        if co is not None:
+            return _rot3(co.matrix.to_4x4())
+    except Exception:
+        pass
+    return I
+
+
+def axes(vp=None, kind=None):
+    """AXES in the current transform orientation: (name, world direction, color)."""
+    kind = kind or orientation_type()
+    if vp is not None and kind != "VIEW" and bpy.context.mode == "EDIT_MESH":
+        cache = getattr(vp, "_gizmo_orient_cache", None)    # Normal walks the mesh – once per change
+        if cache is not None and cache[0] == kind:
+            m = cache[1]
+        else:
+            m = orientation_matrix(vp, kind)
+            vp._gizmo_orient_cache = (kind, m)
+    else:
+        m = orientation_matrix(vp, kind)
+    return tuple((name, m.col[i].normalized(), col) for i, (name, _a, col) in enumerate(AXES))
 
 # sizes in (unscaled) screen pixels
 ARROW_LEN = 78
@@ -662,6 +817,7 @@ def pivot(vp):
 
 def invalidate(vp):
     vp._gizmo_pivot_cache = None
+    vp._gizmo_orient_cache = None
     vp._gizmo_cage_cache = None
 
 
@@ -793,6 +949,7 @@ def handles(vp, tool):
     if pv is None:
         return []
     mats = vp.matrices(vp.width(), vp.height())
+    oaxes = axes(vp)                    # in the transform orientation (header)
     c = vp.project(pv, mats)
     if c is None:
         return []
@@ -804,7 +961,7 @@ def handles(vp, tool):
     move = tool in ("MOVE", "TRANSFORM")
     if rotate:
         R = RING_R * sc * s * (0.82 if tool == "TRANSFORM" else 1.0)
-        for name, a, col in AXES:
+        for name, a, col in oaxes:
             pts = _ring(vp, pv, a, R, mats)
             if pts:
                 out.append({"id": f"R:{name}", "kind": "ring", "pts": pts, "color": col})
@@ -812,7 +969,7 @@ def handles(vp, tool):
                     "color": white, "ring_hit": True})
     if tool in ("MOVE", "SCALE", "TRANSFORM"):
         L = ARROW_LEN * sc * s * (1.12 if tool == "TRANSFORM" else 1.0)
-        for name, a, col in AXES:
+        for name, a, col in oaxes:
             end = vp.project(pv + a * L, mats)
             if end is None:
                 continue
@@ -981,6 +1138,7 @@ def _start_cage_drag(vp, handle):
         return False
     m["pivot"] = pivot_pt
     m["axis"] = axis
+    m["orient_kind"], m["orient"] = "GLOBAL", Matrix.Identity(3)     # the cage is axis-aligned
     m["cage"] = True                  # factor = mouse movement along the handle's direction
     m["drag"] = True
     vp._modal_update(m["start"])
