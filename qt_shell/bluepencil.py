@@ -1734,6 +1734,31 @@ def show_panel():
     d.raise_()
 
 
+MAX_CUSTOM = 10
+
+
+def custom_colors():
+    """The custom colours chosen last (newest first), kept in QSettings bluepencil/custom_colors."""
+    raw = str(_settings().value("bluepencil/custom_colors", "") or "")
+    return [c for c in raw.split(",") if QtGui.QColor(c).isValid()][:MAX_CUSTOM]
+
+
+def set_custom_colors(cols):
+    _settings().setValue("bluepencil/custom_colors", ",".join(cols[:MAX_CUSTOM]))
+    settings().changed.emit()
+
+
+def add_custom_color(col):
+    col = QtGui.QColor(col).name()
+    if col in PALETTE:
+        return
+    set_custom_colors([col] + [c for c in custom_colors() if c != col])
+
+
+def remove_custom_color(col):
+    set_custom_colors([c for c in custom_colors() if c != col])
+
+
 def _swatch(color, size=None):
     size = size or theme.px(16)
     pm = QtGui.QPixmap(size, size)
@@ -1809,7 +1834,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         # colour
         crow = QtWidgets.QHBoxLayout()
         crow.setSpacing(theme.px(2))
-        self.color_btn = tbtn(None, "Drawing colour – click to choose", self._pick_color)
+        self.color_btn = tbtn(None, "Current drawing colour – click to choose a custom colour", self._pick_color)
         crow.addWidget(self.color_btn)
         for c in PALETTE:
             b = QtWidgets.QToolButton(inner)
@@ -1818,8 +1843,32 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             b.setToolTip(c)
             b.clicked.connect(lambda _c=False, col=c: self._set_color(col))
             crow.addWidget(b)
+        self.custom_btn = QtWidgets.QToolButton(inner)
+        icons.set_icon(self.custom_btn, "bp_color_custom", "Custom…")
+        self.custom_btn.setAutoRaise(True)
+        self.custom_btn.setToolTip("Choose any colour (colour wheel, RGB / HSV / HTML #hex, screen picker) – it is "
+                                   "kept in the row of custom colours below")
+        self.custom_btn.clicked.connect(self._pick_color)
+        crow.addWidget(self.custom_btn)
         crow.addStretch(1)
         v.addLayout(crow)
+        # custom colours (the last ones chosen, kept between sessions)
+        self.custom_row = QtWidgets.QHBoxLayout()
+        self.custom_row.setSpacing(theme.px(2))
+        self.custom_lbl = QtWidgets.QLabel("Custom", inner)
+        self.custom_lbl.setProperty("dim", True)
+        self.custom_row.addWidget(self.custom_lbl)
+        self.custom_btns = []
+        for _n in range(MAX_CUSTOM):
+            b = QtWidgets.QToolButton(inner)
+            b.setAutoRaise(True)
+            b.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            b.clicked.connect(lambda _c=False, n=_n: self._use_custom(n))
+            b.customContextMenuRequested.connect(lambda _p, n=_n: self._custom_menu(n))
+            self.custom_row.addWidget(b)
+            self.custom_btns.append(b)
+        self.custom_row.addStretch(1)
+        v.addLayout(self.custom_row)
         # tool options
         form = QtWidgets.QFormLayout()
         form.setContentsMargins(0, 0, 0, 0)
@@ -2002,9 +2051,34 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         st = settings()
         sel = selected_strokes()
         cur = _color(sel[0], 1.0) if sel else QtGui.QColor(st.color)
-        c = QtWidgets.QColorDialog.getColor(cur, self, "Blue Pencil Colour")
+        dlg = QtWidgets.QColorDialog(cur, self)
+        dlg.setWindowTitle("Blue Pencil – Custom Colour")
+        dlg.setOption(QtWidgets.QColorDialog.DontUseNativeDialog, True)   # wheel + screen picker
+        for n, c in enumerate(custom_colors()[:16]):
+            QtWidgets.QColorDialog.setCustomColor(n, QtGui.QColor(c))
+        dlg.currentColorChanged.connect(lambda c: self.color_btn.setIcon(_swatch(c.name(), theme.px(22))))
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
+            self.sync()
+            return
+        c = dlg.selectedColor()
         if c.isValid():
+            add_custom_color(c.name())
             self._set_color(c.name())
+
+    def _use_custom(self, n):
+        cols = custom_colors()
+        if n < len(cols):
+            self._set_color(cols[n])
+
+    def _custom_menu(self, n):
+        cols = custom_colors()
+        if n >= len(cols):
+            return
+        m = QtWidgets.QMenu(self)
+        m.addAction("Use", lambda: self._set_color(cols[n]))
+        m.addAction("Remove from Custom Colours", lambda: (remove_custom_color(cols[n]), self.sync()))
+        m.addAction("Clear All Custom Colours", lambda: (set_custom_colors([]), self.sync()))
+        m.exec(QtGui.QCursor.pos())
 
     def _set_color(self, col):
         """Drawing colour – also of the strokes selected with Transform."""
@@ -2201,6 +2275,15 @@ class BluePencilPanel(QtWidgets.QScrollArea):
                 self.size_spin.setValue(st.size(tool))
                 self.opacity.setValue(int(round(st.opacity * 100)))
             self.sel_label.setVisible(bool(sel))
+            cols = custom_colors()
+            self.custom_lbl.setVisible(bool(cols))
+            for n, b in enumerate(self.custom_btns):
+                if n < len(cols):
+                    b.setIcon(_swatch(cols[n], theme.px(12)))
+                    b.setToolTip(f"{cols[n]} – click: use, right click: remove")
+                    b.show()
+                else:
+                    b.hide()
             self.pressure.setChecked(st.pressure)
             for key, (chk, cnt, col) in self.ghost.items():
                 chk.setChecked(getattr(st, f"ghost_{key}"))

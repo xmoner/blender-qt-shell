@@ -238,6 +238,11 @@ _ICONS = {
     "bp_paste": '<rect x="3" y="3" width="10" height="11" rx="1" fill="none" stroke="{c}" stroke-width="1.2"/>'
                 '<rect x="5.5" y="1.6" width="5" height="3" rx="0.8" fill="{c}"/>'
                 '<path fill="none" stroke="#5aa0ff" stroke-width="1.2" d="M5.5 8 H10.5 M5.5 10.5 H9"/>',
+    "bp_color_custom": '<path fill="#ff4d4d" d="M8 8 L8 1.5 A6.5 6.5 0 0 1 14.5 8 Z"/>'
+                       '<path fill="#ffd60a" d="M8 8 L14.5 8 A6.5 6.5 0 0 1 8 14.5 Z"/>'
+                       '<path fill="#34c759" d="M8 8 L8 14.5 A6.5 6.5 0 0 1 1.5 8 Z"/>'
+                       '<path fill="#2f7bff" d="M8 8 L1.5 8 A6.5 6.5 0 0 1 8 1.5 Z"/>'
+                       '<circle cx="8" cy="8" r="2.2" fill="#ffffff"/>',
     "bp_layer_new": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
                     'd="M8 3 L14 6 L8 9 L2 6 Z M2 9 L8 12 L11 10.5"/>'
                     '<path fill="none" stroke="#5aa0ff" stroke-width="1.5" d="M13 9.5 V14.5 M10.5 12 H15.5"/>',
