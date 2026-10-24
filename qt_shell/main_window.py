@@ -1285,6 +1285,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rendering = False
         if getattr(self, "_render_anim", False):
             self.statusBar().showMessage(f"Animation rendered to {bpy.context.scene.render.filepath}", 8000)
+            ap = getattr(self, "anim_player", None)
+            if ap is not None and ap.is_shown():
+                ap.update_animation()          # an open player shows the new frames right away
             return
         self.statusBar().showMessage("Render finished.", 4000)
         self.render_window.render_finished()

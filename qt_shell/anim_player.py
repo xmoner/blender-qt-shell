@@ -404,8 +404,12 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         row.addWidget(self.speed)
         fit = btn("zoom", "⤢", lambda: self.canvas.fit(), _api("canvas.fit()"))
         keymap.tip(fit, "Fit the image in the window ({anim.fit}) · wheel: zoom · middle mouse: pan")
-        rl = btn("render_on", "⟳", self.reload, _api("reload()"))
-        rl.setToolTip("Reload – read the rendered frames again (after a new render)")
+        self.update_btn = btn("render_on", "⟳", self.update_animation, _api("update_animation()"))
+        icons.set_icon(self.update_btn, "render_on", "Update Animation")
+        if self.update_btn.icon().isNull():
+            self.update_btn.setText("⟳ Update Animation")
+        keymap.tip(self.update_btn, "Update Animation ({anim.reload}) – read the rendered images again from the "
+                                    "output folder (after a new render or changed Output settings)")
         self.dock_btn = btn("dock", "⧉", lambda: None, _api("set_docked(True)"))
         self.dock_btn.setCheckable(True)
         self.dock_btn.setChecked(self.docked)
@@ -449,13 +453,15 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
             self._sync_range_spins()
             return
         playing = self._playing
+        self._custom_range = (start, end) != tuple(scene_range())
         self.reload(start, end)
         if playing:
             self.play(self._dir < 0)
 
     def reset_range(self):
-        """Start / End back to the scene range (preview range when it is on)."""
+        """Start / End back to the scene range (preview range when it is on) – it then follows the scene."""
         a, b = scene_range()
+        self._custom_range = False
         self.set_range(a, b)
 
     def reload(self, start=None, end=None):
@@ -463,10 +469,9 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         (default: the range shown now, at the first open the scene range)."""
         self.pause()
         range_change = start is not None
-        if start is None and getattr(self, "_range_set", False):
+        if start is None and getattr(self, "_custom_range", False):   # Start / End set by the user
             start, end = self.start, self.end
         info = output_info(start=start, end=end)
-        self._range_set = True
         old_frame = self.frame
         self.start, self.end = info["start"], info["end"]
         self.scene_fps = info["fps"]
@@ -565,6 +570,18 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         if not loaded:
             self._loader.stop()
         self.bar.update()
+
+    def update_animation(self):
+        """Refresh / Update Animation: reads the rendered images again (new render, changed output path)."""
+        playing = self._playing
+        rev = self._dir < 0
+        self.reload()
+        n = sum(1 for v in self.exists.values() if v)
+        st = getattr(self.mw, "statusBar", None)
+        if st is not None:
+            self.mw.statusBar().showMessage(f"Animation Player: {n} / {len(self.paths) or 1} frames found", 4000)
+        if playing:
+            self.play(rev)
 
     # ------------------------------------------------------------ frames
     def _timeline(self):
@@ -749,7 +766,7 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
     # ------------------------------------------------------------ window
     def present(self):
         """Opens the player (Render → View Animation) in front of the Qt Shell window and starts playing."""
-        self._range_set = False         # a fresh open plays the scene range
+        self._custom_range = False      # a fresh open plays the scene range
         self.reload()
         if self.speed.currentData() is None:
             self.speed.setItemText(0, f"Scene ({self.scene_fps:.4g} fps)")
@@ -809,6 +826,8 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         elif H("anim.jump_end"):
             self.pause()
             self.set_frame(self.end)
+        elif H("anim.reload"):
+            self.update_animation()
         elif H("anim.fit"):
             self.canvas.fit()
         else:
@@ -822,7 +841,7 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
             names = keymap.event_names(ev)
             if any(keymap.hit(a, ev, names) for a in ("anim.play", "anim.play_reverse", "anim.frame_prev",
                                                        "anim.frame_next", "anim.jump_start", "anim.jump_end",
-                                                       "anim.fit", "anim.close")):
+                                                       "anim.fit", "anim.close", "anim.reload")):
                 ev.accept()
                 return True
         return super().event(ev)
