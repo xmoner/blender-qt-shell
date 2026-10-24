@@ -29,6 +29,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, icons, keymap, pytips, theme
+from .dockable import Dockable
 
 CHANNELS = [("COLOR_ALPHA", "Color & Alpha"), ("COLOR", "Color"), ("ALPHA", "Alpha"),
             ("RED", "Red"), ("GREEN", "Green"), ("BLUE", "Blue")]
@@ -556,11 +557,12 @@ class _VariantButton(QtWidgets.QToolButton):
 
 
 # ---------------------------------------------------------------- window
-class RenderView(QtWidgets.QWidget):
+class RenderView(QtWidgets.QWidget, Dockable):
     """Blender's render window: shows the Render Result with the header, canvas, sidebar and footer."""
 
     def __init__(self, main_window):
         super().__init__(main_window, QtCore.Qt.Window)
+        self._init_dockable(main_window, "render_view", "Render", QtCore.Qt.RightDockWidgetArea)
         self.mw = main_window
         self.setWindowTitle("Blender Render")
         self.setObjectName("qtshell_render_view")
@@ -745,6 +747,15 @@ class RenderView(QtWidgets.QWidget):
         self.sidebar_btn.toggled.connect(self.set_sidebar)
         pytips.tag(self.sidebar_btn, _api("set_sidebar(True)"))
         h.addWidget(self.sidebar_btn)
+        self.dock_btn = self._tool("dock", "", "Dock – put the render view into the Qt Shell window (drag its "
+                                   "title to any side, tab it with other editors); off: a separate window",
+                                   checkable=True)
+        if self.dock_btn.icon().isNull():
+            self.dock_btn.setText("⧉")
+        self.dock_btn.setChecked(self.docked)
+        self.dock_btn.toggled.connect(self.set_docked)
+        pytips.tag(self.dock_btn, _api("set_docked(True)"))
+        h.addWidget(self.dock_btn)
         return bar
 
     # ------------------------------------------------------------ toolbar (left)
@@ -1448,10 +1459,13 @@ class RenderView(QtWidgets.QWidget):
         self.load_result(keep_view=self.isVisible())
 
     def present(self):
-        self.show()
-        self.raise_()
-        self.activateWindow()
+        self.present_window()          # a window in front of Qt Shell, or its dock (Dock button)
         self.canvas.setFocus()
+
+    def close(self):
+        """Esc / F11: hides the window (or its dock)."""
+        self.hide_window()
+        return True
 
     # ------------------------------------------------------------ keys
     def keyPressEvent(self, ev):

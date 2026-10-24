@@ -24,6 +24,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, icons, keymap, pytips, theme
+from .dockable import Dockable
 from .rna_widgets import DragSpin
 
 LOOP_MODES = [("LOOP", "Loop", "loop_continuous"), ("ONCE", "Play Once", "loop_once"),
@@ -291,11 +292,12 @@ class _FrameBar(QtWidgets.QWidget):
 
 
 # ---------------------------------------------------------------- window
-class AnimPlayer(QtWidgets.QWidget):
+class AnimPlayer(QtWidgets.QWidget, Dockable):
     """Render → View Animation: plays the rendered frames with a timeline."""
 
     def __init__(self, main_window):
         super().__init__(main_window, QtCore.Qt.Window)     # owned by the Qt Shell window → always in front
+        self._init_dockable(main_window, "anim_player", "Animation Player", QtCore.Qt.BottomDockWidgetArea)
         self.mw = main_window
         self.setObjectName("qtshell_anim_player")
         self.setWindowTitle("Animation Player")
@@ -404,6 +406,12 @@ class AnimPlayer(QtWidgets.QWidget):
         keymap.tip(fit, "Fit the image in the window ({anim.fit}) · wheel: zoom · middle mouse: pan")
         rl = btn("render_on", "⟳", self.reload, _api("reload()"))
         rl.setToolTip("Reload – read the rendered frames again (after a new render)")
+        self.dock_btn = btn("dock", "⧉", lambda: None, _api("set_docked(True)"))
+        self.dock_btn.setCheckable(True)
+        self.dock_btn.setChecked(self.docked)
+        self.dock_btn.setToolTip("Dock – put the player into the Qt Shell window (drag its title to any side, "
+                                 "tab it with other editors); off: a separate window")
+        self.dock_btn.toggled.connect(self.set_docked)
         lay.addLayout(row)
         self.synced = False
         self._scene_seen = None
@@ -745,9 +753,7 @@ class AnimPlayer(QtWidgets.QWidget):
         self.reload()
         if self.speed.currentData() is None:
             self.speed.setItemText(0, f"Scene ({self.scene_fps:.4g} fps)")
-        self.show()
-        self.raise_()
-        self.activateWindow()
+        self.present_window()          # a window in front of Qt Shell, or its dock (Dock button)
         self.canvas.setFocus()
         if self.synced:
             self._scene_seen = None
@@ -755,6 +761,21 @@ class AnimPlayer(QtWidgets.QWidget):
             self._follow_timeline()
         elif any(self.exists.values()) or self.movie:
             self.play()
+
+    def _stop_all(self):
+        self.pause()
+        self._sync_timer.stop()
+        self._loader.stop()
+        self.cache.clear()
+        self._cache_bytes = 0
+        if self._media is not None:
+            self._media.stop()
+
+    def close(self):
+        """Esc: hides the player (or its dock) and frees the loaded frames."""
+        self._stop_all()
+        self.hide_window()
+        return True
 
     def closeEvent(self, ev):
         self.pause()

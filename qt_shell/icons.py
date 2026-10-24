@@ -157,6 +157,10 @@ _ICONS = {
                    'C12.6 0.4 13.8 0.4 14.6 1.2 C15.4 2 15.4 3.2 14.6 4 L12.3 6.3 L13 7 L12 8 L8 4 L9 3 Z"/>'
                    '<path fill="{a}" d="M3 11.5 L5.8 8.7 L7.2 10.1 L4.6 12.7 Z"/>',
     # toolbar toggle: a frame with a panel of tools on the left
+    # dock: a window frame with a panel docked at its bottom
+    "dock": '<rect x="1.5" y="2.5" width="13" height="11" rx="1.2" fill="none" stroke="{c}" stroke-width="1.2"/>'
+            '<rect x="2.2" y="8.6" width="11.6" height="4.2" fill="{a}" fill-opacity=".85"/>'
+            '<path fill="none" stroke="{c}" stroke-width="1.1" stroke-linecap="round" d="M8 3.8 V7 M6.4 5.6 L8 7.2 L9.6 5.6"/>',
     "toolbar": '<rect x="1.5" y="2.5" width="13" height="11" rx="1.2" fill="none" stroke="{c}" stroke-width="1.2"/>'
                '<rect x="2.2" y="3.2" width="4" height="9.6" fill="{c}" fill-opacity=".55"/>',
 

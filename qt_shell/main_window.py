@@ -1632,6 +1632,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self._settings.setValue("floating_docks", json.dumps(floating))
         except Exception:
             pass
+        # Render View / Animation Player docks are never part of the saved layout (see dockable.py)
+        for w in (self.render_window, getattr(self, "anim_player", None)):
+            try:
+                if w is not None:
+                    w.release_dock()
+            except Exception:
+                pass
         for d in list(self.docks.values()) + list(getattr(self, "api_docks", {}).values()):
             try:
                 if d.isFloating():
