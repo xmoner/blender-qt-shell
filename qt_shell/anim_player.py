@@ -46,6 +46,9 @@ def scene_range(scene=None):
     return sc.frame_start, sc.frame_end
 
 
+SOURCES = {"RENDER": "Render", "OVERLAY": "Render + Drawings", "PLAYBLAST": "Viewport Render"}
+
+
 def output_info(scene=None, start=None, end=None):
     """What View Animation plays: {"movie": path or None, "frames": {frame: path}, "start", "end", "fps"}.
     start / end: another frame range than the scene's."""
@@ -410,6 +413,20 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
             self.update_btn.setText("⟳ Update Animation")
         keymap.tip(self.update_btn, "Update Animation ({anim.reload}) – read the rendered images again from the "
                                     "output folder (after a new render or changed Output settings)")
+        # what is played: the rendered frames, the frames with the burnt-in drawings, or the Viewport Render
+        self.source = str(QtCore.QSettings("QtShell", "QtShell").value("anim_player/source", "RENDER"))
+        if self.source not in SOURCES:
+            self.source = "RENDER"
+        self.source_combo = QtWidgets.QComboBox(self)
+        for ident, label in SOURCES.items():
+            self.source_combo.addItem(label, ident)
+        self.source_combo.setCurrentIndex(max(0, self.source_combo.findData(self.source)))
+        self.source_combo.setToolTip("Render: the output frames · Render + Drawings: the frames with Blue Pencil / "
+                                     "annotations burnt in (folder 'overlay') · Viewport Render: the playblast "
+                                     "(folder 'playblast')")
+        self.source_combo.activated.connect(lambda _i: self.set_source(self.source_combo.currentData()))
+        pytips.tag(self.source_combo, _api('set_source("OVERLAY")   # RENDER, OVERLAY, PLAYBLAST'))
+        row.addWidget(self.source_combo)
         self.dock_btn = btn("dock", "⧉", lambda: None, _api("set_docked(True)"))
         self.dock_btn.setCheckable(True)
         self.dock_btn.setChecked(self.docked)
@@ -464,6 +481,16 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         self._custom_range = False
         self.set_range(a, b)
 
+    def set_source(self, source):
+        """RENDER (output frames), OVERLAY (with the burnt-in drawings) or PLAYBLAST (Viewport Render)."""
+        if source not in SOURCES:
+            raise ValueError(f"source: one of {', '.join(SOURCES)}")
+        self.source = source
+        QtCore.QSettings("QtShell", "QtShell").setValue("anim_player/source", source)
+        if self.source_combo.currentData() != source:
+            self.source_combo.setCurrentIndex(self.source_combo.findData(source))
+        self.reload()
+
     def reload(self, start=None, end=None):
         """Reads what Render → View Animation shows: the rendered frames (or movie) of start … end
         (default: the range shown now, at the first open the scene range)."""
@@ -472,6 +499,12 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         if start is None and getattr(self, "_custom_range", False):   # Start / End set by the user
             start, end = self.start, self.end
         info = output_info(start=start, end=end)
+        src = getattr(self, "source", "RENDER")
+        if src != "RENDER":
+            from . import burnin
+            if src == "PLAYBLAST" or info["movie"] is None:
+                info["movie"] = None
+                info["frames"] = burnin.source_paths(bpy.context.scene, info["start"], info["end"], src)
         old_frame = self.frame
         self.start, self.end = info["start"], info["end"]
         self.scene_fps = info["fps"]

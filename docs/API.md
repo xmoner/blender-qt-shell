@@ -765,6 +765,8 @@ Blue Pencil drawings (0.44) live in `qt_shell.bluepencil`: `data()` (layers → 
 `copy_frame()`, `paste_frame()`, `step(1 | -1)`, `retime("ABS", 2)` / `retime("REL", -1)`; after editing `data()`
 yourself call `commit("message")` (saves to the scene, one undo step).
 
+Burn-in and Viewport Render (0.47): `qt_shell.burnin.set_enabled(True)`, `burnin.burn_animation()` (rendered frames → folder `overlay`), `burnin.viewport_render()` (QImage), `burnin.playblast()` (folder `playblast`); the Animation Player's `set_source("RENDER" | "OVERLAY" | "PLAYBLAST")`.
+
 3D view annotations are Blender data: `bpy.context.scene.annotation` (layers → frames → strokes → points `co`),
 rulers of the Measure tool are the strokes of its layer `RulerData3D`. `qt_shell.annotate.add_stroke(coords)`
 adds a stroke to the active note layer.

@@ -575,6 +575,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self._exr_ok = None               # None = not read yet, False = unavailable, True = read
         self._info = {}                   # metadata of the shown result
         self._slot_info = {}              # slot index → metadata of the render in that slot (like Blender)
+        self._slot_burn = {}              # slot index → {frame, camera, mats} for the burn-in of drawings
+        self._external = None             # a picture that isn't the Render Result (Viewport Render)
         self._render_start = None
         self._save_path = ""
         st = QtCore.QSettings("QtShell", "QtShell")
@@ -724,6 +726,15 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.overlay_btn.toggled.connect(self.set_overlays)
         pytips.tag(self.overlay_btn, _api("set_overlays(True)"))
         h.addWidget(self.overlay_btn)
+        self.burn_btn = self._tool("tool_blue_pencil", "", "", checkable=True)
+        from . import burnin
+        self.burn_btn.setChecked(burnin.enabled())
+        self.burn_btn.setToolTip("Burn In – show (and save) the render with the Blue Pencil drawings of the camera "
+                                 "and the annotations (Render → Burn In Blue Pencil / Annotations)")
+        self.burn_btn.toggled.connect(lambda on: burnin.set_enabled(on))
+        pytips.tag(self.burn_btn, "qt_shell.burnin.set_enabled(True)")
+        burnin.signals.changed.connect(self._burn_changed)
+        h.addWidget(self.burn_btn)
         h.addSpacing(theme.px(6))
         self.channel_combo = QtWidgets.QComboBox(bar)
         for cid, label in CHANNELS:
@@ -978,6 +989,11 @@ class RenderView(QtWidgets.QWidget, Dockable):
             a.setCheckable(True)
             a.setChecked(self.tool == "ANNOTATE" and self.annotate_variant == vid)
         self._act(m, "Clear Annotations", self.clear_annotations, None, _api("clear_annotations()"))
+        from . import burnin
+        a = self._act(m, "Burn In Blue Pencil / Annotations", lambda: burnin.set_enabled(not burnin.enabled()), None,
+                      "qt_shell.burnin.set_enabled(True)", "tool_blue_pencil")
+        a.setCheckable(True)
+        a.setChecked(burnin.enabled())
         m.addSeparator()
         self._act(m, "Zoom In", lambda: self.canvas.zoom_step(1.25), "render.zoom_in", _api("zoom(2.0)"))
         self._act(m, "Zoom Out", lambda: self.canvas.zoom_step(0.8), "render.zoom_out", _api("zoom(0.5)"))
@@ -1203,6 +1219,7 @@ class RenderView(QtWidgets.QWidget, Dockable):
 
     def load_result(self, keep_view=False):
         """Reads the Render Result (active slot) and shows it. False when there is nothing to show."""
+        self._external = None
         img = _render_result()
         self._fill_slots()
         if img is None:
@@ -1270,9 +1287,43 @@ class RenderView(QtWidgets.QWidget, Dockable):
                 pass
 
     def _base_image(self):
+        if self._external is not None:
+            return self._external
         if self.pas == "Combined" or not self._exr_ok:
-            return self._combined
+            base = self._combined
+            burn = self._slot_burn.get(self._active_slot())
+            if base is not None and burn is not None:
+                from . import burnin
+                if burnin.enabled():
+                    try:
+                        return burnin.burn(base, bpy.context.scene, burn["frame"], burn["camera"], burn["mats"])
+                    except Exception as ex:
+                        bridge.log(f"Render View burn-in: {ex}", "WARNING")
+            return base
         return self._exr.image(self.layer, self.pas) or self._combined
+
+    def burnt_in(self):
+        """True when the picture shown has the drawings burnt in (Save then saves that picture)."""
+        from . import burnin
+        return self._external is None and burnin.enabled() and (self.pas == "Combined" or not self._exr_ok) and \
+            self._slot_burn.get(self._active_slot()) is not None
+
+    def _burn_changed(self):
+        from . import burnin
+        if self.burn_btn.isChecked() != burnin.enabled():
+            self.burn_btn.blockSignals(True)
+            self.burn_btn.setChecked(burnin.enabled())
+            self.burn_btn.blockSignals(False)
+        if self._combined is not None:
+            self._show(True)
+
+    def show_external(self, img, info=None):
+        """Shows a picture that isn't the Render Result (Viewport Render); Save saves it."""
+        self._external = img.convertToFormat(QtGui.QImage.Format_RGBA8888)
+        self._exr_ok = False
+        if info:
+            self._info = info
+        self._show(False)
 
     def _show(self, keep_view=True):
         base = self._base_image()
@@ -1365,9 +1416,10 @@ class RenderView(QtWidgets.QWidget, Dockable):
         return SAVE_FORMATS[0]
 
     def save_as(self, path=None, copy=False):
-        """Saves the Render Result (active slot) – the format follows the file type."""
+        """Saves the Render Result (active slot) – the format follows the file type. A picture with burnt-in
+        drawings or a Viewport Render is saved as shown (PNG, JPEG, TIFF, WebP, BMP)."""
         img = _render_result()
-        if img is None:
+        if img is None and self._external is None:
             return False
         fmt = None
         if not path:
@@ -1382,6 +1434,26 @@ class RenderView(QtWidgets.QWidget, Dockable):
             if fmt is not None and not os.path.splitext(path)[1]:
                 path += fmt[3]
         fmt = self._format_for(path, fmt)
+        if (self._external is not None or self.burnt_in()) and fmt[2] in ("PNG", "JPEG", "TIFF", "WEBP", "BMP"):
+            q = self._base_image()
+            if q is not None:
+                if fmt[2] in ("JPEG", "BMP"):
+                    q = q.convertToFormat(QtGui.QImage.Format_RGB32)
+                if os.path.dirname(path):
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                if not q.save(path):
+                    QtWidgets.QMessageBox.warning(self, "Save Render", f"Cannot save the image:\n{path}")
+                    return False
+                if not copy:
+                    self._save_path = path
+                self.mw.statusBar().showMessage(f"Saved {path} (with Blue Pencil / annotations)"
+                                                if self._external is None else f"Saved {path}", 5000)
+                return True
+        if img is None:
+            return False
+        if self.burnt_in() or self._external is not None:
+            self.mw.statusBar().showMessage("OpenEXR keeps the clean render (drawings only in PNG / JPEG / TIFF / "
+                                            "WebP / BMP)", 6000)
         sc = bpy.context.scene
         s = sc.render.image_settings
         keep = (getattr(s, "media_type", None), s.file_format, s.color_depth)
@@ -1476,7 +1548,22 @@ class RenderView(QtWidgets.QWidget, Dockable):
         if not self._info:
             self._info = self._collect_info()
         self._slot_info[self._active_slot()] = self._info
+        self._external = None
+        self._remember_burn()
         self.load_result(keep_view=self.isVisible())
+
+    def _remember_burn(self):
+        """Frame, camera and its matrices of the render just finished – for the burn-in of the drawings."""
+        from . import burnin
+        sc = bpy.context.scene
+        cam = sc.camera
+        try:
+            w, h = burnin.render_size(sc)
+            mats = burnin.camera_mats(sc, cam, w, h) if cam is not None else None
+        except Exception:
+            mats = None
+        self._slot_burn[self._active_slot()] = {"frame": sc.frame_current, "camera": cam.name if cam else "",
+                                                "mats": mats}
 
     def present(self):
         self.present_window()          # a window in front of Qt Shell, or its dock (Dock button)

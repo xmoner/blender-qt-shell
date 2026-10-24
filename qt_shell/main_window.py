@@ -1554,6 +1554,38 @@ class MainWindow(QtWidgets.QMainWindow):
             menu.insertAction(before, act)
         else:
             menu.addAction(act)
+        # Blue Pencil / annotations in renders, Viewport Render (playblast)
+        from . import burnin
+
+        def sep():
+            x = QtGui.QAction(menu)
+            x.setSeparator(True)
+            return x
+        extra = [sep()]
+        bi = QtGui.QAction(icons.icon("tool_blue_pencil"), "Burn In Blue Pencil / Annotations", menu)
+        bi.setCheckable(True)
+        bi.setChecked(burnin.enabled())
+        bi.setToolTip("Draw the Blue Pencil layers of the camera and the annotations into renders: Render Image "
+                      "shows / saves them, Render Animation writes the frames again into the folder 'overlay'")
+        bi.toggled.connect(lambda on: burnin.set_enabled(on))
+        extra.append(bi)
+        now = QtGui.QAction("Burn In Rendered Animation Now", menu)
+        now.setToolTip("Write the rendered frames with the drawings into the folder 'overlay' (no new render)")
+        now.triggered.connect(lambda: self.burn_in_animation(show=True))
+        extra += [now, sep()]
+        vi = QtGui.QAction(icons.icon("camera"), "Viewport Render Image", menu)
+        vi.setToolTip("The scene drawn like the 3D view through the camera at the render size, with the drawings")
+        vi.triggered.connect(self.viewport_render_image)
+        va = QtGui.QAction(icons.icon("camera"), "Viewport Render Animation", menu)
+        va.setToolTip("Playblast of the frame range (folder 'playblast' next to the output, PNG) – opens in the "
+                      "Animation Player")
+        va.triggered.connect(self.viewport_render_animation)
+        extra += [vi, va]
+        for x in extra:
+            if before is not None:
+                menu.insertAction(before, x)
+            else:
+                menu.addAction(x)
 
     def _on_render_done(self):
         if not self._rendering:
@@ -1574,6 +1606,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.statusBar().showMessage("Animation render cancelled.", 6000)
             else:
                 self.statusBar().showMessage(f"Animation rendered to {bpy.context.scene.render.filepath}", 8000)
+                from . import burnin
+                if burnin.enabled() and burnin.has_content():
+                    self.burn_in_animation()
             ap = getattr(self, "anim_player", None)
             if ap is not None and ap.is_shown():
                 ap.update_animation()          # an open player shows the new frames right away
@@ -1581,6 +1616,57 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Render cancelled." if cancelled else "Render finished.", 4000)
         self.render_window.render_finished()
         self.render_window.present()
+
+    # ------------------------------------------------------------ burn-in / Viewport Render
+    def burn_in_animation(self, show=False):
+        """The rendered frames with Blue Pencil / annotations → folder 'overlay' (Render → Burn In …)."""
+        from . import burnin
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            n, msg = burnin.burn_animation()
+        except Exception as ex:
+            n, msg = 0, f"Burn-in failed: {ex}"
+            bridge.log(msg, "WARNING")
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        self.statusBar().showMessage(msg, 10000)
+        if n and show:
+            self.view_animation(source="OVERLAY")
+        return n
+
+    def viewport_render_image(self):
+        from . import burnin
+        sc = bpy.context.scene
+        if sc.camera is None:
+            self.statusBar().showMessage("Viewport Render: the scene has no camera.", 5000)
+            return None
+        img = burnin.viewport_render(sc, overlays=True)
+        if img is None:
+            self.statusBar().showMessage("Viewport Render: no 3D view to draw with.", 5000)
+            return None
+        info = self.render_window._collect_info()
+        info["engine"] = "Viewport"
+        self.render_window.show_external(img, info)
+        self.render_window.present()
+        self.statusBar().showMessage("Viewport Render done (Image → Save As saves it).", 5000)
+        return img
+
+    def viewport_render_animation(self):
+        from . import burnin
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            n, folder = burnin.playblast()
+        except Exception as ex:
+            n, folder = 0, f"Viewport Render failed: {ex}"
+            bridge.log(folder, "WARNING")
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+        if n:
+            self.statusBar().showMessage(f"Viewport Render: {n} frames in {folder}", 10000)
+            self.view_animation(source="PLAYBLAST")
+        else:
+            self.statusBar().showMessage(folder, 8000)
+        return n
 
     def _bp_tool_changed(self):
         """The first time the Blue Pencil tool is picked in a session its panel opens."""
@@ -1590,11 +1676,16 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self.docks["bluepencil"].isVisible():
                 bluepencil.show_panel()
 
-    def view_animation(self):
-        """Render → View Animation (Ctrl+F11): the Animation Player (rendered frames + timeline)."""
+    def view_animation(self, source=None):
+        """Render → View Animation (Ctrl+F11): the Animation Player (rendered frames + timeline).
+        source: RENDER / OVERLAY / PLAYBLAST – what it shows (None: as last time)."""
         from .anim_player import AnimPlayer
         if getattr(self, "anim_player", None) is None:
             self.anim_player = AnimPlayer(self)
+        if source is not None and source != getattr(self.anim_player, "source", None):
+            self.anim_player.source = source            # present() reads the frames
+            self.anim_player.source_combo.setCurrentIndex(self.anim_player.source_combo.findData(source))
+            QtCore.QSettings("QtShell", "QtShell").setValue("anim_player/source", source)
         self.anim_player.present()
 
     def show_render(self):
