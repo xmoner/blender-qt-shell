@@ -9,6 +9,9 @@ plays the rendered animation of the scene:
   Frames are loaded in the background and kept in memory (limit 1.5 GB) – the timeline shows them green.
 - Movie files (FFmpeg output) with Qt Multimedia when it is available.
 
+Synced (button): the player follows the Timeline – scrubbing or playing in the Timeline shows the same frame
+here, and scrubbing / stepping here moves the scene's frame; play / pause then drives the Timeline's playback.
+
 Timeline: click / drag to scrub, the wheel steps frames; transport (start, step back, play backwards, play,
 step forwards, end), loop mode (Loop / Once / Ping-Pong), playback speed (the scene frame rate or another
 one). Canvas: wheel zooms, middle mouse pans, {anim.fit} fits. Keys in the Keyboard Shortcuts window
@@ -357,6 +360,15 @@ class AnimPlayer(QtWidgets.QWidget):
         keymap.tip(btn("jump_end", "⏭", lambda: self.set_frame(self.end), _api("set_frame(250)")),
                    "Last Frame ({anim.jump_end})")
         self.loop_btn = btn("loop_continuous", "↻", self.cycle_loop, _api("set_loop_mode('PINGPONG')"))
+        self.sync_btn = QtWidgets.QToolButton(self)
+        self.sync_btn.setText("Synced")
+        self.sync_btn.setCheckable(True)
+        self.sync_btn.setToolTip("Synced – connected to the Timeline: the player shows the Timeline's frame "
+                                 "(scrubbing and playback), scrubbing / stepping here moves the scene's frame, "
+                                 "Play / Pause controls the Timeline's playback")
+        pytips.tag(self.sync_btn, _api("set_synced(True)"))
+        self.sync_btn.toggled.connect(self.set_synced)
+        row.addWidget(self.sync_btn)
         row.addSpacing(theme.px(10))
         self.frame_lbl = QtWidgets.QLabel(self)
         self.frame_lbl.setMinimumWidth(theme.px(120))
@@ -393,8 +405,15 @@ class AnimPlayer(QtWidgets.QWidget):
         rl = btn("render_on", "⟳", self.reload, _api("reload()"))
         rl.setToolTip("Reload – read the rendered frames again (after a new render)")
         lay.addLayout(row)
+        self.synced = False
+        self._scene_seen = None
+        self._sync_timer = QtCore.QTimer(self)      # follows the Timeline (also its cached playback)
+        self._sync_timer.setInterval(30)
+        self._sync_timer.timeout.connect(self._follow_timeline)
         self._update_loop_btn()
         self._update_buttons()
+        if str(QtCore.QSettings("QtShell", "QtShell").value("anim_player/synced", "false")).lower() == "true":
+            self.sync_btn.setChecked(True)
 
     def _range_spin(self, label, tip):
         s = DragSpin(is_int=True)
@@ -470,7 +489,7 @@ class AnimPlayer(QtWidgets.QWidget):
                 self._loader.start()
             self.info_lbl.setText(f"{n} / {len(self.paths)} frames rendered · "
                                   f"{os.path.dirname(next(iter(self.paths.values()), '')) or '—'}")
-        self.set_frame(self.frame)
+        self.set_frame(self.frame, push=False)
         self.bar.update()
 
     def _open_movie(self, path):
@@ -540,9 +559,31 @@ class AnimPlayer(QtWidgets.QWidget):
         self.bar.update()
 
     # ------------------------------------------------------------ frames
-    def set_frame(self, f):
-        f = max(self.start, min(self.end, int(f)))
+    def _timeline(self):
+        return getattr(self.mw, "timeline", None)
+
+    def set_frame(self, f, push=True):
+        """Shows frame f. Synced: push=True also moves the scene's frame (the Timeline follows)."""
+        f = int(f)
+        outside = not (self.start <= f <= self.end)
+        if outside and not self.synced:
+            f = max(self.start, min(self.end, f))
+            outside = False
         self.frame = f
+        if self.synced and push:
+            tl = self._timeline()
+            sc = bpy.context.scene
+            if tl is not None and not tl.is_playing() and sc.frame_current != f:
+                sc.frame_set(f)
+                self._scene_seen = f
+                tl.sync()
+        if outside:
+            self.canvas.image = None
+            self.canvas.message = f"Frame {f} is outside Start – End ({self.start} – {self.end})"
+            self.canvas.update()
+            self.frame_lbl.setText(f"Frame {f}  (outside)")
+            self.bar.update()
+            return
         if self._media is not None and self.stack.currentWidget() is self.video:
             fps = self.fps or self.scene_fps
             self._media.setPosition(int((f - self.start) / fps * 1000))
@@ -562,6 +603,44 @@ class AnimPlayer(QtWidgets.QWidget):
     def step(self, n):
         self.pause()
         self.set_frame(self.frame + int(n))
+
+    # ------------------------------------------------------------ synced with the Timeline
+    def set_synced(self, on):
+        """Synced: the player follows the Timeline (and scrubbing here moves the scene's frame)."""
+        on = bool(on)
+        if self.sync_btn.isChecked() != on:
+            self.sync_btn.blockSignals(True)
+            self.sync_btn.setChecked(on)
+            self.sync_btn.blockSignals(False)
+        self.synced = on
+        QtCore.QSettings("QtShell", "QtShell").setValue("anim_player/synced", "true" if on else "false")
+        if on:
+            self.pause()
+            self._scene_seen = None
+            self._sync_timer.start()
+            self._follow_timeline()
+        else:
+            self._sync_timer.stop()
+        self._update_buttons()
+
+    def _follow_timeline(self):
+        if not self.synced or not self.isVisible():
+            return
+        tl = self._timeline()
+        if tl is None:
+            return
+        try:
+            f = int(tl.shown_frame())
+        except Exception:
+            return
+        playing = tl.is_playing()
+        if playing != getattr(self, "_tl_playing", None):
+            self._tl_playing = playing
+            self._update_buttons()
+        if f != self._scene_seen:
+            self._scene_seen = f
+            if f != self.frame:
+                self.set_frame(f, push=False)
 
     # ------------------------------------------------------------ playback
     def is_playing(self):
@@ -588,6 +667,12 @@ class AnimPlayer(QtWidgets.QWidget):
             self._update_buttons()
 
     def toggle_play(self, reverse=False):
+        if self.synced:                       # the Timeline plays, the player follows
+            tl = self._timeline()
+            if tl is not None:
+                tl.toggle_play(reverse=reverse)
+                self._update_buttons()
+            return
         if self._playing and self._dir == (-1 if reverse else 1):
             self.pause()
         else:
@@ -600,7 +685,7 @@ class AnimPlayer(QtWidgets.QWidget):
         p = (self._f0 - self.start) + self._dir * n
         if self.loop_mode == "ONCE":
             if p < 0 or p > length - 1:
-                self.set_frame(self.end if self._dir > 0 else self.start)
+                self.set_frame(self.end if self._dir > 0 else self.start, push=False)
                 self.pause()
                 return
             f = self.start + p
@@ -611,7 +696,7 @@ class AnimPlayer(QtWidgets.QWidget):
         else:
             f = self.start + p % length
         if f != self.frame:
-            self.set_frame(f)
+            self.set_frame(f, push=False)
 
     def set_fps(self, fps):
         """Playback speed in frames per second (None = the scene frame rate)."""
@@ -645,6 +730,9 @@ class AnimPlayer(QtWidgets.QWidget):
     def _update_buttons(self):
         fwd = self._playing and self._dir > 0
         rev = self._playing and self._dir < 0
+        tl = self._timeline() if getattr(self, "synced", False) else None
+        if tl is not None and tl.is_playing():
+            fwd, rev = tl._dir > 0, tl._dir < 0
         if not icons.set_icon(self.play_btn, "pause" if fwd else "play"):
             self.play_btn.setText("⏸" if fwd else "▶")
         if not icons.set_icon(self.rev_btn, "pause" if rev else "play_reverse"):
@@ -661,11 +749,16 @@ class AnimPlayer(QtWidgets.QWidget):
         self.raise_()
         self.activateWindow()
         self.canvas.setFocus()
-        if any(self.exists.values()) or self.movie:
+        if self.synced:
+            self._scene_seen = None
+            self._sync_timer.start()
+            self._follow_timeline()
+        elif any(self.exists.values()) or self.movie:
             self.play()
 
     def closeEvent(self, ev):
         self.pause()
+        self._sync_timer.stop()
         self._loader.stop()
         self.cache.clear()
         self._cache_bytes = 0
