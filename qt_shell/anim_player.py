@@ -368,8 +368,12 @@ class AnimPlayer(QtWidgets.QWidget):
         pytips.tag(self.end_spin, _api("set_range(1, 250)"))
         self.start_spin.valueChanged.connect(lambda v: self.set_range(v, max(int(v), self.end)))
         self.end_spin.valueChanged.connect(lambda v: self.set_range(min(int(v), self.start), v))
-        row.addWidget(self.start_spin)
-        row.addWidget(self.end_spin)
+        for label, spin in (("Start", self.start_spin), ("End", self.end_spin)):
+            lbl = QtWidgets.QLabel(label, self)      # the label next to the field (like the Timeline)
+            lbl.setBuddy(spin)
+            row.addSpacing(theme.px(4))
+            row.addWidget(lbl)
+            row.addWidget(spin)
         rs = btn("preview_range", "↺", self.reset_range, _api("reset_range()"))
         rs.setToolTip("Back to the scene range (the preview range when it is on)")
         row.addStretch(1)
@@ -397,8 +401,7 @@ class AnimPlayer(QtWidgets.QWidget):
         s.setParent(self)
         s.setRange(-1048574, 1048574)
         s.drag_step = 0.25
-        s.setPrefix(f"{label} ")
-        s.setMinimumWidth(theme.px(92))
+        s.setMinimumWidth(theme.px(64))
         s.setToolTip(f"{tip} – drag or type a frame")
         return s
 
