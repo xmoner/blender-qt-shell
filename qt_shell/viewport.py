@@ -1310,6 +1310,8 @@ class Viewport(QtWidgets.QWidget):
             self._context_menu(ev.globalPosition().toPoint())
 
     def mouseDoubleClickEvent(self, ev):
+        if self.bp_tools.double_click(ev, ev.position()):
+            return
         if self.ann_tools.double_click(ev, ev.position()):
             return
         super().mouseDoubleClickEvent(ev)

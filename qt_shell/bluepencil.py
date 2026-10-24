@@ -137,6 +137,7 @@ def settings():
 
 class _Signals(QtCore.QObject):
     changed = QtCore.Signal()          # the drawings / layers changed
+    selection = QtCore.Signal()        # the Transform tool's selection changed
 
 
 signals = _Signals()
@@ -904,8 +905,20 @@ def selected_frames():
 class BPTools:
     """Mouse / key handling of the Blue Pencil tool in a 3D view."""
 
+    @property
+    def sel(self):
+        return self._sel
+
+    @sel.setter
+    def sel(self, value):
+        changed = value != getattr(self, "_sel", None)
+        self._sel = value
+        if changed:
+            signals.selection.emit()
+
     def __init__(self, vp):
         self.vp = vp
+        self.text_edit = None       # (layer, key, index) of the text being edited
         self.cur = None             # free-hand: [[x, y, pressure]] in widget coordinates
         self.shape = None           # [QPointF start, QPointF end]
         self.erasing = False
@@ -932,10 +945,56 @@ class BPTools:
                     or self.text is not None)
 
     def hidden_strokes(self):
-        """Strokes drawn by the tool itself (the transformed selection)."""
-        if self.sel is None:
-            return set()
-        return {(self.sel["layer"], self.sel["key"], j) for j in self.sel["idx"]}
+        """Strokes drawn by the tool itself (the transformed selection) or being edited (text)."""
+        out = set()
+        if self.sel is not None:
+            out = {(self.sel["layer"], self.sel["key"], j) for j in self.sel["idx"]}
+        if self.text_edit is not None and self.text is not None:
+            out.add(tuple(self.text_edit))
+        return out
+
+    def note_at(self, pos):
+        """(layer, key, index) of the text note under pos (frame shown, layers of this view; the active
+        layer first, then from the top), or None."""
+        cam, rect = self._space()
+        d = data()
+        f = current_frame()
+        act = active_index(d)
+        order = ([act] if act >= 0 else []) + [i for i in range(len(d["layers"])) if i != act]
+        for i in order:
+            lay = d["layers"][i]
+            if lay.get("camera", "") != cam or not lay.get("visible", True):
+                continue
+            k = held_key(lay, f)
+            if k is None:
+                continue
+            fr = lay["frames"][str(k)]
+            for j in range(len(fr) - 1, -1, -1):
+                if fr[j].get("k") == "TEXT" and stroke_bounds(fr[j], rect).adjusted(-4, -4, 4, 4).contains(pos):
+                    return (i, k, j)
+        return None
+
+    def _stroke(self, ref):
+        try:
+            i, k, j = ref
+            return data()["layers"][i]["frames"][str(k)][j]
+        except (IndexError, KeyError, TypeError):
+            return None
+
+    def edit_text(self, ref):
+        """Opens a text note for editing (Enter: done, Esc: cancel, emptied: deleted)."""
+        s = self._stroke(ref)
+        if s is None:
+            return False
+        lay = data()["layers"][ref[0]]
+        if not _editable(lay):
+            return False
+        if self.sel is not None:
+            self.apply_transform()
+            self.sel = None
+        _cam, rect = self._space()
+        self._start_text(to_screen(s["p"][0], rect), edit=tuple(ref))
+        return True
 
     def _space(self):
         return view_space(self.vp)
@@ -1013,7 +1072,11 @@ class BPTools:
             self.erased = False
             self._erase(pos)
         elif tool == "TEXT":
-            self._start_text(pos)
+            hit = self.note_at(pos)
+            if hit is not None:
+                self.edit_text(hit)          # click on a note: edit it
+            else:
+                self._start_text(pos)
         elif tool == "TRANSFORM":
             if self.sel is not None and self._sel_rect().adjusted(-6, -6, 6, 6).contains(pos):
                 self._start_xf("ROTATE" if mods & QtCore.Qt.ShiftModifier else "MOVE", pos)
@@ -1105,11 +1168,24 @@ class BPTools:
         return True                          # the press was ours (no click-select on release)
 
     def double_click(self, ev, pos):
-        return False
+        """Double-click on a text note (Text / Transform tool): edit it."""
+        if not self.active() or ev.button() != QtCore.Qt.LeftButton or self.tool() not in ("TEXT", "TRANSFORM"):
+            return False
+        if self.text is not None:
+            return True
+        hit = self.note_at(pos)
+        if hit is None:
+            return False
+        self.rubber = None
+        self.drag = None
+        return self.edit_text(hit)
 
     def wheel(self, ev):
         if not self.active() or not ev.modifiers() & QtCore.Qt.ControlModifier:
             return False
+        if self.sel is not None:
+            self.scale_selection_size(1.12 ** (ev.angleDelta().y() / 120.0))
+            return True
         t = self.tool()
         st = settings()
         st.set_size(t, st.size(t) * (1.12 ** (ev.angleDelta().y() / 120.0)))
@@ -1153,18 +1229,25 @@ class BPTools:
             self.erased = True
 
     # --- text
-    def _start_text(self, pos):
+    def _start_text(self, pos, edit=None):
         st = settings()
         _cam, rect = self._space()
+        old = self._stroke(edit) if edit is not None else None
+        size = float(old.get("fs", 24)) if old else st.size("TEXT")
+        color = _color(old, 1.0).name() if old else st.color
         ed = QtWidgets.QLineEdit(self.vp)
         f = ed.font()
-        f.setPixelSize(max(8, int(st.size("TEXT") * frame_scale(rect))))
+        f.setPixelSize(max(8, int(size * frame_scale(rect))))
         ed.setFont(f)
-        ed.setStyleSheet(f"QLineEdit {{ background: rgba(0,0,0,90); color: {st.color}; "
+        ed.setStyleSheet(f"QLineEdit {{ background: rgba(0,0,0,90); color: {color}; "
                          "border: 1px dashed #bbbbbb; padding: 0px; }")
         ed.setPlaceholderText("Note…")
+        if old:
+            ed.setText(str(old.get("t", "")))
+            ed.selectAll()
+        self.text_edit = edit
         ed.move(int(pos.x()), int(pos.y()))
-        ed.resize(max(160, int(f.pixelSize() * 10)), int(f.pixelSize() * 1.6))
+        ed.resize(max(160, int(f.pixelSize() * (len(ed.text()) * 0.62 + 4))), int(f.pixelSize() * 1.6))
         ed.show()
         ed.setFocus()
         ed.returnPressed.connect(lambda: self._finish_text(True))
@@ -1179,6 +1262,17 @@ class BPTools:
         ed.hide()
         ed.deleteLater()
         self.vp.setFocus()
+        edit, self.text_edit = self.text_edit, None
+        if edit is not None:
+            s = self._stroke(edit)
+            if keep and s is not None and txt != s.get("t"):
+                if txt:
+                    s["t"] = txt
+                else:                        # emptied: the note is deleted
+                    del data()["layers"][edit[0]]["frames"][str(edit[1])][edit[2]]
+                commit("Edit Text")
+            self.vp.update()
+            return
         if keep and txt:
             _cam, rect = self._space()
             s = self._base_stroke("TEXT")
@@ -1282,6 +1376,17 @@ class BPTools:
         self.xf = QtGui.QTransform()
         commit("Transform")
         return True
+
+    def scale_selection_size(self, factor):
+        """[ / ] or Ctrl + wheel with a selection: font size of text, width of lines."""
+        strokes = self._sel_strokes()
+        for s in strokes:
+            key = "fs" if s.get("k") == "TEXT" else "w"
+            s[key] = round(max(1.0, min(400.0, float(s.get(key, 24 if key == "fs" else 3)) * factor)), 2)
+        if strokes:
+            commit("Size")
+            signals.selection.emit()
+            self.vp.update()
 
     def reset_transform(self):
         self.xf = QtGui.QTransform()
@@ -1401,6 +1506,9 @@ class BPTools:
         if H("bp.step_next"):
             step(1)
             return True
+        if (H("bp.size_up") or H("bp.size_down")) and self.sel is not None:
+            self.scale_selection_size(1.25 if H("bp.size_up") else 0.8)
+            return True
         if H("bp.size_up") or H("bp.size_down"):
             t = self.tool()
             st = settings()
@@ -1447,6 +1555,11 @@ class BPTools:
             a.setChecked(self.tool() == tid)
         menu.addSeparator()
         if self.tool() == "TRANSFORM":
+            texts = [j for j, s in zip(self.sel["idx"], self._sel_strokes()) if s.get("k") == "TEXT"] \
+                if self.sel is not None else []
+            if texts:
+                ref = (self.sel["layer"], self.sel["key"], texts[0])
+                menu.addAction(icons.icon("bp_text"), "Edit Text…", lambda: self.edit_text(ref))
             menu.addAction(keymap.render("Apply Transform\t{bp.apply}"), self.apply_transform)
             menu.addAction(keymap.render("Reset Transform\t{bp.reset}"), self.reset_transform)
             menu.addAction(keymap.render("Delete Selected\t{bp.delete}"), self.delete_selected)
@@ -1546,6 +1659,48 @@ class BPTools:
                 p.setPen(QtGui.QPen(QtGui.QColor(90, 160, 255, 90), 1))
                 p.drawRect(rect)
         p.restore()
+
+
+def _all_tools():
+    mw = _mw()
+    if mw is None:
+        return []
+    area = getattr(mw, "viewports", None)
+    views = getattr(area, "views", None) or [getattr(mw, "viewport", None)]
+    return [v.bp_tools for v in views if v is not None and getattr(v, "bp_tools", None) is not None]
+
+
+def selected_strokes():
+    """Strokes selected with the Transform tool (in any 3D view)."""
+    out = []
+    for t in _all_tools():
+        if t.sel is not None:
+            out += t._sel_strokes()
+    return out
+
+
+def apply_to_selection(prop, value, do_commit=True):
+    """Colour ("color", "#rrggbb"), size ("size": font size of text, width of lines) or opacity ("opacity",
+    0–1) of the strokes selected with the Transform tool. Returns the number of strokes changed."""
+    strokes = selected_strokes()
+    if not strokes:
+        return 0
+    for s in strokes:
+        if prop == "color":
+            c = QtGui.QColor(value)
+            s["c"] = [round(c.redF(), 4), round(c.greenF(), 4), round(c.blueF(), 4)]
+        elif prop == "size":
+            if s.get("k") == "TEXT":
+                s["fs"] = float(value)
+            else:
+                s["w"] = float(value)
+        elif prop == "opacity":
+            s["o"] = round(float(value), 3)
+    if do_commit:
+        commit({"color": "Colour", "size": "Size", "opacity": "Opacity"}.get(prop, prop))
+    else:
+        _views_update()
+    return len(strokes)
 
 
 def _views_update():
@@ -1661,7 +1816,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             b.setIcon(_swatch(c, theme.px(12)))
             b.setAutoRaise(True)
             b.setToolTip(c)
-            b.clicked.connect(lambda _c=False, col=c: (st.set("color", col), self.sync()))
+            b.clicked.connect(lambda _c=False, col=c: self._set_color(col))
             crow.addWidget(b)
         crow.addStretch(1)
         v.addLayout(crow)
@@ -1672,19 +1827,25 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         self.size_spin = QtWidgets.QDoubleSpinBox(inner)
         self.size_spin.setRange(1, 200)
         self.size_spin.setDecimals(0)
-        self.size_spin.valueChanged.connect(lambda val: (st.set_size(current_tool(), val), _views_update()))
+        self.size_spin.valueChanged.connect(self._size_changed)
         keymap.tip(self.size_spin, "Size of the active tool (px of a frame 800 px high; text: font size, eraser: "
                                    "radius in screen px) – {bp.size_down} / {bp.size_up} or Ctrl + wheel in the view")
         form.addRow("Size", self.size_spin)
         self.opacity = QtWidgets.QSlider(QtCore.Qt.Horizontal, inner)
         self.opacity.setRange(5, 100)
-        self.opacity.valueChanged.connect(lambda val: st.set("opacity", val / 100.0))
-        self.opacity.setToolTip("Opacity of new strokes")
+        self.opacity.valueChanged.connect(self._opacity_changed)
+        self.opacity.sliderReleased.connect(self._opacity_released)
+        self.opacity.setToolTip("Opacity of new strokes (and of the strokes selected with Transform)")
         form.addRow("Opacity", self.opacity)
         self.pressure = QtWidgets.QCheckBox("Tablet pressure (Brush)", inner)
         self.pressure.toggled.connect(lambda on: st.set("pressure", on))
         form.addRow("", self.pressure)
         v.addLayout(form)
+        self.sel_label = QtWidgets.QLabel(inner)
+        self.sel_label.setWordWrap(True)
+        self.sel_label.setStyleSheet("color: #ffbe33;")
+        self.sel_label.hide()
+        v.addWidget(self.sel_label)
 
         # ghosting
         head("Ghosting")
@@ -1823,6 +1984,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
 
         self._syncing = False
         signals.changed.connect(self.sync)
+        signals.selection.connect(self.sync)
         st.changed.connect(self.sync)
         tool_state().changed.connect(self.sync)
         for sig in (hub.file_loaded, hub.undo_done, hub.frame_changed):
@@ -1838,9 +2000,37 @@ class BluePencilPanel(QtWidgets.QScrollArea):
 
     def _pick_color(self):
         st = settings()
-        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(st.color), self, "Blue Pencil Colour")
+        sel = selected_strokes()
+        cur = _color(sel[0], 1.0) if sel else QtGui.QColor(st.color)
+        c = QtWidgets.QColorDialog.getColor(cur, self, "Blue Pencil Colour")
         if c.isValid():
-            st.set("color", c.name())
+            self._set_color(c.name())
+
+    def _set_color(self, col):
+        """Drawing colour – also of the strokes selected with Transform."""
+        settings().set("color", col)
+        apply_to_selection("color", col)
+        self.sync()
+
+    def _size_changed(self, val):
+        if self._syncing:
+            return
+        if selected_strokes():
+            apply_to_selection("size", val)
+        else:
+            settings().set_size(current_tool(), val)
+            _views_update()
+
+    def _opacity_changed(self, val):
+        if self._syncing:
+            return
+        settings().set("opacity", val / 100.0)
+        if selected_strokes():
+            apply_to_selection("opacity", val / 100.0, do_commit=not self.opacity.isSliderDown())
+
+    def _opacity_released(self):
+        if selected_strokes():
+            apply_to_selection("opacity", self.opacity.value() / 100.0)
 
     def _pick_ghost_color(self, key):
         st = settings()
@@ -1993,9 +2183,24 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             self.show_chk.setChecked(st.show)
             for tid, b in self.tool_btns.items():
                 b.setChecked(act and tid == tool)
-            self.color_btn.setIcon(_swatch(st.color, theme.px(22)))
-            self.size_spin.setValue(st.size(tool))
-            self.opacity.setValue(int(round(st.opacity * 100)))
+            sel = selected_strokes() if act else []
+            if sel:
+                first = sel[0]
+                n_txt = sum(1 for x in sel if x.get("k") == "TEXT")
+                self.sel_label.setText(f"Colour, size and opacity apply to the {len(sel)} selected stroke"
+                                       f"{'s' if len(sel) > 1 else ''}" + (f" ({n_txt} text – size = font size)"
+                                                                          if n_txt else "") +
+                                       ". Double-click a text to edit it.")
+                self.color_btn.setIcon(_swatch(_color(first, 1.0).name(), theme.px(22)))
+                self.size_spin.setValue(float(first.get("fs", 24)) if first.get("k") == "TEXT"
+                                        else float(first.get("w", 3)))
+                self.opacity.setValue(int(round(float(first.get("o", 1.0)) * 100)))
+            else:
+                self.sel_label.setText("")
+                self.color_btn.setIcon(_swatch(st.color, theme.px(22)))
+                self.size_spin.setValue(st.size(tool))
+                self.opacity.setValue(int(round(st.opacity * 100)))
+            self.sel_label.setVisible(bool(sel))
             self.pressure.setChecked(st.pressure)
             for key, (chk, cnt, col) in self.ghost.items():
                 chk.setChecked(getattr(st, f"ghost_{key}"))
