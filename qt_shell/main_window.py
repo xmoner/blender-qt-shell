@@ -1067,7 +1067,9 @@ class MainWindow(QtWidgets.QMainWindow):
                       lambda: QtCore.QTimer.singleShot(0, shell_app.stop))
         win.addAction("Reset Window Layout", self._reset_layout)
         win.addAction("Interface Size…", self._interface_size)
-        blender_menu("Help", "TOPBAR_MT_help")
+        help_menu = blender_menu("Help", "TOPBAR_MT_help")
+        # Help → Search (like Maya): finds menu items, buttons, tabs and operators – after the menu is filled
+        help_menu.aboutToShow.connect(lambda m=help_menu: self._extend_help_menu(m))
 
     def _build_shortcuts(self):
         """Window shortcuts – their keys come from the keymap (Edit → Keyboard Shortcuts…)."""
@@ -1087,6 +1089,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("window.undo", lambda: run_op("ed.undo"))
         sc("window.redo", lambda: run_op("ed.redo"))
         sc("window.search", self.search)
+        sc("window.find_all", lambda: self.find_all())
         sc("window.render", lambda: self.render_image(False))
         sc("window.render_anim", lambda: self.render_image(True))
         # Esc cancels a running render; enabled only while rendering, so Esc keeps its other uses
@@ -1702,6 +1705,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         rv.load_result(keep_view=rv.isVisible())
         rv.present()
+
+    def _extend_help_menu(self, menu):
+        from . import menufind
+        try:
+            menufind.add_to_menu(menu, self)
+        except Exception as ex:
+            bridge.log(f"Help search: {ex}", "ERROR")
+
+    def find_all(self, text=""):
+        """Help → Search: menu items, buttons, tabs and operators of the whole window."""
+        from . import menufind
+        return menufind.open_popup(self, text)
 
     # ------------------------------------------------------------ misc
     def search(self):
