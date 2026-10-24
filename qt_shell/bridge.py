@@ -310,7 +310,26 @@ _OLD_HANDLERS = (("render_complete", "_on_render_done"), ("render_cancel", "_on_
                  ("render_stats", "_on_render_stats"))
 
 
+_gpu_hold_until = 0.0
+
+
+def hold_gpu(seconds=0.25):
+    """A Blender window was closed: Blender has no active GPU context until a window is made drawable
+    again (native.repaint_blender_windows → GHOST WindowUpdate) – offscreen drawing (draw_view3d) would
+    crash. is_rendering() is True meanwhile, which pauses the viewport like a render does."""
+    global _gpu_hold_until
+    import time
+    _gpu_hold_until = time.monotonic() + seconds
+
+
+def gpu_held():
+    import time
+    return time.monotonic() < _gpu_hold_until
+
+
 def is_rendering():
+    if gpu_held():
+        return True
     try:
         return bpy.app.is_job_running("RENDER")
     except Exception:

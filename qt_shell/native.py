@@ -32,6 +32,7 @@ def _windows(visible):
     user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.SetForegroundWindow.argtypes = [wintypes.HWND]
     user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
 
     pid = os.getpid()
     found = []
@@ -55,6 +56,8 @@ def _windows(visible):
                 user32.ShowWindow(hwnd, 9)   # SW_RESTORE (back to normal / maximized)
             user32.ShowWindow(hwnd, 5)       # SW_SHOW
             user32.SetForegroundWindow(hwnd)
+        elif not user32.IsWindowVisible(hwnd) and user32.IsIconic(hwnd):
+            continue                         # hidden already (hiding again would activate another window)
         else:
             # Minimize before hiding: Blender skips drawing minimized windows. A window that is only
             # hidden is still redrawn on every change and waits for VSync – that capped playback at 60 fps.
@@ -66,6 +69,19 @@ def _windows(visible):
 
 
 _ghost_hwnds = []
+
+
+def repaint_blender_windows():
+    """Posts WM_PAINT to Blender's (hidden) windows (Windows). Blender handles it as a GHOST WindowUpdate
+    and makes that window drawable – its GPU context active again after another window was closed."""
+    if sys.platform != "win32" or not _ghost_hwnds:
+        return False
+    try:
+        for h in _ghost_hwnds:
+            ctypes.windll.user32.PostMessageW(ctypes.c_void_p(h), 0x000F, 0, 0)    # WM_PAINT
+        return True
+    except Exception:
+        return False
 
 
 def wake_event_loop():

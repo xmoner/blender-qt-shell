@@ -8,7 +8,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import app as shell_app
-from . import icons
+from . import icons, keymap
 from . import pytips
 from . import annotate, api, bridge, fake_ui, rna_widgets as rw, theme
 from .bridge import run_op, tr
@@ -557,6 +557,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_shortcuts()
         self.status_right = QtWidgets.QLabel(self.statusBar())
         self.statusBar().addPermanentWidget(self.status_right)
+        # shown while rendering: Cancel Render (also Esc, Render → Cancel Render)
+        self.render_cancel_btn = QtWidgets.QToolButton(self.statusBar())
+        icons.set_icon(self.render_cancel_btn, "render_cancel")
+        self.render_cancel_btn.setText("Cancel Render")
+        self.render_cancel_btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.render_cancel_btn.setAutoRaise(True)
+        keymap.tip(self.render_cancel_btn, "Stop the running render ({window.render_cancel})")
+        self.render_cancel_btn.clicked.connect(self.cancel_render)
+        self.render_cancel_btn.hide()
+        self.statusBar().addPermanentWidget(self.render_cancel_btn)
         # status history: every message is kept (newest 200) and also written to the Console
         self._last_log_line = None
         hist_btn = QtWidgets.QToolButton(self.statusBar())
@@ -583,9 +593,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.viewports.selection_edited.connect(self._sync_selmode)
         hub.mode_changed.connect(self._on_mode)
         hub.render_done.connect(self._on_render_done)
+        hub.render_frame.connect(self._on_render_frame)
         hub.file_loaded.connect(self._on_file_loaded)
         self.viewports.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self._rendering = False
+        self._render_win = None             # hidden Blender window the running render was started from
+        self._render_cancelled = False
 
         pytips.install()        # Python tooltips (Edit → Qt Preferences… → Interface)
         # window icon (the Hex Turtle logo, docs/logo/)
@@ -1017,7 +1030,8 @@ class MainWindow(QtWidgets.QMainWindow):
         view.setProperty("qtshell_key", "View")
         for a in self._view_menu(view).actions():
             view.addAction(a)
-        blender_menu("Render", "TOPBAR_MT_render")
+        render_menu = blender_menu("Render", "TOPBAR_MT_render")
+        render_menu.aboutToShow.connect(lambda m=render_menu: self._extend_render_menu(m))   # after it is filled
 
         win = mb.addMenu(tr("Window"))
         win.setProperty("qtshell_key", "Window")
@@ -1058,6 +1072,13 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("window.search", self.search)
         sc("window.render", lambda: self.render_image(False))
         sc("window.render_anim", lambda: self.render_image(True))
+        # Esc cancels a running render; enabled only while rendering, so Esc keeps its other uses
+        self.render_cancel_act = QtGui.QAction(self)
+        self.render_cancel_act.setShortcutContext(QtCore.Qt.WindowShortcut)
+        self.render_cancel_act.triggered.connect(self.cancel_render)
+        keymap.bind_action(self.render_cancel_act, "window.render_cancel")
+        self.render_cancel_act.setEnabled(False)
+        self.addAction(self.render_cancel_act)
         sc("window.show_render", self.show_render)
         sc("window.view_anim", self.view_animation)
         sc("window.quit", self.close)
@@ -1250,18 +1271,28 @@ class MainWindow(QtWidgets.QMainWindow):
         old = view.render_display_type
         try:
             view.render_display_type = "NONE"
-            with bridge.blender_context():
-                res = bpy.ops.render.render("INVOKE_DEFAULT", animation=animation)
+            # The render runs in a hidden helper window: Blender's render operator waits for Esc in the
+            # window it was started from and stops the render job when that window closes – closing the
+            # helper is the only way to cancel a render from Python (Esc can't be sent to Blender).
+            win = self._render_helper_window()
+            ctx = self._window_context(win) if win is not None else None
+            if ctx is not None:
+                with bpy.context.temp_override(**ctx):
+                    res = bpy.ops.render.render("INVOKE_DEFAULT", animation=animation)
+            else:
+                with bridge.blender_context():
+                    res = bpy.ops.render.render("INVOKE_DEFAULT", animation=animation)
             if "RUNNING_MODAL" in res:
-                self._rendering = True
-                self._render_anim = animation
-                self.statusBar().showMessage("Rendering…")
+                self._render_win = win if ctx is not None else None
+                self._set_rendering(True, animation)
                 if not animation:
                     self.render_window.render_started()     # like Blender: the render window opens
                     self.render_window.present()
                 return
+            self._close_render_helper(win)
         except Exception as ex:
             bridge.log(f"Asynchronous render failed ({ex}), rendering in blocking mode.", "WARNING")
+            self._close_render_helper(getattr(self, "_render_win", None))
         finally:
             view.render_display_type = old
         # fallback: blocking render
@@ -1279,17 +1310,150 @@ class MainWindow(QtWidgets.QMainWindow):
         self._rendering = True
         self._on_render_done()
 
+    # --- render helper window (for cancelling)
+    def _render_helper_window(self):
+        """A new (hidden) Blender window to start the render from; None if it can't be made."""
+        wm = bpy.context.window_manager
+        try:
+            before = {w.as_pointer() for w in wm.windows}
+            with bridge.blender_context():
+                bpy.ops.wm.window_new()
+            new = [w for w in wm.windows if w.as_pointer() not in before]
+        except Exception as ex:
+            bridge.log(f"Render: no helper window ({ex}) – the render can't be cancelled.", "WARNING")
+            return None
+        if not new:
+            return None
+        active = self.isActiveWindow()
+        self._hide_blender_windows()
+        if active:
+            self.activateWindow()                      # the new Blender window took the focus
+        return new[0]
+
+    def _hide_blender_windows(self):
+        act = getattr(self, "blender_visible_act", None)
+        if act is None or not act.isChecked():          # Window → Show Blender Window keeps them visible
+            shell_app.set_blender_visible(False)       # also refreshes the list of Blender's native windows
+
+    @staticmethod
+    def _window_context(win):
+        try:
+            areas = list(win.screen.areas)
+        except Exception:
+            return None
+        if not areas:
+            return None
+        area = next((a for a in areas if a.type == "VIEW_3D"), None) or max(areas, key=lambda a: a.width * a.height)
+        region = next((r for r in area.regions if r.type == "WINDOW"), None)
+        ctx = dict(window=win, screen=win.screen, area=area)
+        if region is not None:
+            ctx["region"] = region
+        return ctx
+
+    def _close_render_helper(self, win):
+        self._render_win = None
+        if win is None:
+            return False
+        try:
+            if win.as_pointer() not in {w.as_pointer() for w in bpy.context.window_manager.windows}:
+                return False
+            with bpy.context.temp_override(window=win, screen=win.screen):
+                bpy.ops.wm.window_close()
+        except Exception as ex:
+            bridge.log(f"Render: closing the helper window failed ({ex})", "WARNING")
+            return False
+        # Closing a Blender window leaves no GPU context active: pause offscreen drawing until Blender has
+        # made the main window drawable again (WM_PAINT → GHOST WindowUpdate), otherwise draw_view3d crashes.
+        bridge.hold_gpu()
+        self._hide_blender_windows()            # also refreshes the list of Blender's native windows
+        from . import native
+        native.repaint_blender_windows()
+        return True
+
+    def _set_rendering(self, on, animation=False):
+        self._rendering = on
+        self._render_anim = animation
+        cancellable = on and getattr(self, "_render_win", None) is not None
+        self.render_cancel_btn.setVisible(on)
+        self.render_cancel_btn.setEnabled(cancellable)
+        self.render_cancel_act.setEnabled(cancellable)
+        if on:
+            self.statusBar().showMessage("Rendering… (" + keymap.text("window.render_cancel") + " to cancel)"
+                                         if cancellable else "Rendering…")
+        rv = getattr(self, "render_window", None)
+        if rv is not None and hasattr(rv, "set_rendering"):
+            rv.set_rendering(on, cancellable)
+
+    def is_rendering(self):
+        return bool(self._rendering)
+
+    def cancel_render(self):
+        """Render → Cancel Render, Esc, the Cancel Render button: stops the running render (image or animation)."""
+        if not self._rendering:
+            return False
+        win = getattr(self, "_render_win", None)
+        if win is None or not self._close_render_helper(win):
+            self.statusBar().showMessage("This render can't be cancelled from Qt Shell.", 4000)
+            return False
+        self._render_cancelled = True
+        self.statusBar().showMessage("Cancelling render…")
+        if not bridge.is_rendering():
+            shell_app.hub().render_done.emit()         # the job is gone already
+        return True
+
+    def _on_render_frame(self, frame):
+        """While an animation renders: the Timeline playhead follows the frame being rendered."""
+        if not (self._rendering and getattr(self, "_render_anim", False)):
+            return
+        sc = bpy.context.scene
+        try:
+            self.timeline.sync()
+        except Exception:
+            pass
+        n = sc.frame_end - sc.frame_start + 1
+        self.statusBar().showMessage(f"Rendering frame {frame} ({frame - sc.frame_start + 1} / {n})… "
+                                     f"{keymap.text('window.render_cancel')} to cancel")
+
+    def _extend_render_menu(self, menu):
+        """Render menu: Cancel Render under Render Animation (enabled while rendering)."""
+        acts = menu.actions()
+        after = next((a for a in acts if a.text().replace("&", "").startswith("Render Animation")), None)
+        idx = acts.index(after) + 1 if after is not None else 0
+        before = acts[idx] if idx < len(acts) else None
+        act = QtGui.QAction(icons.icon("render_cancel"), "Cancel Render", menu)
+        act.setText(keymap.render("Cancel Render\t{window.render_cancel}"))   # the window action has the key
+        act.setEnabled(self._rendering and getattr(self, "_render_win", None) is not None)
+        act.setToolTip("Stop the running render (image or animation)")
+        act.triggered.connect(self.cancel_render)
+        if before is not None:
+            menu.insertAction(before, act)
+        else:
+            menu.addAction(act)
+
     def _on_render_done(self):
         if not self._rendering:
             return
-        self._rendering = False
-        if getattr(self, "_render_anim", False):
-            self.statusBar().showMessage(f"Animation rendered to {bpy.context.scene.render.filepath}", 8000)
+        win = getattr(self, "_render_win", None)
+        if win is not None:
+            self._close_render_helper(win)
+        cancelled = getattr(self, "_render_cancelled", False)
+        self._render_cancelled = False
+        anim = getattr(self, "_render_anim", False)
+        self._set_rendering(False, anim)
+        if anim:
+            try:
+                self.timeline.sync()            # Blender puts the scene frame back after the render
+            except Exception:
+                pass
+            if cancelled:
+                self.statusBar().showMessage("Animation render cancelled.", 6000)
+            else:
+                self.statusBar().showMessage(f"Animation rendered to {bpy.context.scene.render.filepath}", 8000)
             ap = getattr(self, "anim_player", None)
             if ap is not None and ap.is_shown():
                 ap.update_animation()          # an open player shows the new frames right away
             return
-        self.statusBar().showMessage("Render finished.", 4000)
+        self.statusBar().showMessage("Render cancelled." if cancelled else "Render finished.", 4000)
         self.render_window.render_finished()
         self.render_window.present()
 

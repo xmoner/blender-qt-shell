@@ -747,6 +747,11 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.sidebar_btn.toggled.connect(self.set_sidebar)
         pytips.tag(self.sidebar_btn, _api("set_sidebar(True)"))
         h.addWidget(self.sidebar_btn)
+        self.cancel_btn = self._tool("render_cancel", "Cancel", "")
+        keymap.tip(self.cancel_btn, "Cancel Render – stop the running render ({window.render_cancel})")
+        self.cancel_btn.clicked.connect(lambda: self.mw.cancel_render())
+        self.cancel_btn.hide()
+        h.addWidget(self.cancel_btn)
         self.dock_btn = self._tool("dock", "", "Dock – put the render view into the Qt Shell window (drag its "
                                    "title to any side, tab it with other editors); off: a separate window",
                                    checkable=True)
@@ -993,6 +998,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
         m.clear()
         self._act(m, "Render Image", lambda: self.mw.render_image(False), "window.render",
                   "bpy.ops.render.render()", "render_on")
+        a = self._act(m, "Cancel Render", self.mw.cancel_render, "window.render_cancel", None, "render_cancel")
+        a.setEnabled(self.cancel_btn.isEnabled() and self.cancel_btn.isVisible())
         m.addSeparator()
         self._act(m, "Save", self.save, "render.save", _api("save()"))
         self._act(m, "Save As…", self.save_as, "render.save_as", _api('save_as("C:/renders/frame.png")'))
@@ -1446,6 +1453,11 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.canvas.busy = f"Rendering… {int(t // 60):02d}:{t % 60:05.2f}  |  {slot}  |  {self._info.get('engine', '')}"
         self.canvas.update()
 
+    def set_rendering(self, on, cancellable=True):
+        """Main window: a render started / ended – the Cancel button is shown while rendering."""
+        self.cancel_btn.setVisible(bool(on))
+        self.cancel_btn.setEnabled(bool(on and cancellable))
+
     def render_finished(self):
         if self._render_start is not None:
             t = time.time() - self._render_start
@@ -1476,6 +1488,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
 
         if self.canvas._poly and ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Escape):
             self.canvas.finish_polygon()
+        elif H("window.render_cancel") and self.mw.is_rendering():
+            self.mw.cancel_render()
         elif H("render.close") or H("window.show_render"):
             self.close()
         elif H("render.toolbar"):

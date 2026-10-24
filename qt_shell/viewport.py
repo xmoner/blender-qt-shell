@@ -267,6 +267,9 @@ class Viewport(QtWidgets.QWidget):
             self.update()
 
     def render_frame(self):
+        if bridge.gpu_held():               # no GPU context right now (a Blender window was just closed)
+            self._dirty = True
+            return
         scale = getattr(self.prefs, "viewport_scale", 1.0) if self.prefs else 1.0
         dpr = self.devicePixelRatioF() * scale
         w = max(2, min(4096, int(self.width() * dpr)))
@@ -337,7 +340,7 @@ class Viewport(QtWidgets.QWidget):
     def show_geo(self, frame):
         """Cached playback from the geometry cache: draws the stored geometry from the current camera."""
         from . import geocache
-        if not self.isVisible() or not self.geo_cache_usable():
+        if not self.isVisible() or bridge.gpu_held() or not self.geo_cache_usable():
             return False
         space, _r = self.space()
         try:

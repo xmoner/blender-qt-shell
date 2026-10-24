@@ -24,6 +24,7 @@ class Hub(QtCore.QObject):
     file_loaded = QtCore.Signal()
     undo_done = QtCore.Signal()
     render_done = QtCore.Signal()
+    render_frame = QtCore.Signal(int)   # while rendering: the scene frame changed (the frame being rendered)
     render_stats = QtCore.Signal(str)
     title_changed = QtCore.Signal()
     op_done = QtCore.Signal(str, dict, object)
@@ -37,6 +38,7 @@ class Hub(QtCore.QObject):
         self._title = None
         self._stats = ""
         self._was_rendering = False
+        self._render_frame = None
         self.viewport = None     # set by the main window
         self.viewport_area = None   # all 3D views (ViewportArea); viewport is the active one
         self.playing = False     # animation playback in the timeline
@@ -58,7 +60,16 @@ class Hub(QtCore.QObject):
             self.render_done.emit()
         self._was_rendering = rendering
         if rendering:
+            # don't touch the scene while rendering – only report the frame an animation render is on
+            try:
+                f = bpy.context.scene.frame_current
+            except Exception:
+                f = None
+            if f is not None and f != self._render_frame:
+                self._render_frame = f
+                self.render_frame.emit(f)
             return  # don't touch the scene while rendering
+        self._render_frame = None
         # during playback the viewport is redrawn by the playback itself; the rest of the UI
         # (properties, outliner…) only needs an occasional refresh
         data_interval = 0.5 if self.playing else 0.06

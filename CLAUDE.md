@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.42.0 on 2026-10-24; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.43.0 on 2026-10-24; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -114,11 +114,13 @@ Don't dig through old chat history.
   a key must be a template (`keymap.tip(widget, "… ({area.action})")` / `keymap.render`) – never a literal key.
 - Settings (QSettings "QtShell") are shared with the owner's Blender – reset what a test changes
   (the owner's active tool was **MOVE**; the owner uses navigation scheme **MAYA**; key overrides live in `keymap/<id>` and `keymap_maya/<id>`).
+- Renders start from a hidden helper Blender window (cancel = close it); after closing any Blender window call
+  `bridge.hold_gpu()` + `native.repaint_blender_windows()` or the next viewport draw crashes (no GPU context).
 - Never change the scene frame behind the user's back while animated values are unkeyed (frame_set
   re-evaluates F-curves and drops the change) – see `playcache.pending_edits`.
 - Qt SVG Tiny: no `dominant-baseline`, no `hsl()`, `<defs>` before use.
 - Some Blender menus are C-only (no Python class, e.g. `TOPBAR_MT_file_open_recent`) – fill them in Qt via `qt_ui.QT_MENUS`.
-- Granting computer access: resolve Blender by its **full path** (`c:\\program files\\blender foundation\\blender 5.2\\blender.exe`), the name "Blender" resolves to an old 4.3 install.
+- Granting computer access: resolve **"Blender 5.2"** (→ `blender-launcher.exe`, works for `computer_open_application` and the started Blender); the full blender.exe path may report "not installed", the name "Blender" resolves to an old 4.3 install.
 
 ## Open ideas / next steps
 - Pose mode: rotate twice (R R) trackball, local axes on double axis key, IK-heavy rigs not tested.
@@ -127,7 +129,7 @@ Don't dig through old chat history.
 - Graph editor: tangent handle drag, MMB move, Infinity, Frame/Value boxes not tested live.
 - Leftover debug files on the PC: `qt_shell\_inspect.py`, `_inspect.json`, `_ol_research.py`, `_ol_research.json`,
   `_rv_probe.py`, `_rv_probe5.py`–`_rv_probe8.py`, `_rv_bg.py`, `_rv_probe.json`, `_rv_shot_*.png`,
-  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`, `_t035.py`, `_t035.json`, `_t035_*.png`, `_t036.py`, `_t036.json`, `_t036_*.png`, `_t037.py`, `_t037.json`, `_t037_player.png`, `_t038.py`, `_t038.json`, `_t038_player.png`, `_t039.py`, `_t039.json`, `_t039_*.png`, `_t040.py`, `_t040.json`, `_t040_player.png`, `_t041.py`, `_t041.json`, `_t041_docked.png`, `_t042.py`, `_t042.json`, `_t042_player.png`, `_turtle_*`, `_qt_shell_turtle.blend`
+  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`, `_t035.py`, `_t035.json`, `_t035_*.png`, `_t036.py`, `_t036.json`, `_t036_*.png`, `_t037.py`, `_t037.json`, `_t037_player.png`, `_t038.py`, `_t038.json`, `_t038_player.png`, `_t039.py`, `_t039.json`, `_t039_*.png`, `_t040.py`, `_t040.json`, `_t040_player.png`, `_t041.py`, `_t041.json`, `_t041_docked.png`, `_t042.py`, `_t042.json`, `_t042_player.png`, `_rc_probe.py`, `_rc_probe.json`, `_t043.py`, `_t043.json`, `_turtle_*`, `_qt_shell_turtle.blend`
   (deleting needs the owner's permission).
 - Outliner: drag & drop and restriction columns tested with synthetic mouse input; Ctrl / middle-mouse drag variants not tested live.
 

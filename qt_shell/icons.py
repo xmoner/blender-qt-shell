@@ -199,6 +199,9 @@ _ICONS = {
     "key_delete": '<path fill="none" stroke="{c}" stroke-width="1.2" d="M8 2 L14 8 L8 14 L2 8 Z"/>'
                   '<path stroke="#ff6060" stroke-width="1.6" stroke-linecap="round" d="M5.5 5.5 L10.5 10.5 M10.5 5.5 L5.5 10.5"/>',
     "record": '<circle cx="8" cy="8" r="5" fill="#e04848"/>',
+    "render_cancel": '<circle cx="8" cy="8" r="6.2" fill="#c84646"/>'
+                     '<path stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" fill="none" '
+                     'd="M5.6 5.6 L10.4 10.4 M10.4 5.6 L5.6 10.4"/>',
 }
 
 
