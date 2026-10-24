@@ -1,5 +1,11 @@
-"""Python console (like the Python Console in Blender) + report log."""
+"""Python console (like the Python Console in Blender) + report log.
+
+Traceback lines (File "…", line N) are links like in Charcoal Editor: click one to open the text / file in
+the Text editor at that line. Right click the output: Clear Output.
+"""
 import code
+import re
+import urllib.parse
 import contextlib
 import io
 import rlcompleter
@@ -32,6 +38,10 @@ class Console(QtWidgets.QWidget):
             font.setPointSizeF(font.pointSizeF() * theme.ui_scale * theme.font_scale)
         self.out.setFont(font)
         self.out.setMaximumBlockCount(5000)
+        self.out.viewport().setMouseTracking(True)
+        self.out.viewport().installEventFilter(self)
+        self.out.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.out.customContextMenuRequested.connect(self._out_menu)
         lay.addWidget(self.out)
         self.inp = QtWidgets.QLineEdit()
         self.inp.setFont(font)
@@ -42,15 +52,55 @@ class Console(QtWidgets.QWidget):
         self.write("Qt Shell – Python console. Variables: bpy, C (context), D (data).\n", "#8fb3ff")
         hub.log.connect(self._on_log)
 
+    _LINK = re.compile(r'File "([^"]+)", line (\d+)')
+
     def write(self, text, color=None):
         cur = self.out.textCursor()
         cur.movePosition(QtGui.QTextCursor.End)
         fmt = QtGui.QTextCharFormat()
         if color:
             fmt.setForeground(QtGui.QColor(color))
-        cur.insertText(text, fmt)
+        pos = 0
+        for m in self._LINK.finditer(text):       # traceback lines become links to the code
+            if m.group(1).startswith("<"):           # <string>, <qtshell> … are not files
+                continue
+            cur.insertText(text[pos:m.start()], fmt)
+            link = QtGui.QTextCharFormat(fmt)
+            link.setAnchor(True)
+            link.setAnchorHref("qsline:" + urllib.parse.quote(m.group(1)) + "#" + m.group(2))
+            link.setForeground(QtGui.QColor("#7fb6ff"))
+            link.setFontUnderline(True)
+            link.setToolTip("Click: go to this line in the Text editor")
+            cur.insertText(m.group(0), link)
+            pos = m.end()
+        cur.insertText(text[pos:], fmt)
         self.out.setTextCursor(cur)
         self.out.ensureCursorVisible()
+
+    def clear(self):
+        self.out.clear()
+
+    def _out_menu(self, pos):
+        m = self.out.createStandardContextMenu()
+        m.addSeparator()
+        m.addAction("Clear Output", self.clear)
+        m.exec(self.out.viewport().mapToGlobal(pos))
+        m.deleteLater()
+
+    def open_link(self, href):
+        """qsline:<file>#<line> → the Text editor at that line."""
+        if not href.startswith("qsline:"):
+            return False
+        path, _, line = href[7:].rpartition("#")
+        path = urllib.parse.unquote(path)
+        from . import api
+        mw = api.main_window()
+        te = getattr(mw, "text_editor", None) if mw is not None else None
+        if te is None or path == "<qtshell>":
+            return False
+        if not te.goto(path, int(line or 1)):
+            mw.statusBar().showMessage(f"No text called “{path}” in the Text editor", 4000)
+        return True
 
     def _on_log(self, msg, level):
         color = {"ERROR": "#ff7070", "WARNING": "#ffc860"}.get(level, "#9a9a9a")
@@ -90,6 +140,17 @@ class Console(QtWidgets.QWidget):
             self.write(out.getvalue(), "#e5e5e5")
 
     def eventFilter(self, obj, ev):
+        if obj is self.out.viewport():
+            t = ev.type()
+            if t == QtCore.QEvent.MouseMove:
+                href = self.out.anchorAt(ev.position().toPoint())
+                obj.setCursor(QtCore.Qt.PointingHandCursor if href else QtCore.Qt.IBeamCursor)
+            elif t == QtCore.QEvent.MouseButtonRelease and ev.button() == QtCore.Qt.LeftButton:
+                href = self.out.anchorAt(ev.position().toPoint())
+                if href and not self.out.textCursor().hasSelection():
+                    self.open_link(href)
+                    return True
+            return False
         if obj is self.inp and ev.type() == QtCore.QEvent.KeyPress:
             k = ev.key()
             if k == QtCore.Qt.Key_Up and self.history:
