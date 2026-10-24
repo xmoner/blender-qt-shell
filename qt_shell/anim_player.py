@@ -21,6 +21,7 @@ import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, icons, keymap, pytips, theme
+from .rna_widgets import DragSpin
 
 LOOP_MODES = [("LOOP", "Loop", "loop_continuous"), ("ONCE", "Play Once", "loop_once"),
               ("PINGPONG", "Ping-Pong", "loop_oscillate")]
@@ -33,14 +34,22 @@ def _api(call):
     return f"import qt_shell; qt_shell.api.main_window().anim_player.{call}"
 
 
-def output_info(scene=None):
-    """What View Animation plays: {"movie": path or None, "frames": {frame: path}, "start", "end", "fps"}."""
+def scene_range(scene=None):
+    """(start, end) View Animation plays by default: the preview range when it is on, else the scene range."""
+    sc = scene or bpy.context.scene
+    if sc.use_preview_range:
+        return sc.frame_preview_start, sc.frame_preview_end
+    return sc.frame_start, sc.frame_end
+
+
+def output_info(scene=None, start=None, end=None):
+    """What View Animation plays: {"movie": path or None, "frames": {frame: path}, "start", "end", "fps"}.
+    start / end: another frame range than the scene's."""
     sc = scene or bpy.context.scene
     r = sc.render
-    if sc.use_preview_range:
-        start, end = sc.frame_preview_start, sc.frame_preview_end
-    else:
-        start, end = sc.frame_start, sc.frame_end
+    s0, e0 = scene_range(sc)
+    start = s0 if start is None else int(start)
+    end = e0 if end is None else int(end)
     end = max(end, start)
     fps = r.fps / (r.fps_base or 1.0)
     ims = r.image_settings
@@ -352,6 +361,17 @@ class AnimPlayer(QtWidgets.QWidget):
         self.frame_lbl = QtWidgets.QLabel(self)
         self.frame_lbl.setMinimumWidth(theme.px(120))
         row.addWidget(self.frame_lbl)
+        row.addSpacing(theme.px(8))
+        self.start_spin = self._range_spin("Start", "First frame to play")
+        self.end_spin = self._range_spin("End", "Last frame to play")
+        pytips.tag(self.start_spin, _api("set_range(1, 250)"))
+        pytips.tag(self.end_spin, _api("set_range(1, 250)"))
+        self.start_spin.valueChanged.connect(lambda v: self.set_range(v, max(int(v), self.end)))
+        self.end_spin.valueChanged.connect(lambda v: self.set_range(min(int(v), self.start), v))
+        row.addWidget(self.start_spin)
+        row.addWidget(self.end_spin)
+        rs = btn("preview_range", "↺", self.reset_range, _api("reset_range()"))
+        rs.setToolTip("Back to the scene range (the preview range when it is on)")
         row.addStretch(1)
         self.info_lbl = QtWidgets.QLabel(self)
         self.info_lbl.setProperty("dim", True)
@@ -372,19 +392,65 @@ class AnimPlayer(QtWidgets.QWidget):
         self._update_loop_btn()
         self._update_buttons()
 
+    def _range_spin(self, label, tip):
+        s = DragSpin(is_int=True)
+        s.setParent(self)
+        s.setRange(-1048574, 1048574)
+        s.drag_step = 0.25
+        s.setPrefix(f"{label} ")
+        s.setMinimumWidth(theme.px(92))
+        s.setToolTip(f"{tip} – drag or type a frame")
+        return s
+
+    def _sync_range_spins(self):
+        for w, v in ((self.start_spin, self.start), (self.end_spin, self.end)):
+            if int(w.value()) != v:
+                w.blockSignals(True)
+                w.setValue(v)
+                w.blockSignals(False)
+
     # ------------------------------------------------------------ loading
-    def reload(self):
-        """Reads what Render → View Animation shows: the scene's rendered frames (or movie)."""
+    def set_range(self, start, end):
+        """Frames to play (Start / End fields) – independent of the scene's frame range."""
+        start, end = int(start), int(end)
+        if end < start:
+            start, end = end, start
+        if (start, end) == (self.start, self.end):
+            self._sync_range_spins()
+            return
+        playing = self._playing
+        self.reload(start, end)
+        if playing:
+            self.play(self._dir < 0)
+
+    def reset_range(self):
+        """Start / End back to the scene range (preview range when it is on)."""
+        a, b = scene_range()
+        self.set_range(a, b)
+
+    def reload(self, start=None, end=None):
+        """Reads what Render → View Animation shows: the rendered frames (or movie) of start … end
+        (default: the range shown now, at the first open the scene range)."""
         self.pause()
-        info = output_info()
+        range_change = start is not None
+        if start is None and getattr(self, "_range_set", False):
+            start, end = self.start, self.end
+        info = output_info(start=start, end=end)
+        self._range_set = True
+        old_frame = self.frame
         self.start, self.end = info["start"], info["end"]
         self.scene_fps = info["fps"]
+        old_paths = self.paths
         self.paths = info["frames"]
         self.exists = {f: os.path.isfile(p) for f, p in self.paths.items()}
-        self.cache.clear()
-        self._cache_bytes = 0
+        if range_change:                 # a new range: keep the frames already loaded (same files)
+            self.cache = {f: img for f, img in self.cache.items() if old_paths.get(f) == self.paths.get(f)}
+        else:                            # reload: read the files again (a new render)
+            self.cache = {}
+        self._cache_bytes = sum(img.sizeInBytes() for img in self.cache.values())
         self.movie = info["movie"] if info["movie"] and os.path.isfile(info["movie"]) else None
-        self.frame = self.start
+        self.frame = old_frame if self.start <= old_frame <= self.end else self.start
+        self._sync_range_spins()
         if info["movie"] is not None:
             self._open_movie(info["movie"])
         else:
@@ -401,7 +467,7 @@ class AnimPlayer(QtWidgets.QWidget):
                 self._loader.start()
             self.info_lbl.setText(f"{n} / {len(self.paths)} frames rendered · "
                                   f"{os.path.dirname(next(iter(self.paths.values()), '')) or '—'}")
-        self.set_frame(self.start)
+        self.set_frame(self.frame)
         self.bar.update()
 
     def _open_movie(self, path):
@@ -584,6 +650,7 @@ class AnimPlayer(QtWidgets.QWidget):
     # ------------------------------------------------------------ window
     def present(self):
         """Opens the player (Render → View Animation) in front of the Qt Shell window and starts playing."""
+        self._range_set = False         # a fresh open plays the scene range
         self.reload()
         if self.speed.currentData() is None:
             self.speed.setItemText(0, f"Scene ({self.scene_fps:.4g} fps)")
