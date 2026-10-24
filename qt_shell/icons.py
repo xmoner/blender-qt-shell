@@ -199,6 +199,48 @@ _ICONS = {
     "key_delete": '<path fill="none" stroke="{c}" stroke-width="1.2" d="M8 2 L14 8 L8 14 L2 8 Z"/>'
                   '<path stroke="#ff6060" stroke-width="1.6" stroke-linecap="round" d="M5.5 5.5 L10.5 10.5 M10.5 5.5 L5.5 10.5"/>',
     "record": '<circle cx="8" cy="8" r="5" fill="#e04848"/>',
+    # --- Blue Pencil (bluepencil.py)
+    "tool_blue_pencil": '<path fill="#5aa0ff" d="M10.6 2.2 L13.8 5.4 L6 13.2 L2.2 13.8 L2.8 10 Z"/>'
+                        '<path fill="none" stroke="#1d3d66" stroke-width="0.9" d="M9.4 3.4 L12.6 6.6"/>'
+                        '<path fill="#f0d8b0" d="M2.8 10 L6 13.2 L2.2 13.8 Z"/>',
+    "bp_pencil": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                 'd="M10.6 2.2 L13.8 5.4 L6 13.2 L2.2 13.8 L2.8 10 Z M9.2 3.6 L12.4 6.8"/>',
+    "bp_brush": '<path fill="{c}" d="M13.6 1.8 C14.4 2.6 10.6 7.6 8.6 9.2 L6.8 7.4 C8.4 5.4 12.8 1 13.6 1.8 Z"/>'
+                '<path fill="#5aa0ff" d="M6.2 8.2 L7.8 9.8 C7.6 12.6 5 14.4 1.8 14 C3.6 12.6 3 9 6.2 8.2 Z"/>',
+    "bp_eraser": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                 'd="M9.6 2.4 L14 6.8 L7.6 13.2 H4.4 L2 10.8 Z M5.6 6.4 L10 10.8 M7.6 13.2 H14"/>',
+    "bp_text": '<path fill="none" stroke="{c}" stroke-width="1.5" stroke-linecap="round" '
+               'd="M3 3.5 H13 M8 3.5 V13.5 M6 13.5 H10"/>',
+    "bp_line": '<path fill="none" stroke="{c}" stroke-width="1.5" stroke-linecap="round" d="M2.5 13.5 L13.5 2.5"/>',
+    "bp_arrow": '<path fill="none" stroke="{c}" stroke-width="1.5" stroke-linecap="round" d="M2.5 13.5 L12 4"/>'
+                '<path fill="{c}" d="M14 2 L13 8 L8 3 Z"/>',
+    "bp_ellipse": '<ellipse cx="8" cy="8" rx="6" ry="4.5" fill="none" stroke="{c}" stroke-width="1.4"/>',
+    "bp_rect": '<rect x="2.2" y="3.5" width="11.6" height="9" fill="none" stroke="{c}" stroke-width="1.4"/>',
+    "bp_transform": '<rect x="3" y="3" width="10" height="10" fill="none" stroke="{c}" stroke-width="1" '
+                    'stroke-dasharray="1.8 1.4"/><g fill="{c}"><rect x="1.5" y="1.5" width="3" height="3"/>'
+                    '<rect x="11.5" y="1.5" width="3" height="3"/><rect x="1.5" y="11.5" width="3" height="3"/>'
+                    '<rect x="11.5" y="11.5" width="3" height="3"/></g>',
+    "bp_frame_prev": '<path fill="{c}" d="M3 3 H4.6 V13 H3 Z"/><rect x="6.5" y="4.5" width="7" height="7" rx="1.2" '
+                     'fill="#5aa0ff"/>',
+    "bp_frame_next": '<rect x="2.5" y="4.5" width="7" height="7" rx="1.2" fill="#5aa0ff"/>'
+                     '<path fill="{c}" d="M11.4 3 H13 V13 H11.4 Z"/>',
+    "bp_frame_insert": '<rect x="2.5" y="4" width="8" height="8" rx="1.2" fill="none" stroke="#5aa0ff" stroke-width="1.3"/>'
+                       '<path fill="none" stroke="{c}" stroke-width="1.4" d="M12.5 5.5 V10.5 M10 8 H15"/>',
+    "bp_frame_dup": '<rect x="1.8" y="2.5" width="7.5" height="7.5" rx="1.2" fill="#5aa0ff" opacity="0.55"/>'
+                    '<rect x="6.5" y="6" width="7.5" height="7.5" rx="1.2" fill="#5aa0ff"/>',
+    "bp_frame_delete": '<rect x="2.5" y="4" width="8" height="8" rx="1.2" fill="#5aa0ff"/>'
+                       '<path fill="none" stroke="#ff5a5a" stroke-width="1.5" d="M11 4.5 L15 8.5 M15 4.5 L11 8.5"/>',
+    "bp_cut": '<circle cx="4.5" cy="12" r="2.2" fill="none" stroke="{c}" stroke-width="1.2"/>'
+              '<circle cx="11.5" cy="12" r="2.2" fill="none" stroke="{c}" stroke-width="1.2"/>'
+              '<path fill="none" stroke="{c}" stroke-width="1.2" d="M5.8 10.3 L11.5 2 M10.2 10.3 L4.5 2"/>',
+    "bp_copy": '<rect x="2" y="2" width="8" height="9" rx="1" fill="none" stroke="{c}" stroke-width="1.2"/>'
+               '<rect x="6" y="5" width="8" height="9" rx="1" fill="#303030" stroke="{c}" stroke-width="1.2"/>',
+    "bp_paste": '<rect x="3" y="3" width="10" height="11" rx="1" fill="none" stroke="{c}" stroke-width="1.2"/>'
+                '<rect x="5.5" y="1.6" width="5" height="3" rx="0.8" fill="{c}"/>'
+                '<path fill="none" stroke="#5aa0ff" stroke-width="1.2" d="M5.5 8 H10.5 M5.5 10.5 H9"/>',
+    "bp_layer_new": '<path fill="none" stroke="{c}" stroke-width="1.2" stroke-linejoin="round" '
+                    'd="M8 3 L14 6 L8 9 L2 6 Z M2 9 L8 12 L11 10.5"/>'
+                    '<path fill="none" stroke="#5aa0ff" stroke-width="1.5" d="M13 9.5 V14.5 M10.5 12 H15.5"/>',
     "render_cancel": '<circle cx="8" cy="8" r="6.2" fill="#c84646"/>'
                      '<path stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" fill="none" '
                      'd="M5.6 5.6 L10.4 10.4 M10.4 5.6 L5.6 10.4"/>',

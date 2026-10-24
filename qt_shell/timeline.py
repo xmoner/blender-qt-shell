@@ -560,6 +560,11 @@ class TimeBar(QtWidgets.QWidget):
             p.setPen(QtGui.QPen(QtGui.QColor("#000"), 1))
             p.setBrush(QtGui.QColor(scol if k in self.sel else col))
             p.drawPolygon(poly)
+        try:
+            from . import bluepencil
+            bluepencil.paint_timeline(self, p)      # Blue Pencil frame ticks (active layer)
+        except Exception as ex:
+            bridge.log(f"Blue Pencil timeline: {ex}", "WARNING")
         if self._drag is not None and self._drag["delta"]:
             f = p.font()
             f.setPixelSize(theme.fs(11))
@@ -631,6 +636,9 @@ class TimeBar(QtWidgets.QWidget):
             return
         if b != QtCore.Qt.LeftButton:
             return
+        from . import bluepencil
+        if bluepencil.timeline_press(self, ev):       # a Blue Pencil frame tick: select / move
+            return
         shift = bool(ev.modifiers() & QtCore.Qt.ShiftModifier)
         sc = bpy.context.scene
         if self.in_marker_band(pos):
@@ -679,6 +687,10 @@ class TimeBar(QtWidgets.QWidget):
 
     def mouseMoveEvent(self, ev):
         pos = ev.position()
+        if getattr(self, "_bp_drag", None) is not None:
+            from . import bluepencil
+            bluepencil.timeline_move(self, ev)
+            return
         if self._nav is not None:
             kind, last = self._nav
             self._nav = (kind, pos.x())
@@ -720,6 +732,10 @@ class TimeBar(QtWidgets.QWidget):
             return
         if ev.button() != QtCore.Qt.LeftButton:
             return
+        if getattr(self, "_bp_drag", None) is not None:
+            from . import bluepencil
+            bluepencil.timeline_release(self, ev)
+            return
         if self._drag is not None:
             self._end_drag()
         elif self._mdrag is not None:
@@ -728,6 +744,8 @@ class TimeBar(QtWidgets.QWidget):
             a, b = sorted(self._range_sel)
             self._range_sel = None
             self.sel |= {k for k in self.keys if a <= self.frame_to_x(k) <= b}
+            from . import bluepencil
+            bluepencil.timeline_select_range(self.x_to_framef(a), self.x_to_framef(b))
         self._scrubbing = False
         self.update()
 
@@ -1113,6 +1131,12 @@ class Timeline(QtWidgets.QWidget):
         row.addWidget(self.fps_btn)
         lay.addLayout(row)
         self.bar = TimeBar(self)
+        try:
+            from . import bluepencil, gizmo
+            bluepencil.settings().changed.connect(self.bar.update)
+            gizmo.tool_state(hub).changed.connect(self.bar.update)     # Blue Pencil ticks follow the tool
+        except Exception as ex:
+            bridge.log(f"Timeline: {ex}", "WARNING")
         lay.addWidget(self.bar, 1)
         self.slider = RangeSlider(self.bar, self)
         lay.addWidget(self.slider)

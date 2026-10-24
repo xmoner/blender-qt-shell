@@ -756,8 +756,14 @@ qs.set_tool("SCALE", "CAGE")
 qs.set_tool("ANNOTATE", "POLYGON")  # FREEHAND, LINE, POLYGON, ERASER
 qs.set_tool("MEASURE")
 qs.set_tool("ADD", "UV_SPHERE")     # CUBE, CONE, CYLINDER, UV_SPHERE, ICO_SPHERE (Object Mode)
-qs.active_tool()                    # ('ADD', 'UV_SPHERE')
+qs.set_tool("BLUE_PENCIL", "BRUSH") # PENCIL, BRUSH, ERASER, TEXT, LINE, ARROW, ELLIPSE, RECT, TRANSFORM
+qs.active_tool()                    # ('BLUE_PENCIL', 'BRUSH')
 ```
+
+Blue Pencil drawings (0.44) live in `qt_shell.bluepencil`: `data()` (layers → frames → strokes, JSON in
+`scene["qtshell_bluepencil"]`), `new_layer(name, camera)`, `insert_frame()`, `duplicate_frame()`, `delete_frame()`,
+`copy_frame()`, `paste_frame()`, `step(1 | -1)`, `retime("ABS", 2)` / `retime("REL", -1)`; after editing `data()`
+yourself call `commit("message")` (saves to the scene, one undo step).
 
 3D view annotations are Blender data: `bpy.context.scene.annotation` (layers → frames → strokes → points `co`),
 rulers of the Measure tool are the strokes of its layer `RulerData3D`. `qt_shell.annotate.add_stroke(coords)`

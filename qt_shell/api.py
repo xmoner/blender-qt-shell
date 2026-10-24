@@ -253,7 +253,8 @@ def render_view():
 # 3D viewport tools: tool → its variants (None = no variants)
 TOOLS = {"SELECT": ("TWEAK", "BOX", "CIRCLE", "LASSO"), "CURSOR": None, "MOVE": None, "ROTATE": None,
          "SCALE": ("SCALE", "CAGE"), "TRANSFORM": None, "ANNOTATE": ("FREEHAND", "LINE", "POLYGON", "ERASER"),
-         "MEASURE": None, "ADD": ("CUBE", "CONE", "CYLINDER", "UV_SPHERE", "ICO_SPHERE")}
+         "MEASURE": None, "ADD": ("CUBE", "CONE", "CYLINDER", "UV_SPHERE", "ICO_SPHERE"),
+         "BLUE_PENCIL": ("PENCIL", "BRUSH", "ERASER", "TEXT", "LINE", "ARROW", "ELLIPSE", "RECT", "TRANSFORM")}
 
 
 def active_tool():

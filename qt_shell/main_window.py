@@ -555,6 +555,14 @@ class MainWindow(QtWidgets.QMainWindow):
         from .shelf import ShelfBar
         self.shelf = ShelfBar(hub)
         self._dock("shelf", "Shelf", self.shelf, QtCore.Qt.TopDockWidgetArea)
+        # Blue Pencil panel (toolbox, ghosting, frames, retiming, layers) – shown with its tool
+        from .bluepencil import BluePencilPanel
+        self.bluepencil = BluePencilPanel(hub)
+        self._dock("bluepencil", "Blue Pencil", self.bluepencil, QtCore.Qt.RightDockWidgetArea)
+        self.docks["bluepencil"].hide()
+        self._bp_panel_shown = False
+        from . import gizmo as _gz
+        _gz.tool_state(hub).changed.connect(self._bp_tool_changed)
 
         self.render_window = RenderView(self)      # Blender's render window (Render Result)
         self._build_menus()
@@ -1573,6 +1581,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Render cancelled." if cancelled else "Render finished.", 4000)
         self.render_window.render_finished()
         self.render_window.present()
+
+    def _bp_tool_changed(self):
+        """The first time the Blue Pencil tool is picked in a session its panel opens."""
+        from . import bluepencil
+        if bluepencil.tool_active() and not self._bp_panel_shown:
+            self._bp_panel_shown = True
+            if not self.docks["bluepencil"].isVisible():
+                bluepencil.show_panel()
 
     def view_animation(self):
         """Render → View Animation (Ctrl+F11): the Animation Player (rendered frames + timeline)."""

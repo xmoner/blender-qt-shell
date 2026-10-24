@@ -13,7 +13,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import annotate, bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
+from . import annotate, bluepencil, bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -110,6 +110,9 @@ class Viewport(QtWidgets.QWidget):
         self.tools.changed.connect(self.update)
         self.ann_tools = annotate.ViewTools(self)   # Annotate / Measure / Add tools
         self.tools.changed.connect(self.ann_tools.cancel)
+        self.bp_tools = bluepencil.BPTools(self)    # Blue Pencil (2D drawings keyed on frames)
+        self.tools.changed.connect(self.bp_tools.tool_changed)
+        bluepencil.settings().changed.connect(self.update)
 
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -399,6 +402,10 @@ class Viewport(QtWidgets.QWidget):
         if self.show_boxes:
             self._paint_selection(p, mats)
         self.ann_tools.paint(p, mats)        # annotations, rulers, the Add tool's box
+        try:
+            bluepencil.paint(self, p)        # Blue Pencil drawings (+ the tool's own drawing)
+        except Exception as ex:
+            bridge.log(f"Blue Pencil: {ex}", "WARNING")
         if self._modal is None and not getattr(self.hub, "playing", False):
             try:
                 gizmo.paint(self, p, self.tools.tool, self._gz_hover)
@@ -1247,6 +1254,8 @@ class Viewport(QtWidgets.QWidget):
         if self._modal:
             self._modal_end(b == QtCore.Qt.LeftButton)
             return
+        if b == QtCore.Qt.MiddleButton and self.bp_tools.press(ev, pos):   # Blue Pencil Transform: scale
+            return
         if keymap.nav_scheme() == "MAYA" and self._maya_press(ev, pos, b, mods):
             return
         if b == QtCore.Qt.LeftButton and not mods & QtCore.Qt.AltModifier:
@@ -1259,6 +1268,8 @@ class Viewport(QtWidgets.QWidget):
                     self.setCursor(QtCore.Qt.SizeVerCursor if hit[1] == "zoom" else QtCore.Qt.ClosedHandCursor)
                 self.update()
                 return
+        if b != QtCore.Qt.MiddleButton and self.bp_tools.press(ev, pos):
+            return
         if b == QtCore.Qt.MiddleButton or (b == QtCore.Qt.LeftButton and mods & QtCore.Qt.AltModifier):
             if mods & QtCore.Qt.ShiftModifier:
                 self._nav = "pan"
@@ -1339,6 +1350,8 @@ class Viewport(QtWidgets.QWidget):
         if self._cursor_drag:
             self.place_cursor(pos)
             return
+        if not self._nav and self._press_pos is None and self.bp_tools.move(ev, pos):
+            return
         if not self._nav and self._press_pos is None and self.ann_tools.move(ev, pos):
             return
         if self._circle is not None:
@@ -1409,6 +1422,8 @@ class Viewport(QtWidgets.QWidget):
             self._nav = None
             self.unsetCursor()
             return
+        if self.bp_tools.release(ev, pos):
+            return
         if self.ann_tools.release(ev, pos):
             return
         if ev.button() == QtCore.Qt.LeftButton:
@@ -1448,6 +1463,8 @@ class Viewport(QtWidgets.QWidget):
             self.update()
 
     def wheelEvent(self, ev):
+        if self.bp_tools.wheel(ev):
+            return
         if self.ann_tools.wheel(ev):
             return
         if self._circle is not None:
@@ -1472,7 +1489,7 @@ class Viewport(QtWidgets.QWidget):
         if ev.type() == QtCore.QEvent.ShortcutOverride:
             # a key that is a 3D View shortcut belongs to the view, not to a window shortcut
             # (e.g. Shift+Space = tool menu here, not the window's Space = play)
-            if self._modal or keymap.view_owns(ev, bpy.context.mode):
+            if self._modal or keymap.view_owns(ev, bpy.context.mode) or self.bp_tools.owns_key(ev):
                 ev.accept()
                 return True
         if ev.type() == QtCore.QEvent.NativeGesture:
@@ -1509,6 +1526,9 @@ class Viewport(QtWidgets.QWidget):
             return keymap.hit(aid, ev, names)
 
         mode = bpy.context.mode
+        if self.bp_tools.key(ev, H):           # Blue Pencil keys (while its tool is active)
+            self.update()
+            return
         if self.ann_tools.key(ev, H):          # Enter / Esc of Annotate Polygon and Add, Measure: Delete
             self.update()
             return
@@ -1518,7 +1538,8 @@ class Viewport(QtWidgets.QWidget):
         for aid, tool in (("view3d.tool_select", "SELECT"), ("view3d.tool_cursor", "CURSOR"),
                           ("view3d.tool_move", "MOVE"), ("view3d.tool_rotate", "ROTATE"),
                           ("view3d.tool_scale", "SCALE"), ("view3d.tool_annotate", "ANNOTATE"),
-                          ("view3d.tool_measure", "MEASURE"), ("view3d.tool_add", "ADD")):
+                          ("view3d.tool_measure", "MEASURE"), ("view3d.tool_add", "ADD"),
+                          ("view3d.tool_blue_pencil", "BLUE_PENCIL")):
             if H(aid):
                 # Blender: W = select tool, W again: Tweak → Box → Circle → Lasso; Maya: Q / W / E / R
                 self.tools.activate(tool)

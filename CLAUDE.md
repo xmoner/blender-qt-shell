@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.43.1 on 2026-10-24; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.44.0 on 2026-10-24; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -91,6 +91,7 @@ Don't dig through old chat history.
 - `render_view.py` – Render View (Blender's render window: slots, channels, toolbar Sample / Annotate, save; F12 / F11).
 - `anim_player.py` – Render → View Animation (Ctrl+F11): rendered frames with a timeline (Qt, owned by the main window).
 - `dockable.py` – `Dockable` mixin: Render View / Animation Player as a window or a dock (released before the layout is saved).
+- `bluepencil.py` – Blue Pencil (2D drawings keyed on frames, Blue Pencil 2 style): data in the scene ID property, BPTools per view, Timeline ticks, retiming, panel dock.
 - `annotate.py` – 3D view tools Annotate / Measure / Add (drawn by Qt – offscreen drawing has no annotations) + `ToolHeader`.
 - `outliner.py`, `properties.py`, `rna_widgets.py` (RNA → Qt widgets, tooltips), `qt_ui.py`
   (Blender layouts/menus → Qt, `LazyMenu`), `fake_ui.py` (records Blender `draw()` calls).
@@ -113,7 +114,7 @@ Don't dig through old chat history.
 - New shortcuts: add an action to `keymap.py` and test it with `keymap.hit(id, ev)`; any text that mentions
   a key must be a template (`keymap.tip(widget, "… ({area.action})")` / `keymap.render`) – never a literal key.
 - Settings (QSettings "QtShell") are shared with the owner's Blender – reset what a test changes
-  (the owner's active tool was **MOVE**; the owner uses navigation scheme **MAYA**; key overrides live in `keymap/<id>` and `keymap_maya/<id>`).
+  (the owner's active tool is whatever `viewport/tool` holds – read it before a test and put it back (was **ANNOTATE** on 2026-10-24); the owner uses navigation scheme **MAYA**; key overrides live in `keymap/<id>` and `keymap_maya/<id>`).
 - Renders start from a hidden helper Blender window (cancel = close it); after closing any Blender window call
   `bridge.restore_gpu_context()` (+ `hold_gpu`) or the next viewport draw crashes (no GPU context). The helper is
   hidden, not minimized: its Image Editor is captured for the live Render View picture.
@@ -132,7 +133,7 @@ Don't dig through old chat history.
 - Graph editor: tangent handle drag, MMB move, Infinity, Frame/Value boxes not tested live.
 - Leftover debug files on the PC: `qt_shell\_inspect.py`, `_inspect.json`, `_ol_research.py`, `_ol_research.json`,
   `_rv_probe.py`, `_rv_probe5.py`–`_rv_probe8.py`, `_rv_bg.py`, `_rv_probe.json`, `_rv_shot_*.png`,
-  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`, `_t035.py`, `_t035.json`, `_t035_*.png`, `_t036.py`, `_t036.json`, `_t036_*.png`, `_t037.py`, `_t037.json`, `_t037_player.png`, `_t038.py`, `_t038.json`, `_t038_player.png`, `_t039.py`, `_t039.json`, `_t039_*.png`, `_t040.py`, `_t040.json`, `_t040_player.png`, `_t041.py`, `_t041.json`, `_t041_docked.png`, `_t042.py`, `_t042.json`, `_t042_player.png`, `_rc_probe.py`, `_rc_probe.json`, `_t043.py`, `_t043.json`, `_t044*.py`, `_t044*.json`, `_t044_*.png`, `_diag.txt`, `_diag_shot.png`, `_turtle_*`, `_qt_shell_turtle.blend`
+  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`, `_t035.py`, `_t035.json`, `_t035_*.png`, `_t036.py`, `_t036.json`, `_t036_*.png`, `_t037.py`, `_t037.json`, `_t037_player.png`, `_t038.py`, `_t038.json`, `_t038_player.png`, `_t039.py`, `_t039.json`, `_t039_*.png`, `_t040.py`, `_t040.json`, `_t040_player.png`, `_t041.py`, `_t041.json`, `_t041_docked.png`, `_t042.py`, `_t042.json`, `_t042_player.png`, `_rc_probe.py`, `_rc_probe.json`, `_t043.py`, `_t043.json`, `_t044*.py`, `_t044*.json`, `_t044_*.png`, `_diag.txt`, `_diag_shot.png`, `_t045.py`, `_t045b.py`, `_t045*.json`, `_t045_*.png`, `_turtle_*`, `_qt_shell_turtle.blend`
   (deleting needs the owner's permission).
 - Outliner: drag & drop and restriction columns tested with synthetic mouse input; Ctrl / middle-mouse drag variants not tested live.
 

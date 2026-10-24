@@ -44,6 +44,8 @@ TOOLS = [
     ("SCALE", "⤡", "Scale – drag a handle (X / Y / Z) or the outer ring (uniform)", "S"),
     ("TRANSFORM", "❖", "Transform – arrows move, rings rotate, boxes scale", "T"),
     ("ANNOTATE", "✎", "Annotate – draw notes over the scene", "D"),
+    ("BLUE_PENCIL", "✐", "Blue Pencil – 2D drawings over the camera / view, keyed on frames (thumbnails, "
+                        "blocking, arcs, review notes)", "P"),
     ("MEASURE", "📏", "Measure – drag to measure distances, from the middle of a ruler: angles", "M"),
     ("ADD", "＋", "Add – drag the base, then the height of a new object", "A"),
 ]
@@ -54,7 +56,8 @@ _KIND = {"MOVE": "G", "ROTATE": "R", "SCALE": "S", "TRANSFORM": "T"}
 _BUILTIN = {"SELECT": "select_box", "CURSOR": "cursor", "MOVE": "move", "ROTATE": "rotate", "SCALE": "scale",
             "TRANSFORM": "transform", "MEASURE": "measure"}
 TOOL_NAMES = {"SELECT": "Select", "CURSOR": "Cursor", "MOVE": "Move", "ROTATE": "Rotate", "SCALE": "Scale",
-              "TRANSFORM": "Transform", "ANNOTATE": "Annotate", "MEASURE": "Measure", "ADD": "Add"}
+              "TRANSFORM": "Transform", "ANNOTATE": "Annotate", "BLUE_PENCIL": "Blue Pencil", "MEASURE": "Measure",
+              "ADD": "Add"}
 
 # variants: tool → [(variant, name, icon, Blender tool id, tooltip)]
 VARIANTS = {
@@ -85,6 +88,20 @@ VARIANTS = {
         ("ERASER", "Annotate Eraser", "tool_annotate_eraser", "annotate_eraser",
          "Drag over strokes to erase them (Ctrl + mouse wheel: radius)"),
     ],
+    # Qt Shell's own tool (bluepencil.py) – "qtshell:" ids are not Blender tools
+    "BLUE_PENCIL": [
+        ("PENCIL", "Pencil", "bp_pencil", "qtshell:PENCIL", "Blue Pencil: free-hand line"),
+        ("BRUSH", "Brush", "bp_brush", "qtshell:BRUSH", "Blue Pencil: tapered stroke (tablet pressure)"),
+        ("ERASER", "Eraser", "bp_eraser", "qtshell:ERASER",
+         "Blue Pencil: drag over strokes – lines are cut, shapes and text removed"),
+        ("TEXT", "Text", "bp_text", "qtshell:TEXT", "Blue Pencil: click to type a note"),
+        ("LINE", "Line", "bp_line", "qtshell:LINE", "Blue Pencil: drag a straight line"),
+        ("ARROW", "Arrow", "bp_arrow", "qtshell:ARROW", "Blue Pencil: drag an arrow"),
+        ("ELLIPSE", "Ellipse", "bp_ellipse", "qtshell:ELLIPSE", "Blue Pencil: drag an ellipse (Shift: circle)"),
+        ("RECT", "Rectangle", "bp_rect", "qtshell:RECT", "Blue Pencil: drag a rectangle (Shift: square)"),
+        ("TRANSFORM", "Transform", "bp_transform", "qtshell:TRANSFORM",
+         "Blue Pencil: select a region, then drag to move (Shift: rotate, middle mouse: scale); Enter applies"),
+    ],
     "ADD": [
         ("CUBE", "Add Cube", "tool_add_cube", "primitive_cube_add",
          "Drag the base, release, move the mouse for the height, click to create"),
@@ -98,16 +115,19 @@ VARIANTS = {
          "Drag the base, release, move the mouse for the height, click to create"),
     ],
 }
-_DEFAULT_VARIANT = {"SELECT": "BOX", "SCALE": "SCALE", "ANNOTATE": "FREEHAND", "ADD": "CUBE"}
+_DEFAULT_VARIANT = {"SELECT": "BOX", "SCALE": "SCALE", "ANNOTATE": "FREEHAND", "BLUE_PENCIL": "PENCIL", "ADD": "CUBE"}
 # keymap actions of the tools (their keys are shown in tooltips; pressing again cycles the variants)
 TOOL_ACTIONS = {"SELECT": "view3d.tool_select", "CURSOR": "view3d.tool_cursor", "MOVE": "view3d.tool_move",
                 "ROTATE": "view3d.tool_rotate", "SCALE": "view3d.tool_scale", "ANNOTATE": "view3d.tool_annotate",
-                "MEASURE": "view3d.tool_measure", "ADD": "view3d.tool_add"}
+                "MEASURE": "view3d.tool_measure", "ADD": "view3d.tool_add",
+                "BLUE_PENCIL": "view3d.tool_blue_pencil"}
 CIRCLE_RADIUS = 25          # default Select Circle radius (unscaled px)
 
 
 def tool_command(bid):
     """Python command of a tool (Blender's tool ids; the Add tools are Blender's "builtin.primitive_*")."""
+    if str(bid).startswith("qtshell:"):           # Qt Shell's own tools (Blue Pencil)
+        return f'qt_shell.api.set_tool("BLUE_PENCIL", "{bid.split(":", 1)[1]}")'
     return f'bpy.ops.wm.tool_set_by_id(name="builtin.{bid}")'
 
 
