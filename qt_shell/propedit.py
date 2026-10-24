@@ -78,8 +78,67 @@ class _OpProxy:
                 elif isinstance(fn, types.FunctionType):
                     setattr(self, name, types.MethodType(fn, self))
 
+        orig = getattr(self, "_get_converted_value", None)
+        if orig is not None:
+            self._get_converted_value = lambda *args, _o=orig: self._safe_converted_value(_o, *args)
+
+    def _safe_converted_value(self, orig, item, name_old, prop_type_new, *rest):
+        """Blender's conversion fails for String / Python / Data-Block → number or array (it returns "" or
+        raises, then its execute() fails with "update() takes at most 3 keyword arguments") – parse
+        the old value as numbers, or use the dialog's defaults."""
+        try:
+            value = orig(item, name_old, prop_type_new, *rest)
+        except Exception:
+            value = None
+        kind = prop_type_new.split("_")[0]
+        if kind not in ("INT", "FLOAT", "BOOL"):
+            return value
+        is_array = prop_type_new.endswith("_ARRAY")
+        conv = {"INT": int, "FLOAT": float, "BOOL": bool}[kind]
+        ok = isinstance(value, (int, float, bool)) if not is_array else \
+            (isinstance(value, (list, tuple)) and all(isinstance(v, (int, float, bool)) for v in value))
+        if ok:
+            return value
+        n = int(self.array_length) if is_array else 1
+        defaults = list({"INT": self.default_int, "FLOAT": self.default_float, "BOOL": self.default_bool}[kind])
+        nums = []
+        old = item.get(name_old) if hasattr(item, "get") else None
+        if isinstance(old, str):
+            import re
+            for tok in re.findall(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|true|false", old, re.I):
+                low = tok.lower()
+                nums.append(low == "true" if low in ("true", "false") else float(tok))
+        vals = [conv(nums[i]) if i < len(nums) else conv(_item(defaults, i, 0)) for i in range(n)]
+        return vals if is_array else vals[0]
+
     def report(self, kind, message):
         self._reports.append((set(kind), message))
+
+
+def _item(seq, i, default):
+    """seq[i] – an operator default array may be shorter than the property's array."""
+    try:
+        return seq[i]
+    except (IndexError, TypeError):
+        return default
+
+
+def _enum_items(prop):
+    """(identifier, name) of an enum setting of the operator."""
+    rnas = []
+    try:
+        rnas.append(bpy.ops.wm.properties_edit.get_rna_type())
+    except Exception:
+        pass
+    cls = _op_class()
+    if cls is not None:
+        rnas.append(cls.bl_rna)
+    for rna in rnas:
+        p = rna.properties.get(prop)
+        if p is not None and len(p.enum_items):
+            return [(e.identifier, e.name) for e in p.enum_items]
+    return [(t, t.replace("_", " ").title()) for t in ("OBJECT", "MATERIAL", "MESH", "COLLECTION", "TEXTURE",
+                                                       "IMAGE", "CAMERA", "LIGHT", "SCENE", "WORLD", "ACTION")]
 
 
 def _helper(cls, name):
@@ -188,7 +247,9 @@ class PropertyEditDialog(QtWidgets.QDialog):
         for ident, label in TYPES:
             tc.addItem(label, ident)
         tc.setCurrentIndex(max(0, tc.findData(t)))
-        tc.activated.connect(lambda _i: self._type_changed(tc.currentData()))
+        # rebuild later: the rows (this combo too) are deleted by the rebuild – not inside the combo's own signal
+        tc.activated.connect(lambda _i: QtCore.QTimer.singleShot(0, lambda t=tc.currentData():
+                                                                 self._type_changed(t)))
         self.form.addRow("Type", tc)
         ne = QtWidgets.QLineEdit(str(p.property_name), self)
         ne.setMaxLength(63)
@@ -198,8 +259,7 @@ class PropertyEditDialog(QtWidgets.QDialog):
         if t in ("FLOAT", "FLOAT_ARRAY", "INT", "INT_ARRAY", "BOOL", "BOOL_ARRAY"):
             if is_array:
                 al = self._spin_i(p.array_length, 1, 32)
-                al.valueChanged.connect(lambda v: (self._collect(), setattr(self.p, "array_length", int(v)),
-                                                   self._build()))
+                al.valueChanged.connect(lambda v: QtCore.QTimer.singleShot(0, lambda v=int(v): self._length_changed(v)))
                 self.w["array_length"] = al
                 self.form.addRow("Array Length", al)
             n = int(p.array_length) if is_array else 1
@@ -207,12 +267,12 @@ class PropertyEditDialog(QtWidgets.QDialog):
             defaults = []
             for i in range(n):
                 if kind == "FLOAT":
-                    d = self._spin_f(p.default_float[i])
+                    d = self._spin_f(_item(p.default_float, i, 0.0))
                 elif kind == "INT":
-                    d = self._spin_i(p.default_int[i])
+                    d = self._spin_i(_item(p.default_int, i, 0))
                 else:
                     d = QtWidgets.QCheckBox(self)
-                    d.setChecked(bool(p.default_bool[i]))
+                    d.setChecked(bool(_item(p.default_bool, i, False)))
                 defaults.append(d)
                 self.form.addRow("Default" if i == 0 else "", d)
             self.w["defaults"] = defaults
@@ -227,7 +287,7 @@ class PropertyEditDialog(QtWidgets.QDialog):
                 soft.setChecked(bool(p.use_soft_limits))
                 self.w["use_soft_limits"] = soft
                 self.form.addRow("", soft)
-                for attr, label in (("soft_min", "Soft Min"), ("soft_max", "Max")):
+                for attr, label in (("soft_min", "Soft Min"), ("soft_max", "Soft Max")):
                     s = mk(getattr(p, f"{attr}_{sfx}"))
                     s.setEnabled(soft.isChecked())
                     soft.toggled.connect(s.setEnabled)
@@ -258,8 +318,8 @@ class PropertyEditDialog(QtWidgets.QDialog):
             self.form.addRow("Default", ds)
         elif t == "DATA_BLOCK":
             ic = QtWidgets.QComboBox(self)
-            for e in self.cls.bl_rna.properties["id_type"].enum_items:
-                ic.addItem(e.name, e.identifier)
+            for ident, label in _enum_items("id_type"):
+                ic.addItem(label, ident)
             ic.setCurrentIndex(max(0, ic.findData(p.id_type)))
             self.w["id_type"] = ic
             self.form.addRow("ID Type", ic)
@@ -292,6 +352,7 @@ class PropertyEditDialog(QtWidgets.QDialog):
             kind = t.split("_")[0]
             key = {"FLOAT": "default_float", "INT": "default_int", "BOOL": "default_bool"}[kind]
             arr = list(getattr(p, key))
+            arr += [arr[-1] if arr else 0] * max(0, len(w["defaults"]) - len(arr))
             for i, d in enumerate(w["defaults"]):
                 arr[i] = d.isChecked() if kind == "BOOL" else d.value()
             setattr(p, key, arr)
@@ -311,6 +372,13 @@ class PropertyEditDialog(QtWidgets.QDialog):
         if "is_overridable_library" in w:
             p.is_overridable_library = w["is_overridable_library"].isChecked()
 
+    def _length_changed(self, n):
+        if not self.isVisible():
+            return
+        self._collect()
+        self.p.array_length = n
+        self._build()
+
     def _type_changed(self, t):
         self._collect()
         self.p.property_type = t
@@ -320,6 +388,16 @@ class PropertyEditDialog(QtWidgets.QDialog):
                 self.p.check(bpy.context)          # Blender converts min / max / defaults to the new type
         except Exception as ex:
             bridge.log(f"Edit Property (type): {ex}", "WARNING")
+        # Blender's operator defaults are min = max = -10000 (its dialog shows that too when a String /
+        # Python / Data-Block property becomes a number) – give an empty range a usable one
+        p = self.p
+        for sfx in ("float", "int"):
+            lo, hi = getattr(p, f"min_{sfx}", None), getattr(p, f"max_{sfx}", None)
+            if lo is not None and hi is not None and hi <= lo:
+                setattr(p, f"min_{sfx}", -10000 if sfx == "int" else -10000.0)
+                setattr(p, f"max_{sfx}", 10000 if sfx == "int" else 10000.0)
+                setattr(p, f"soft_min_{sfx}", getattr(p, f"min_{sfx}"))
+                setattr(p, f"soft_max_{sfx}", getattr(p, f"max_{sfx}"))
         self._build()
 
     def _ok(self):
