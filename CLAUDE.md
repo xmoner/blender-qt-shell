@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.36.0 on 2026-10-23; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.37.0 on 2026-10-24; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -89,6 +89,7 @@ Don't dig through old chat history.
   GPU shader – camera-independent), `wirepick.py`
   (picking bones / rig controls / curves by their lines).
 - `render_view.py` – Render View (Blender's render window: slots, channels, toolbar Sample / Annotate, save; F12 / F11).
+- `anim_player.py` – Render → View Animation (Ctrl+F11): rendered frames with a timeline (Qt, owned by the main window).
 - `annotate.py` – 3D view tools Annotate / Measure / Add (drawn by Qt – offscreen drawing has no annotations) + `ToolHeader`.
 - `outliner.py`, `properties.py`, `rna_widgets.py` (RNA → Qt widgets, tooltips), `qt_ui.py`
   (Blender layouts/menus → Qt, `LazyMenu`), `fake_ui.py` (records Blender `draw()` calls).
@@ -102,6 +103,7 @@ Don't dig through old chat history.
 
 ## Rules learned the hard way (details in DEVELOPMENT.md §2)
 - Give every Qt widget a parent; no app-level Python `eventFilter` (use `app._notify_with_context`).
+- Never `activateWindow()` on hover directly – use `app.hover_activate(widget)` (it pushed other windows behind Qt Shell).
 - Restore saved window state only **after** the first `show()`; never re-float docks during shutdown.
 - Blender 5.x: pose selection/hide live on `PoseBone`; F-curves via
   `bpy_extras.anim_utils.action_get_channelbag_for_slot`.
@@ -123,7 +125,7 @@ Don't dig through old chat history.
 - Graph editor: tangent handle drag, MMB move, Infinity, Frame/Value boxes not tested live.
 - Leftover debug files on the PC: `qt_shell\_inspect.py`, `_inspect.json`, `_ol_research.py`, `_ol_research.json`,
   `_rv_probe.py`, `_rv_probe5.py`–`_rv_probe8.py`, `_rv_bg.py`, `_rv_probe.json`, `_rv_shot_*.png`,
-  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`, `_t035.py`, `_t035.json`, `_t035_*.png`, `_t036.py`, `_t036.json`, `_t036_*.png`
+  `_ann_probe.py`, `_ann_probe2.py`, `_ann_probe3.py`, `_t034.py`, `_t034.json`, `_t034_*.png`, `_t035.py`, `_t035.json`, `_t035_*.png`, `_t036.py`, `_t036.json`, `_t036_*.png`, `_t037.py`, `_t037.json`, `_t037_player.png`, `_turtle_*`, `_qt_shell_turtle.blend`
   (deleting needs the owner's permission).
 - Outliner: drag & drop and restriction columns tested with synthetic mouse input; Ctrl / middle-mouse drag variants not tested live.
 

@@ -378,9 +378,8 @@ class NodeView(QtWidgets.QGraphicsView):
         fw = QtWidgets.QApplication.focusWidget()
         if not (isinstance(fw, QtWidgets.QLineEdit) and fw.text()):
             self.setFocus()
-            win = self.window()
-            if not win.isActiveWindow():   # floating dock = separate window
-                win.activateWindow()
+            from . import app as _app
+            _app.hover_activate(self)      # floating dock = separate window; never over other windows
         super().enterEvent(ev)
 
     ZOOM_MIN, ZOOM_MAX = 0.03, 4.0

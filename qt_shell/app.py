@@ -206,6 +206,23 @@ def qt_window_ids():
     return ids
 
 
+def hover_activate(widget):
+    """Editors take the keyboard when the mouse enters them (like Blender). Their window is activated only
+    when the active window is the Qt Shell window or one of its floating docks – never over another
+    program, Blender's own windows or a Qt Shell window like the Render View / Animation Player (activating
+    the main window there pushed those windows behind it)."""
+    win = widget.window()
+    if win.isActiveWindow():
+        return
+    act = QtWidgets.QApplication.activeWindow()
+    if act is None:
+        return                         # another program (or a Blender window) is in front – leave it there
+    main = _win
+    is_dock = isinstance(act, QtWidgets.QDockWidget) or (main is not None and act is main)
+    if is_dock and (win is main or isinstance(win, QtWidgets.QDockWidget)):
+        win.activateWindow()
+
+
 def set_blender_visible(visible):
     ok, msg = native.set_blender_windows_visible(visible, qt_window_ids())
     if not ok:

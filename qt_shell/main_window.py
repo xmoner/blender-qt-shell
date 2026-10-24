@@ -1059,6 +1059,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("window.render", lambda: self.render_image(False))
         sc("window.render_anim", lambda: self.render_image(True))
         sc("window.show_render", self.show_render)
+        sc("window.view_anim", self.view_animation)
         sc("window.quit", self.close)
         sc("window.play", lambda: self.timeline.toggle_play())
         sc("window.play_reverse", lambda: self.timeline.toggle_play(reverse=True))
@@ -1091,6 +1092,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         if idname == "render.view_show":
             self.show_render()
+            return True
+        if idname == "render.play_rendered_anim":
+            self.view_animation()       # Qt player with a timeline instead of Blender's separate window
             return True
         if idname == "wm.quit_blender":
             self.close()
@@ -1285,6 +1289,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Render finished.", 4000)
         self.render_window.render_finished()
         self.render_window.present()
+
+    def view_animation(self):
+        """Render → View Animation (Ctrl+F11): the Animation Player (rendered frames + timeline)."""
+        from .anim_player import AnimPlayer
+        if getattr(self, "anim_player", None) is None:
+            self.anim_player = AnimPlayer(self)
+        self.anim_player.present()
 
     def show_render(self):
         """View Render (F11): opens the render window with the last result; F11 again closes it."""
@@ -1644,3 +1655,5 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
         self.render_window.close()
+        if getattr(self, "anim_player", None) is not None:
+            self.anim_player.close()
