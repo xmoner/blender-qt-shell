@@ -808,11 +808,33 @@ QT_MENU_LABELS = {"TOPBAR_MT_file_open_recent": "Open Recent"}
 class PopoverMenu(QtWidgets.QMenu):
     """Blender popover panel shown as a widget inside a QMenu."""
 
+    _open_state = {}           # sub-panel open / closed, shared by all popovers (like Blender remembers it)
+
     def __init__(self, panel_id, parent=None, on_change=None):
         super().__init__(parent)
         self.panel_id = panel_id
         self.on_change = on_change
         self.aboutToShow.connect(self._populate)
+
+    def _add_children(self, builder, parent_cls, lay, depth=0):
+        """Sub-panels (bl_parent_id) as collapsible sections – e.g. Overlays: Guides, Objects, Geometry …"""
+        for ch in fake_ui.child_panels(fake_ui.class_id(parent_cls)):
+            rec = fake_ui.record_panel(ch, bpy.context)
+            if rec is None:
+                continue
+            header, body = rec
+            hw = builder.build(header) if header is not None and header.children else None
+            closed = "DEFAULT_CLOSED" in getattr(ch, "bl_options", set())
+            key = fake_ui.class_id(ch)
+            title = "" if "HIDE_HEADER" in getattr(ch, "bl_options", set()) or hw is not None else \
+                tr(getattr(ch, "bl_label", ""))       # a header with its own widgets names itself
+            panel = CollapsiblePanel(title, key, PopoverMenu._open_state, closed, hw, flat=True)
+            panel.btn.toggled.connect(lambda _on: QtCore.QTimer.singleShot(0, self.adjustSize))
+            bw = builder.build(body)
+            if bw is not None:
+                panel.body_lay.addWidget(bw)
+            self._add_children(builder, ch, panel.body_lay, depth + 1)
+            lay.addWidget(panel)
 
     def _populate(self):
         self.clear()
@@ -824,10 +846,34 @@ class PopoverMenu(QtWidgets.QMenu):
             return
         _header, body = rec
         builder = Builder(self.on_change)
+        self._builder = builder                 # keeps the bindings alive while the popover is open
+        box = QtWidgets.QWidget(self)
+        lay = QtWidgets.QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.px(2))
         w = builder.build(body)
-        if w is None:
+        if w is not None:
+            lay.addWidget(w)
+        try:
+            self._add_children(builder, cls, lay)
+        except Exception as ex:
+            from . import bridge
+            bridge.log(f"Popover {self.panel_id}: {ex}", "WARNING")
+        if lay.count() == 0:
             return
-        w.setMinimumWidth(theme.px(260))
+        box.setMinimumWidth(theme.px(260))
+        widget = box
+        scr = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos()) or QtGui.QGuiApplication.primaryScreen()
+        max_h = int(scr.availableGeometry().height() * 0.85)
+        if box.sizeHint().height() > max_h:       # long popovers (Overlays) scroll instead of leaving the screen
+            sa = QtWidgets.QScrollArea(self)
+            sa.setWidget(box)
+            sa.setWidgetResizable(True)
+            sa.setFrameShape(QtWidgets.QFrame.NoFrame)
+            sa.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+            sa.setMinimumWidth(box.sizeHint().width() + sa.verticalScrollBar().sizeHint().width() + 4)
+            sa.setFixedHeight(max_h)
+            widget = sa
         wa = QtWidgets.QWidgetAction(self)
-        wa.setDefaultWidget(w)
+        wa.setDefaultWidget(widget)
         self.addAction(wa)

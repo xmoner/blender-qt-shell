@@ -386,6 +386,14 @@ def find_panel_class(idname):
     return None
 
 
+def child_panels(parent_id):
+    """Registered sub-panels of a panel (bl_parent_id), in Blender's order – e.g. the sections of the
+    Overlays / Shading popovers."""
+    out = [c for c in _all_subclasses(bpy.types.Panel)
+           if _registered(c) and getattr(c, "bl_parent_id", "") == parent_id]
+    return sorted(out, key=lambda c: getattr(c, "bl_order", 0))
+
+
 def properties_panels(context_name):
     """Panel tree of the Properties editor for a given bl_context: [(cls, [children…]), …]."""
     classes = []

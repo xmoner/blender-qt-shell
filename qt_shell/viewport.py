@@ -411,6 +411,12 @@ class Viewport(QtWidgets.QWidget):
                 gizmo.paint(self, p, self.tools.tool, self._gz_hover)
             except Exception as ex:          # never break the viewport because of the gizmo
                 bridge.log(f"Gizmo: {ex}", "WARNING")
+        if self._modal is not None:
+            try:
+                from . import snap
+                snap.paint(self, p)          # the snap target while transforming
+            except Exception:
+                pass
         self._paint_gizmo(p)
         self._paint_text(p)
         try:
@@ -677,8 +683,43 @@ class Viewport(QtWidgets.QWidget):
             return None
         return (len(recent) - 1) / (recent[-1] - recent[0])
 
+    def _overlay_flags(self):
+        """(text info, statistics) of the Overlays popover – both off when overlays are hidden."""
+        try:
+            sp, _r = self.space()
+            ov = sp.overlay
+            if not ov.show_overlays:
+                return False, False
+            return bool(ov.show_text), bool(ov.show_stats)
+        except Exception:
+            return True, False
+
+    def _stats_lines(self):
+        """Statistics like Blender's overlay (Objects, Vertices, Edges, Faces, Triangles, Bones …)."""
+        ctx = bpy.context
+        try:
+            text = ctx.scene.statistics(ctx.view_layer)
+        except Exception:
+            return []
+        names = {"Verts": "Vertices", "Tris": "Triangles", "Faces": "Faces", "Edges": "Edges",
+                 "Objects": "Objects", "Bones": "Bones", "Joints": "Joints", "Points": "Points",
+                 "Strokes": "Strokes", "Layers": "Layers"}
+        out = []
+        for part in text.split("|"):
+            key, sep, val = part.strip().partition(":")
+            if sep and key.strip() in names:
+                out.append((names[key.strip()], val.strip()))
+        order = ["Objects", "Vertices", "Edges", "Faces", "Triangles", "Bones", "Joints", "Points",
+                 "Strokes", "Layers"]
+        out.sort(key=lambda kv: order.index(kv[0]) if kv[0] in order else 99)
+        return out
+
     def _paint_text(self, p):
         ctx = bpy.context
+        show_text, show_stats = self._overlay_flags()
+        if not show_text:
+            self._paint_text_bottom(p)
+            return
         p.setPen(QtGui.QColor("#e0e0e0"))
         f = p.font()
         f.setBold(False)
@@ -718,6 +759,22 @@ class Viewport(QtWidgets.QWidget):
                                f"{ob.name if ob else '—'}")
         except Exception:
             pass
+        if show_stats:
+            fm = p.fontMetrics()
+            y = 38 + fm.height() + 6
+            lines = self._stats_lines()
+            wl = max((fm.horizontalAdvance(k) for k, _v in lines), default=0)
+            for k, val in lines:
+                p.setPen(QtGui.QColor("#e0e0e0"))
+                p.drawText(12, y, k)
+                p.drawText(12 + wl + theme.px(14), y, val)
+                y += fm.height() + 1
+        self._paint_text_bottom(p)
+
+    def _paint_text_bottom(self, p):
+        f = p.font()
+        f.setPixelSize(theme.fs(12))
+        p.setFont(f)
         if self._modal:
             p.setPen(QtGui.QColor("#ffffff"))
             p.drawText(12, self.height() - 14, self._modal_text())
@@ -1101,6 +1158,11 @@ class Viewport(QtWidgets.QWidget):
             "pose": pose if ctx.mode == "POSE" else None,
         }
         self._set_modal_orient(None)                  # the header's transform orientation (taken at start)
+        try:
+            from . import snap
+            self._modal["snapper"] = snap.Snapper(self, self._modal)     # header Snap settings, Ctrl inverts
+        except Exception as ex:
+            bridge.log(f"Snap: {ex}", "WARNING")
         self._numeric = ""
         self.setFocus()
         self.grabMouse()
@@ -1182,6 +1244,12 @@ class Viewport(QtWidgets.QWidget):
                             delta = axis_vec * delta.dot(axis_vec)
                     else:
                         delta = axis_vec * delta.dot(axis_vec)
+            snapper = m.get("snapper")
+            if num is None and snapper is not None:
+                try:
+                    delta = snapper.move(delta, pos, axis_vec, m.get("orient") if axis_vec is None else None)
+                except Exception as ex:
+                    bridge.log(f"Snap: {ex}", "WARNING")
             m["value"] = delta
             X = Matrix.Translation(delta)
         elif m["kind"] == "R":
@@ -1196,6 +1264,8 @@ class Viewport(QtWidgets.QWidget):
             axis = axis_vec if axis_vec is not None else -fwd
             if axis_vec is not None and axis_vec.dot(-fwd) < 0 and num is None:
                 angle = -angle
+            if num is None and m.get("snapper") is not None:
+                angle = m["snapper"].rotate(angle)
             m["value"] = angle
             X = Matrix.Translation(pivot) @ Matrix.Rotation(angle, 4, axis) @ Matrix.Translation(-pivot)
         else:
@@ -1210,6 +1280,8 @@ class Viewport(QtWidgets.QWidget):
             else:
                 d0 = max(math.hypot(start.x() - ps.x(), start.y() - ps.y()), 1.0)
                 fac = math.hypot(pos.x() - ps.x(), pos.y() - ps.y()) / d0
+            if num is None and m.get("snapper") is not None:
+                fac = m["snapper"].scale(fac)
             m["value"] = fac
             S = Matrix.Scale(fac, 4, axis_vec) if axis_vec is not None else Matrix.Scale(fac, 4)
             X = Matrix.Translation(pivot) @ S @ Matrix.Translation(-pivot)
@@ -1531,6 +1603,13 @@ class Viewport(QtWidgets.QWidget):
                 return True
         return super().event(ev)
 
+    def keyReleaseEvent(self, ev):
+        if self._modal and ev.key() in (QtCore.Qt.Key_Control, QtCore.Qt.Key_Shift) and not ev.isAutoRepeat():
+            QtCore.QTimer.singleShot(0, lambda: self._modal and self._modal_update(
+                self.mapFromGlobal(QtGui.QCursor.pos()).toPointF()))
+            return
+        super().keyReleaseEvent(ev)
+
     def keyPressEvent(self, ev):
         key = ev.key()
         mods = ev.modifiers()
@@ -1542,6 +1621,8 @@ class Viewport(QtWidgets.QWidget):
                 self._modal_end(True)
             elif key in (QtCore.Qt.Key_X, QtCore.Qt.Key_Y, QtCore.Qt.Key_Z):
                 self._modal_axis_key(chr(key))
+                self._modal_update(self.mapFromGlobal(QtGui.QCursor.pos()).toPointF())
+            elif key in (QtCore.Qt.Key_Control, QtCore.Qt.Key_Shift):     # Ctrl: snapping, Shift: fine
                 self._modal_update(self.mapFromGlobal(QtGui.QCursor.pos()).toPointF())
             elif key == QtCore.Qt.Key_Backspace:
                 self._numeric = self._numeric[:-1]

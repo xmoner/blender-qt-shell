@@ -822,7 +822,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _hdr_popover(self, parent, lay, text, panel, tip):
         b = self._hdr_button(parent, text, tip, f'bpy.ops.wm.call_panel(name="{panel}")')
         b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        b.setMenu(PopoverMenu(panel, b))
+        # a change in the popover (Overlays, Shading, Snapping …) redraws the views at once
+        b.setMenu(PopoverMenu(panel, b, on_change=lambda *_a: self._after_header_change()))
         b.menu().aboutToHide.connect(self._sync_header)
         lay.addWidget(b)
         return b
