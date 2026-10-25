@@ -1926,6 +1926,10 @@ class Timeline(QtWidgets.QWidget):
             self.bar.follow(f)
         self.bar.update()
         self.slider.update()
+        try:
+            self.hub.play_frame.emit(f)          # other editors' playheads (Graph Editor)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------ keys
     def insert_key(self):

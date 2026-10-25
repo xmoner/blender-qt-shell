@@ -20,6 +20,7 @@ class Hub(QtCore.QObject):
     data_changed = QtCore.Signal()
     selection_changed = QtCore.Signal()
     frame_changed = QtCore.Signal(int)
+    play_frame = QtCore.Signal(int)     # during playback: the frame shown (also cached frames – scene unchanged)
     mode_changed = QtCore.Signal(str)
     file_loaded = QtCore.Signal()
     undo_done = QtCore.Signal()

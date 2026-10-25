@@ -104,6 +104,14 @@ def fmt(v):
     return f"{v:.3f}".rstrip("0").rstrip(".")
 
 
+def _hub():
+    try:
+        from . import app
+        return app.hub()
+    except Exception:
+        return None
+
+
 class Curve:
     """One F-curve as shown: owner, curve, label, colour, unit factor."""
 
@@ -257,8 +265,10 @@ class GraphView(QtWidgets.QWidget):
             p.setPen(QtGui.QColor("#9a9a9a"))
             p.drawText(QtCore.QPointF(x + 2, theme.px(13)), fmt(fr))
             fr += fstep
-        # current frame
-        cur = sc.frame_current
+        # current frame (during cached playback the frame shown – the scene frame stays)
+        hub = getattr(self, "hub", None) or _hub()
+        shown = getattr(hub, "display_frame", None) if hub is not None else None
+        cur = sc.frame_current if shown is None else shown
         x = self.fx(cur)
         p.setPen(QtGui.QPen(QtGui.QColor("#e04a4a"), 2))
         p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, H))
@@ -766,6 +776,8 @@ class GraphEditor(QtWidgets.QWidget):
         lay.addWidget(split, 1)
 
         hub.frame_changed.connect(lambda _f: self.view.update())
+        if hasattr(hub, "play_frame"):
+            hub.play_frame.connect(lambda _f: self.view.isVisible() and self.view.update())
         hub.selection_changed.connect(self.refresh)
         hub.data_changed.connect(self.refresh)
         hub.file_loaded.connect(lambda: self.refresh(force=True))
