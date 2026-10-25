@@ -854,3 +854,14 @@ qt_shell.api.run_op("render.render", animation=True)
 ```
 
 Shelf button icons: an emoji / symbol, an image file, or `bl:NAME` for any Blender icon (`bl:MESH_CUBE`).
+
+## Shelf files
+
+Shelves can be saved to and loaded from `.json` files (the button next to the shelf's **+**), also from Python:
+
+```python
+from qt_shell import shelf
+shelf.export_shelves(r"C:/shelves/modeling.json", ["Modeling"])   # None = all shelves
+shelf.import_shelves(r"C:/shelves/modeling.json")                 # added as new tabs of the open Shelf
+shelf.shelf_folder()                                              # default folder: config/qt_shell/shelves
+```

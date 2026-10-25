@@ -99,6 +99,73 @@ def set_style(**kw):
             st.setValue(f"shelf/{k}", ("true" if v else "false") if isinstance(STYLE_DEFAULTS[k], bool) else int(v))
 
 
+# ---------------------------------------------------------------- shelf files (save / load)
+FILE_FORMAT = "qt_shell_shelves"
+
+
+def shelf_folder():
+    """Default folder for saved shelf files: config/qt_shell/shelves."""
+    d = os.path.join(os.path.dirname(_path()), "shelves")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _safe_name(name):
+    return re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or "shelf"
+
+
+def export_shelves(path, names=None, data=None):
+    """Writes the shelves with these names (None = all) to a .json file. Returns how many were saved."""
+    data = data if data is not None else load()
+    shelves = [copy.deepcopy(s) for s in data["shelves"] if names is None or s.get("name") in names]
+    if not shelves:
+        raise ValueError("No shelf to save.")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"format": FILE_FORMAT, "version": 1, "shelves": shelves}, f, indent=2, ensure_ascii=False)
+    return len(shelves)
+
+
+def import_shelves(path, data=None):
+    """Adds the shelves of a saved file (a name that exists gets " (2)" …). Returns the added names;
+    with data=None the user's shelves.json is updated."""
+    with open(path, encoding="utf-8") as f:
+        src = json.load(f)
+    if isinstance(src, dict) and isinstance(src.get("shelves"), list):
+        shelves = src["shelves"]
+    elif isinstance(src, dict) and "buttons" in src:          # a single shelf dict
+        shelves = [src]
+    else:
+        raise ValueError("Not a Qt Shell shelf file.")
+    own = data is None
+    bar = None
+    if own:                                      # the open Shelf's data, so it shows the new tabs right away
+        try:
+            bar = getattr(api.main_window(), "shelf", None)
+        except Exception:
+            bar = None
+    data = (bar.data if bar is not None else load()) if own else data
+    names = {s.get("name") for s in data["shelves"]}
+    added = []
+    for s in shelves:
+        if not isinstance(s, dict):
+            continue
+        s = copy.deepcopy(s)
+        base = s.get("name") or "Shelf"
+        name, k = base, 2
+        while name in names:
+            name, k = f"{base} ({k})", k + 1
+        s["name"] = name
+        s.setdefault("buttons", [])
+        names.add(name)
+        data["shelves"].append(s)
+        added.append(name)
+    if own:
+        save(data)
+        if bar is not None:
+            bar._fill_tabs()
+    return added
+
+
 def button_icon(spec, px=None):
     """QIcon for a button's icon field: "bl:NAME" (Blender icon) or an image file; None otherwise."""
     if not spec:
@@ -304,6 +371,25 @@ class ShelfBar(QtWidgets.QWidget):
         plus.setToolTip("New shelf tab")
         plus.clicked.connect(self._new_shelf)
         tab_row.addWidget(plus)
+        # save / load shelves as files (like Maya's Save Shelf / Save All Shelves / Load Shelf)
+        self.save_btn = save = QtWidgets.QToolButton(self)
+        try:
+            from . import blicons
+            if blicons.has("FILE_TICK"):
+                save.setIcon(blicons.icon("FILE_TICK"))
+            else:
+                save.setText("💾")
+        except Exception:
+            save.setText("💾")
+        save.setAutoRaise(True)
+        save.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        save.setToolTip("Save the current shelf or all shelves to a file, load shelves from a file")
+        save_menu = QtWidgets.QMenu(save)
+        save_menu.aboutToShow.connect(lambda m=save_menu: self._fill_save_menu(m))
+        save.setMenu(save_menu)
+        pytips.tag(save, "from qt_shell import shelf\nshelf.export_shelves(path, [\"Modeling\"])   # None = all\n"
+                         "shelf.import_shelves(path)")
+        tab_row.addWidget(save)
         tab_row.addStretch(1)
         lay.addLayout(tab_row)
         # buttons in a horizontally scrolling row (the shelf can be a narrow floating window)
@@ -519,6 +605,47 @@ class ShelfBar(QtWidgets.QWidget):
         m.addAction("Open the Shelf File Folder",
                     lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(os.path.dirname(_path()))))
         m.exec(gpos)
+
+    # --- save / load files
+    def _fill_save_menu(self, m):
+        m.clear()
+        name = self._shelf().get("name", "Shelf")
+        m.addAction(f"Save Shelf “{name}”…", lambda: self._export([name]))
+        m.addAction("Save All Shelves…", lambda: self._export(None))
+        m.addSeparator()
+        m.addAction("Load Shelf…", self._import)
+        m.addSeparator()
+        m.addAction("Open the Shelf File Folder",
+                    lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(shelf_folder())))
+
+    def _export(self, names):
+        default = (_safe_name(names[0]) if names else "all_shelves") + ".json"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self.window(), "Save Shelf" if names else "Save All Shelves",
+                                                        os.path.join(shelf_folder(), default),
+                                                        "Qt Shell shelves (*.json)")
+        if not path:
+            return
+        try:
+            n = export_shelves(path, names, self.data)
+        except Exception as ex:
+            QtWidgets.QMessageBox.warning(self.window(), "Save Shelf", str(ex))
+            return
+        api.status(f"Saved {n} shelf{'s' if n != 1 else ''} to {path}")
+
+    def _import(self):
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self.window(), "Load Shelf", shelf_folder(),
+                                                        "Qt Shell shelves (*.json)")
+        if not path:
+            return
+        try:
+            added = import_shelves(path, self.data)
+        except Exception as ex:
+            QtWidgets.QMessageBox.warning(self.window(), "Load Shelf", str(ex))
+            return
+        self.data["current"] = len(self.data["shelves"]) - 1
+        self._save()
+        self._fill_tabs()
+        api.status(f"Loaded {len(added)} shelf{'s' if len(added) != 1 else ''}: {', '.join(added)}")
 
     def _new_shelf(self):
         name, ok = QtWidgets.QInputDialog.getText(self.window(), "New Shelf", "Name:")
