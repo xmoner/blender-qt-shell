@@ -1381,12 +1381,22 @@ class Outliner(QtWidgets.QWidget):
         keys = [it.data(0, KEY) for it in items if it.data(0, KEY)]
         cur = self.tree.currentItem()
         cur_key = cur.data(0, KEY) if cur is not None else None
-        if ctx.mode == "POSE":
-            if any(k[0] == "BONE" for k in keys):
-                self._select_bones(keys, cur_key)
-            return
         if ctx.mode != "OBJECT":
-            return
+            target = self._key_object(cur_key)
+            in_mode = {o.name for o in ctx.view_layer.objects if o.mode != "OBJECT"}
+            if target is None or target in in_mode:
+                if ctx.mode == "POSE" and any(k[0] == "BONE" for k in keys):
+                    self._select_bones(keys, cur_key)
+                return
+            ob = bpy.data.objects.get(target)
+            if ob is not None and self._lock_reason(ob):
+                self._report_unselectable([ob])  # locked geometry: keep the rig in its mode
+                return
+            # Blender: clicking an object outside the current mode (a mesh while the rig is in Pose Mode)
+            # leaves the mode first, then selects it
+            bridge.run_op("object.mode_set", {"mode": "OBJECT"})
+            if bpy.context.mode != "OBJECT":
+                return
         names = []
         for key in keys:
             if key[0] == "COLLECTION":
@@ -1396,11 +1406,17 @@ class Outliner(QtWidgets.QWidget):
                     names.append(key[2])
             elif key[0] not in ("LAZY", "IDTYPE") and len(key) > 1:
                 names.append(key[1])            # contents (data, bones, modifiers…) select their object
+        locked = []
         for o in ctx.view_layer.objects:
+            want = o.name in names
             try:
-                o.select_set(o.name in names and not o.hide_select)
+                o.select_set(want and not o.hide_select)
             except RuntimeError:
                 pass
+            if want and not o.select_get():
+                locked.append(o)
+        if locked:
+            self._report_unselectable(locked)
         act = None
         if cur_key and cur_key[0] == "ID" and cur_key[1] == "objects":
             act = bpy.data.objects.get(cur_key[2])
@@ -1408,11 +1424,49 @@ class Outliner(QtWidgets.QWidget):
             act = bpy.data.objects.get(cur_key[1])
         elif names:
             act = bpy.data.objects.get(names[-1])
+        if act is not None and act in locked:
+            act = None                          # Blender doesn't activate unselectable objects either
         if act is not None and act.name in ctx.view_layer.objects:
             ctx.view_layer.objects.active = act
             if cur_key:
                 self._activate_content(act, cur_key)
         bridge.undo_push("Outliner Select")
+
+    @staticmethod
+    def _key_object(key):
+        """Name of the object a row belongs to (the object row itself or its contents), else None."""
+        if not key:
+            return None
+        if key[0] == "ID":
+            return key[2] if len(key) > 2 and key[1] == "objects" else None
+        if key[0] in ("COLLECTION", "LAZY", "IDTYPE") or len(key) < 2:
+            return None
+        return key[1] if isinstance(key[1], str) else None
+
+    @staticmethod
+    def _lock_reason(o):
+        """Why object o can't be selected (None when it can) – rigs often lock their geometry."""
+        if o.hide_select:
+            return f"\u201c{o.name}\u201d has Selectable turned off"
+        for c in bpy.data.collections:
+            if c.hide_select and o.name in c.all_objects:
+                return f"its collection \u201c{c.name}\u201d has Selectable turned off"
+        if not o.visible_get():
+            return f"\u201c{o.name}\u201d is hidden or disabled in viewports"
+        return None
+
+    def _report_unselectable(self, obs):
+        """Say why nothing got selected instead of failing silently."""
+        o = obs[0]
+        why = self._lock_reason(o) or f"\u201c{o.name}\u201d can't be selected"
+        more = f" (+{len(obs) - 1} more)" if len(obs) > 1 else ""
+        hint = (" \u2013 turn on the arrow (Selectable) in the Outliner's restriction columns."
+                if "Selectable" in why else ".")
+        try:
+            from . import api
+            api.status(f"Not selectable{more}: {why}{hint}", 6000)
+        except Exception:
+            pass
 
     def _select_bones(self, keys, cur_key):
         bones = {(k[1], k[2]) for k in keys if k[0] == "BONE"}
