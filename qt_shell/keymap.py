@@ -59,6 +59,7 @@ _a("view3d.scale", V, "Scale", "S")
 _a("view3d.insert_key", V, "Insert Keyframe", "I")
 _a("view3d.delete_key", V, "Delete Keyframe", "Alt+I")
 _a("view3d.duplicate", V, "Duplicate (Object)", "Shift+D")
+_a("view3d.repeat_last", V, "Repeat Last (the last move / rotate / scale, operator or shelf button)", "Shift+R")
 _a("view3d.delete", V, "Delete (Object)", "X", "Del")
 _a("view3d.add_menu", V, "Add Menu", "Shift+A")
 _a("view3d.select_all", V, "Select All", "A")
@@ -159,7 +160,7 @@ _a("pose.reveal", VP, "Reveal Bones", "Alt+H")
 # navigation (Qt Preferences → Interface). Only the differences from the Blender set are listed.
 PROFILED = {V, VM, VP}
 MAYA_DEFAULTS = {
-    "view3d.move": (), "view3d.rotate": (), "view3d.scale": (),
+    "view3d.move": (), "view3d.rotate": (), "view3d.scale": (), "view3d.repeat_last": ("G",),
     "view3d.tool_select": ("Q",), "view3d.tool_move": ("W",), "view3d.tool_rotate": ("E",),
     "view3d.tool_scale": ("R",),
     "view3d.insert_key": ("S",), "view3d.delete_key": (),

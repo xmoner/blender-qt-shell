@@ -1399,6 +1399,7 @@ class Viewport(QtWidgets.QWidget):
                 if plane is not None:
                     delta = delta - plane[0] * delta.dot(plane[0])      # snapped, but still on the plane
             m["value"] = delta
+            m["spec"] = ("G", delta.copy())
             X = Matrix.Translation(delta)
         elif m["kind"] == "R":
             ps = self.project(pivot) or start
@@ -1417,6 +1418,7 @@ class Viewport(QtWidgets.QWidget):
             if num is None and m.get("snapper") is not None:
                 angle = m["snapper"].rotate(angle)
             m["value"] = angle
+            m["spec"] = ("R", axis.copy(), angle)
             X = Matrix.Translation(pivot) @ Matrix.Rotation(angle, 4, axis) @ Matrix.Translation(-pivot)
         else:
             ps = self.project(pivot) or start
@@ -1433,11 +1435,24 @@ class Viewport(QtWidgets.QWidget):
             if num is None and m.get("snapper") is not None:
                 fac = m["snapper"].scale(fac)
             m["value"] = fac
-            if plane is not None:
-                S = Matrix.Scale(fac, 4, plane[1]) @ Matrix.Scale(fac, 4, plane[2])
-            else:
-                S = Matrix.Scale(fac, 4, axis_vec) if axis_vec is not None else Matrix.Scale(fac, 4)
-            X = Matrix.Translation(pivot) @ S @ Matrix.Translation(-pivot)
+            axes = [plane[1].copy(), plane[2].copy()] if plane is not None else \
+                ([axis_vec.copy()] if axis_vec is not None else None)
+            m["spec"] = ("S", axes, fac)
+            X = Matrix.Translation(pivot) @ self._scale_matrix(axes, fac) @ Matrix.Translation(-pivot)
+        self._modal_apply(X)
+
+    @staticmethod
+    def _scale_matrix(axes, fac):
+        if not axes:
+            return Matrix.Scale(fac, 4)
+        S = Matrix.Identity(4)
+        for a in axes:
+            S = S @ Matrix.Scale(fac, 4, a)
+        return S
+
+    def _modal_apply(self, X):
+        """Applies the world-space transform X to what the modal moves (objects / Edit Mode / bones)."""
+        m = self._modal
         if m.get("edit") is not None:
             m["edit"].apply(X)
         if m.get("pose") is not None:
@@ -1446,6 +1461,34 @@ class Viewport(QtWidgets.QWidget):
             ob.matrix_world = X @ init
         self.redraw_scene()
         self.update()
+
+    def repeat_transform(self, spec):
+        """Repeat Last for an interactive Move / Rotate / Scale: the same offset / angle / factor again,
+        around the pivot of the current selection."""
+        self.start_modal(spec[0])
+        m = self._modal
+        if not m:
+            return False
+        pivot = m["pivot"]
+        if spec[0] == "G":
+            X = Matrix.Translation(spec[1])
+        elif spec[0] == "R":
+            X = Matrix.Translation(pivot) @ Matrix.Rotation(spec[2], 4, spec[1]) @ Matrix.Translation(-pivot)
+        else:
+            X = Matrix.Translation(pivot) @ self._scale_matrix(spec[1], spec[2]) @ Matrix.Translation(-pivot)
+        m["spec"] = spec
+        self._modal_apply(X)
+        self._modal_end(True)
+        return True
+
+    @staticmethod
+    def _spec_label(spec):
+        if spec[0] == "G":
+            d = spec[1]
+            return f"Move {d.x:.3f}, {d.y:.3f}, {d.z:.3f}"
+        if spec[0] == "R":
+            return f"Rotate {math.degrees(spec[2]):.1f}°"
+        return f"Scale {spec[2]:.3f}"
 
     def _modal_end(self, confirm):
         m = self._modal
@@ -1459,6 +1502,12 @@ class Viewport(QtWidgets.QWidget):
                 m["edit"].restore()
             for ob, init in m["objs"]:
                 ob.matrix_world = init
+        if confirm and m.get("spec") is not None:
+            from . import repeat
+            spec = m["spec"]
+            repeat.record(self._spec_label(spec), lambda spec=spec, vp=self: vp.repeat_transform(spec))
+        if not confirm:
+            pass
         elif m.get("edit") is not None:
             bridge.undo_push({"G": "Move", "R": "Rotate", "S": "Resize"}[m["kind"]])
         elif m.get("pose") is not None:
@@ -1883,6 +1932,9 @@ class Viewport(QtWidgets.QWidget):
                 if n:
                     bridge.undo_push("Insert Keyframe")
             self.redraw_scene()
+        elif H("view3d.repeat_last"):
+            from . import repeat
+            repeat.repeat()
         elif H("view3d.move"):
             self.start_modal("G")
         elif H("view3d.rotate"):

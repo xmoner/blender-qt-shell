@@ -230,6 +230,11 @@ def run_op(idname, props=None, ctx=None, invoke=False):
                     undo_push(op_label(idname))
             except Exception:
                 pass
+            try:
+                from . import repeat                 # Repeat Last (Maya G / Blender Shift+R)
+                repeat.record_op(idname, props, invoke)
+            except Exception:
+                pass
         if after_op_hook is not None:
             try:
                 after_op_hook(idname, props, res)

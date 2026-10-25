@@ -132,6 +132,7 @@ def run_button(btn):
     """Runs the code / file of a button in Blender's context; output goes to the Console."""
     label = btn.get("label") or "Button"
     path = btn.get("file")
+    from . import repeat
     try:
         if path:
             with open(path, encoding="utf-8") as f:
@@ -148,12 +149,15 @@ def run_button(btn):
     ns = {"__name__": "__main__", "__file__": filename, "bpy": bpy}
     info = {"ns": ns, "handlers": [], "classes": [], "status": "ran", "time": time.time(),
             "filename": filename}
-    try:
-        with bridge.blender_context():          # bpy.ops behave as in Blender's 3D view
+    with repeat.suspended():                    # the button is what Repeat Last repeats, not its operators
+        try:
+            with bridge.blender_context():      # bpy.ops behave as in Blender's 3D view
+                ok, output, line = scripts._execute(f"shelf:{label}", src, filename, ns, info)
+        except Exception as ex:                 # no 3D view to override – run as before
+            bridge.log(f"Shelf '{label}': context: {ex}", "WARNING")
             ok, output, line = scripts._execute(f"shelf:{label}", src, filename, ns, info)
-    except Exception as ex:                     # no 3D view to override – run as before
-        bridge.log(f"Shelf '{label}': context: {ex}", "WARNING")
-        ok, output, line = scripts._execute(f"shelf:{label}", src, filename, ns, info)
+    if ok:
+        repeat.record(f"Shelf: {label}", lambda b=dict(btn): run_button(b))
     if output:
         scripts.report(f"\n▶ Shelf: {label}\n", "#8fb3ff")
         scripts.report(output if output.endswith("\n") else output + "\n", "#e5e5e5" if ok else "#ff7070")
