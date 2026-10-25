@@ -23,6 +23,10 @@ _LAYOUT_DIGITS = {"+": 1, "ě": 2, "š": 3, "č": 4, "ř": 5, "ž": 6, "ý": 7, 
                   "ľ": 2, "ť": 5, "&": 1, "\"": 3, "'": 4, "(": 5, "à": 0, "ç": 9, "è": 7, "_": 8}
 
 
+# mode shortcuts: keymap action suffix → Blender mode
+_MODE_KEYS = {"object": "OBJECT", "edit": "EDIT", "pose": "POSE", "sculpt": "SCULPT",
+              "weight_paint": "WEIGHT_PAINT", "vertex_paint": "VERTEX_PAINT", "texture_paint": "TEXTURE_PAINT"}
+
 # names of the axis-aligned views (rotating from them switches to a "User" view)
 _AXIS_VIEWS = ("Front", "Back", "Right", "Left", "Top", "Bottom")
 
@@ -1866,6 +1870,16 @@ class Viewport(QtWidgets.QWidget):
             bridge.run_op("object.hide_view_set", {"unselected": True})
         elif H("view3d.edit_toggle"):
             bridge.run_op("object.editmode_toggle")
+        elif H("view3d.mode_menu"):
+            from . import api
+            mw = api.main_window()
+            if hasattr(mw, "mode_menu"):
+                mw.mode_menu()
+        elif any(H(f"view3d.mode_{k}") for k in _MODE_KEYS):
+            from . import api
+            mw = api.main_window()
+            if hasattr(mw, "switch_mode"):
+                mw.switch_mode(next(_MODE_KEYS[k] for k in _MODE_KEYS if H(f"view3d.mode_{k}")))
         elif H("view3d.shading_pie"):
             self._shading_pie()
         else:

@@ -727,6 +727,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
         self.mode_combo.setMinimumContentsLength(11)
         self.mode_combo.activated.connect(self._set_mode)
+        from . import keymap
+        keymap.tip(self.mode_combo, "Interaction mode – Object ({view3d.mode_object}), Edit ({view3d.mode_edit}), "
+                                    "Pose ({view3d.mode_pose}), Sculpt ({view3d.mode_sculpt}), Weight Paint "
+                                    "({view3d.mode_weight_paint}), Vertex Paint ({view3d.mode_vertex_paint}), "
+                                    "Texture Paint ({view3d.mode_texture_paint}); toggle Edit ({view3d.edit_toggle}), "
+                                    "mode menu ({view3d.mode_menu})")
         lay.addWidget(self.mode_combo)
         # the menus Blender shows for the current mode (View, Select, Add, Object / Mesh, Vertex, Edge, …)
         self.menu_box = QtWidgets.QWidget(bar)
@@ -1743,6 +1749,47 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.move(self.mapToGlobal(QtCore.QPoint(self.width() // 2 - 260, 80)))
         dlg.show()
         dlg.edit.setFocus()
+
+    def modes_of_active(self):
+        """[(mode, label)] the active object can switch to (like the header's mode menu)."""
+        ob = bpy.context.view_layer.objects.active
+        if ob is None:
+            return []
+        allowed = self._TYPE_MODES.get(ob.type, ("OBJECT",))
+        labels = dict(MODES)
+        return [(m, labels.get(m, m.replace("_", " ").title())) for m in allowed]
+
+    def switch_mode(self, mode):
+        """Mode shortcuts (Alt+1 … / Ctrl+Tab menu): switches the active object to a mode it supports."""
+        ob = bpy.context.view_layer.objects.active
+        if ob is None:
+            self.statusBar().showMessage("No active object.", 3000)
+            return False
+        avail = [m for m, _l in self.modes_of_active()]
+        if mode not in avail:
+            self.statusBar().showMessage(
+                f"{dict(MODES).get(mode, mode)} is not available for {ob.type.title()} objects.", 3000)
+            return False
+        if ob.mode != mode:
+            run_op("object.mode_set", {"mode": mode})
+        self._on_mode(bpy.context.mode)
+        return True
+
+    def mode_menu(self, pos=None):
+        """Ctrl+Tab: the modes of the active object at the mouse – 1, 2, 3 … pick one (like Blender's mode pie)."""
+        modes = self.modes_of_active()
+        if not modes:
+            self.statusBar().showMessage("No active object.", 3000)
+            return
+        ob = bpy.context.view_layer.objects.active
+        m = QtWidgets.QMenu(self)
+        m.setTitle("Mode")
+        for i, (mode, label) in enumerate(modes):
+            act = m.addAction(icons.icon(MODE_ICONS.get(mode, "")), f"&{i + 1}  {tr(label)}")
+            act.setCheckable(True)
+            act.setChecked(ob.mode == mode)
+            act.triggered.connect(lambda _=False, md=mode: self.switch_mode(md))
+        m.exec(pos or QtGui.QCursor.pos())
 
     def _set_mode(self, idx):
         mode = self.mode_combo.itemData(idx)
