@@ -1340,16 +1340,46 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def append_dialog(self, link=False):
         start = os.path.dirname(bpy.data.filepath) or os.path.expanduser("~")
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Link" if link else "Append", start, "Blender (*.blend)")
+        title = "Link" if link else "Append"
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, title, start, "Blender (*.blend)")
         if not path:
             return
+        src = path
+        tmp = None
+        if bpy.data.filepath and os.path.normcase(os.path.abspath(path)) == \
+                os.path.normcase(os.path.abspath(bpy.data.filepath)):
+            # Blender can't load from the open file ("Cannot load from the current blend file") – append from a
+            # copy of its saved version instead (linking to yourself makes no sense)
+            if link:
+                QtWidgets.QMessageBox.information(self, title, "This file is the one that is open – it can't be "
+                                                               "linked into itself. Use Append instead.")
+                return
+            import shutil
+            tmp = os.path.join(tempfile.gettempdir(), "qtshell_append_" + os.path.basename(path))
+            try:
+                shutil.copy2(path, tmp)
+            except Exception as ex:
+                QtWidgets.QMessageBox.warning(self, title, f"Cannot read the saved file:\n{ex}")
+                return
+            src = tmp
+            self.statusBar().showMessage("Appending from the saved version of the open file.", 6000)
         try:
-            with bpy.data.libraries.load(path) as (data_from, _data_to):
+            self._append_from(src, path, link, title)
+        finally:
+            if tmp is not None:
+                try:
+                    os.remove(tmp)
+                except Exception:
+                    pass
+
+    def _append_from(self, src, path, link, title):
+        try:
+            with bpy.data.libraries.load(src) as (data_from, _data_to):
                 cats = {a: list(getattr(data_from, a)) for a in dir(data_from)
                         if not a.startswith("_") and isinstance(getattr(data_from, a), list)
                         and getattr(data_from, a)}
         except Exception as ex:
-            QtWidgets.QMessageBox.warning(self, "Error", str(ex))
+            QtWidgets.QMessageBox.warning(self, title, str(ex))
             return
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle(os.path.basename(path))
@@ -1377,18 +1407,40 @@ class MainWindow(QtWidgets.QMainWindow):
         names = [i.text() for i in lst.selectedItems()]
         if not names:
             return
-        with bpy.data.libraries.load(path, link=link) as (_df, data_to):
-            setattr(data_to, attr, names)
+        try:
+            with bpy.data.libraries.load(src, link=link) as (_df, data_to):
+                setattr(data_to, attr, names)
+        except Exception as ex:
+            QtWidgets.QMessageBox.warning(self, title, str(ex))
+            return
         ctx = bpy.context
         target = ctx.view_layer.active_layer_collection.collection
+        new_obs = []
         for item in getattr(data_to, attr):
             if item is None:
                 continue
-            if attr == "objects":
-                target.objects.link(item)
-            elif attr == "collections":
-                ctx.scene.collection.children.link(item)
-        bridge.undo_push("Append")
+            try:
+                if attr == "objects":
+                    target.objects.link(item)
+                    new_obs.append(item)
+                elif attr == "collections":
+                    ctx.scene.collection.children.link(item)
+                    new_obs.extend(item.all_objects)
+            except Exception as ex:
+                bridge.log(f"{title}: {item.name}: {ex}", "WARNING")
+        # like Blender: the appended objects end up selected
+        if new_obs:
+            for o in ctx.view_layer.objects:
+                try:
+                    o.select_set(o in new_obs)
+                except RuntimeError:
+                    pass
+            act = next((o for o in new_obs if o.name in ctx.view_layer.objects), None)
+            if act is not None:
+                ctx.view_layer.objects.active = act
+        bridge.undo_push(title)
+        n = len([i for i in getattr(data_to, attr) if i is not None])
+        self.statusBar().showMessage(f"{title}: {n} {attr} from {os.path.basename(path)}", 5000)
 
     # ------------------------------------------------------------ render
     def render_image(self, animation=False):
