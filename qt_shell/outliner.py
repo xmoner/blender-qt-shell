@@ -1384,6 +1384,8 @@ class Outliner(QtWidgets.QWidget):
         if ctx.mode != "OBJECT":
             target = self._key_object(cur_key)
             in_mode = {o.name for o in ctx.view_layer.objects if o.mode != "OBJECT"}
+            if ctx.mode == "EDIT_MESH" and self._multi_edit(keys, target, in_mode):
+                return
             if target is None or target in in_mode:
                 if ctx.mode == "POSE" and any(k[0] == "BONE" for k in keys):
                     self._select_bones(keys, cur_key)
@@ -1442,6 +1444,34 @@ class Outliner(QtWidgets.QWidget):
         if key[0] in ("COLLECTION", "LAZY", "IDTYPE") or len(key) < 2:
             return None
         return key[1] if isinstance(key[1], str) else None
+
+    def _multi_edit(self, keys, target, in_mode):
+        """Edit Mode + several mesh rows selected (Ctrl / Shift click): edit them all together
+        (Blender's multi-object editing – the UV editor shows the UVs of all of them)."""
+        if not keys or any(k[0] != "OBJECT" for k in keys):
+            return False
+        obs = [bpy.data.objects.get(k[1]) for k in keys]
+        if any(o is None or o.type != "MESH" for o in obs):
+            return False
+        wanted = {o.name for o in obs}
+        if wanted == in_mode or not (len(wanted) > 1 or wanted < in_mode):
+            return False
+        locked = [o for o in obs if self._lock_reason(o)]
+        if locked:
+            self._report_unselectable(locked)
+            return True
+        vl = bpy.context.view_layer
+        bridge.run_op("object.mode_set", {"mode": "OBJECT"})
+        for o in vl.objects:
+            try:
+                o.select_set(o.name in wanted)
+            except RuntimeError:
+                pass
+        act = bpy.data.objects.get(target) if target in wanted else obs[0]
+        vl.objects.active = act
+        bridge.run_op("object.mode_set", {"mode": "EDIT"})
+        bridge.undo_push("Outliner Select")
+        return True
 
     @staticmethod
     def _lock_reason(o):

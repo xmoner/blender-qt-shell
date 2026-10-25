@@ -100,15 +100,10 @@ def texture():
 
 
 def objects():
-    """Meshes in Edit Mode, else the active mesh."""
-    ctx = bpy.context
+    """Meshes in Edit Mode, else the selected meshes (+ the active one)."""
     try:
-        vl = ctx.view_layer
-        obs = [o for o in vl.objects if o.type == "MESH" and o.mode == "EDIT"]
-        if not obs:
-            act = vl.objects.active
-            obs = [act] if act is not None and act.type == "MESH" else []
-        return [o for o in obs if o.visible_get()]
+        from .uv_editor import uv_objects          # the same objects the UV editor shows
+        return [o for o in uv_objects() if o.visible_get()]
     except Exception:
         return []
 

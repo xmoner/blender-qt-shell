@@ -69,6 +69,26 @@ def _active_mesh():
     return ob
 
 
+def uv_objects():
+    """Meshes the UV editor shows: all meshes in Edit Mode (multi-object editing), else the selected meshes
+    (Maya: the UVs of every selected object) – the active one first."""
+    vl = bpy.context.view_layer
+    act = vl.objects.active
+    obs = [o for o in vl.objects if o.type == "MESH" and o.mode == "EDIT"]
+    if not obs:
+        obs = [o for o in vl.objects if o.type == "MESH" and o.select_get() and o.visible_get()]
+        if act is not None and act.type == "MESH" and act not in obs:
+            obs.append(act)
+    if act is not None and act in obs:
+        obs.remove(act)
+        obs.insert(0, act)
+    return obs
+
+
+def _snap_key():
+    return tuple((o.name, o.mode) for o in uv_objects())
+
+
 def find_image(ob):
     mat = ob.active_material if ob is not None else None
     if mat is None or mat.node_tree is None:
@@ -205,9 +225,14 @@ class Snap:
     """UVs of the shown faces + selection, islands, borders, seams, pins (rebuilt when data changes)."""
 
     def __init__(self):
-        self.ob = _active_mesh()
-        self.bm = None
+        self.obs = uv_objects()
+        self.ob = self.obs[0] if self.obs else None      # the active mesh (image, UV map name)
+        self.key = tuple((o.name, o.mode) for o in self.obs)
+        self.bm = None           # first BMesh / UV layer (kept for "has UVs" checks)
         self.uvl = None
+        self.bms = []            # per object (index = face_obj)
+        self.uvls = []
+        self.face_obj = []       # object index per face
         self.editable = False
         self.sync = bool(bpy.context.scene.tool_settings.use_uv_select_sync)
         self.faces = []          # [(face (BMFace|MeshPolygon index), [uv Vector]), …]
@@ -224,17 +249,36 @@ class Snap:
         self.areauv = []
         if self.ob is None:
             return
-        if self.ob.mode == "EDIT":
-            self._from_bmesh()
-        else:
-            self._from_mesh()
+        edit = self.ob.mode == "EDIT"
+        for oi, ob in enumerate(self.obs):
+            if edit:
+                self._from_bmesh(oi, ob)
+            else:
+                self._from_mesh(oi, ob)
+        self.bm = next((b for b in self.bms if b is not None), None)
+        self.uvl = next((u for u in self.uvls if u is not None), None)
+        self._topology()
 
-    def _from_bmesh(self):
-        ob = self.ob
+    # --- per face corner access (each object has its own BMesh and UV layer)
+    def uvl_of(self, fi):
+        return self.uvls[self.face_obj[fi]]
+
+    def corner_key(self, fi, ci):
+        """(object index, face index, corner) – stable across BMesh rebuilds."""
+        return (self.face_obj[fi], self.faces[fi][0].index, ci)
+
+    def update_meshes(self):
+        for o in self.obs:
+            try:
+                bmesh.update_edit_mesh(o.data, loop_triangles=False, destructive=False)
+            except Exception:
+                pass
+
+    def _from_bmesh(self, oi, ob):
         bm = bmesh.from_edit_mesh(ob.data)
-        self.bm = bm
         uvl = bm.loops.layers.uv.active
-        self.uvl = uvl
+        self.bms.append(bm)
+        self.uvls.append(uvl)
         self.editable = True
         if uvl is None:
             return
@@ -249,6 +293,7 @@ class Snap:
         for f in faces:
             ls = list(f.loops)
             self.faces.append((f, [l[uvl].uv.copy() for l in ls]))
+            self.face_obj.append(oi)
             self.loops.append(ls)
             if not uv_flags:
                 self.face_sel.append(f.select)
@@ -261,12 +306,12 @@ class Snap:
             self.pins.append([l[uvl].pin_uv for l in ls])
             self.seam.append([l.edge.seam for l in ls])
             self.area3d.append(f.calc_area() * (mw.median_scale ** 2))
-        self._topology()
 
-    def _from_mesh(self):
-        me = self.ob.data
+    def _from_mesh(self, oi, ob):
+        me = ob.data
         layer = me.uv_layers.active
-        self.uvl = layer
+        self.bms.append(None)
+        self.uvls.append(layer)
         if layer is None:
             return
         uvd = layer.data
@@ -279,14 +324,14 @@ class Snap:
                 continue
             li = list(p.loop_indices)
             self.faces.append((p.index, [Vector(co[i]) for i in li]))
+            self.face_obj.append(oi)
             k = len(li)
             self.face_sel.append(False)
             self.vert_sel.append([False] * k)
             self.edge_sel.append([False] * k)
             self.pins.append([False] * k)
             self.seam.append([False] * k)
-            self.area3d.append(p.area)
-        self._topology()
+            self.area3d.append(p.area * (ob.matrix_world.median_scale ** 2))
 
     def _topology(self):
         """Islands (faces connected by edges with the same UVs on both sides), borders, flipped faces."""
@@ -332,11 +377,12 @@ class Snap:
             self.flipped.append(a < 0)
 
     def _verts(self, fi):
-        if self.loops:
-            return [l.vert.index for l in self.loops[fi]]
-        me = self.ob.data
+        oi = self.face_obj[fi]
+        if self.editable:
+            return [(oi, l.vert.index) for l in self.loops[fi]]
+        me = self.obs[oi].data
         p = me.polygons[self.faces[fi][0]]
-        return list(p.vertices)
+        return [(oi, v) for v in p.vertices]
 
     # --- selection helpers
     def selected_corners(self, mode):
@@ -372,18 +418,19 @@ def _set_attr_sel(elem, name, value, flush=True):
 def write_selection(snap, items, mode, action):
     """items: [(fi, ci)] for VERT / EDGE (corner = edge start), [fi] for FACE / ISLAND.
     action SET / ADD / SUB / TOGGLE."""
-    bm = snap.bm
-    if bm is None:
+    bms = [b for b in snap.bms if b is not None]
+    if not snap.editable or not bms:
         return
     sync = snap.sync
     if action == "SET":
         if sync:
-            for f in bm.faces:
-                f.select_set(False)
-            for e in bm.edges:
-                e.select_set(False)
-            for v in bm.verts:
-                v.select_set(False)
+            for bm in bms:
+                for f in bm.faces:
+                    f.select_set(False)
+                for e in bm.edges:
+                    e.select_set(False)
+                for v in bm.verts:
+                    v.select_set(False)
         else:
             for ls in snap.loops:
                 for l in ls:
@@ -391,14 +438,16 @@ def write_selection(snap, items, mode, action):
                     _set_attr_sel(l, "uv_select_edge", False)
             for f, _u in snap.faces:
                 _set_attr_sel(f, "uv_select", False)
-    uvl = snap.uvl
-    shown = {f.index for f, _u in snap.faces}
+    shown = {(snap.face_obj[i], f.index) for i, (f, _u) in enumerate(snap.faces)}
 
     def sticky(fi, ci):
         """All corners at the same mesh vertex and the same UV (Blender's Shared Location)."""
+        oi = snap.face_obj[fi]
+        uvl = snap.uvls[oi]
         l = snap.loops[fi][ci]
         uv = l[uvl].uv
-        return [ll for ll in l.vert.link_loops if ll.face.index in shown and (ll[uvl].uv - uv).length < 1e-5]
+        return [ll for ll in l.vert.link_loops
+                if (oi, ll.face.index) in shown and (ll[uvl].uv - uv).length < 1e-5]
 
     def state(fi, ci=None):
         if mode in ("FACE", "ISLAND"):
@@ -439,11 +488,12 @@ def write_selection(snap, items, mode, action):
                 for ll in sticky(fi, ci):
                     _set_attr_sel(ll, "uv_select_vert", on)
     if sync:
-        bm.select_flush_mode()
-        try:
-            bm.uv_select_sync_from_mesh()       # Blender 5: the UV selection follows the mesh selection
-        except Exception:
-            pass
+        for bm in bms:
+            bm.select_flush_mode()
+            try:
+                bm.uv_select_sync_from_mesh()   # Blender 5: the UV selection follows the mesh selection
+            except Exception:
+                pass
     else:
         # edges / faces follow their corners (Blender's flush)
         for fi, ls in enumerate(snap.loops):
@@ -457,10 +507,7 @@ def write_selection(snap, items, mode, action):
                 allv = allv and v1
             if mode not in ("FACE", "ISLAND"):
                 _set_attr_sel(snap.faces[fi][0], "uv_select", allv, flush=False)
-    try:
-        bmesh.update_edit_mesh(snap.ob.data, loop_triangles=False, destructive=False)
-    except Exception:
-        pass
+    snap.update_meshes()
 
 
 # ---------------------------------------------------------------- canvas
@@ -530,7 +577,7 @@ class UVCanvas(QtWidgets.QWidget):
         self.update()
 
     def snap(self):
-        if self._snap is None or self._snap.ob is not _active_mesh():
+        if self._snap is None or self._snap.key != _snap_key():
             try:
                 self._snap = Snap()
             except ReferenceError:
@@ -743,6 +790,8 @@ class UVCanvas(QtWidgets.QWidget):
             parts.append(img.name if img is not None else "no texture")
             parts.append(s.uvl.name if hasattr(s.uvl, "name") else "")
             n_sel = len(s.selected_corners(self.mode)) if s.editable else 0
+            if len(s.obs) > 1:
+                parts.append(f"{len(s.obs)} objects")
             parts.append(f"{len(s.faces)} faces · {len(set(s.island))} shells")
             if s.editable:
                 parts.append(f"{n_sel} UVs selected")
@@ -928,17 +977,17 @@ class UVCanvas(QtWidgets.QWidget):
         seen = set()
         for fi, ci in corners:
             l = s.loops[fi][ci]
-            key = (s.faces[fi][0].index, ci)
+            key = s.corner_key(fi, ci)
             if key in seen:
                 continue
             seen.add(key)
             # keep indices, not BMLoop references: the edit BMesh can be rebuilt between mouse
             # events (viewport redraw), the old references then write into a dead copy
-            pts.append((key, l[uvl].uv.copy()))
+            pts.append((key, l[s.uvl_of(fi)].uv.copy()))
         lo = Vector((min(uv.x for _l, uv in pts), min(uv.y for _l, uv in pts)))
         hi = Vector((max(uv.x for _l, uv in pts), max(uv.y for _l, uv in pts)))
         pivot = (lo + hi) / 2
-        self._modal = {"kind": kind, "pts": pts, "pivot": pivot, "uvl": uvl, "ob": s.ob,
+        self._modal = {"kind": kind, "pts": pts, "pivot": pivot, "uvl": uvl, "obs": list(s.obs),
                        "start": QtCore.QPointF(start) if start is not None else
                        QtCore.QPointF(self.mapFromGlobal(QtGui.QCursor.pos())), "axis": None,
                        "value": None, "drag": drag}
@@ -1027,17 +1076,20 @@ class UVCanvas(QtWidgets.QWidget):
 
     def _write(self, pairs):
         m = self._modal
+        meshes = {}
         try:
-            me = m["ob"].data
-            bm = bmesh.from_edit_mesh(me)
-            uvl = bm.loops.layers.uv.active
-            if uvl is None:
-                return
-            bm.faces.ensure_lookup_table()
-            faces = bm.faces
-            for (fidx, ci), uv in pairs:
-                faces[fidx].loops[ci][uvl].uv = uv
-            bmesh.update_edit_mesh(me, loop_triangles=False, destructive=False)
+            for (oi, fidx, ci), uv in pairs:
+                ent = meshes.get(oi)
+                if ent is None:
+                    me = m["obs"][oi].data
+                    bm = bmesh.from_edit_mesh(me)
+                    bm.faces.ensure_lookup_table()
+                    ent = meshes[oi] = (me, bm.faces, bm.loops.layers.uv.active)
+                _me, faces, uvl = ent
+                if uvl is not None:
+                    faces[fidx].loops[ci][uvl].uv = uv
+            for me, _f, _u in meshes.values():
+                bmesh.update_edit_mesh(me, loop_triangles=False, destructive=False)
         except (ReferenceError, IndexError, ValueError):
             pass
 
@@ -1601,9 +1653,10 @@ class UVEditor(QtWidgets.QWidget):
             ob.data.uv_layers.new()
             bridge.undo_push("Add UV Map")
         else:
-            idx = ob.data.uv_layers.find(data)
-            if idx >= 0:
-                ob.data.uv_layers.active_index = idx
+            for o in uv_objects() or [ob]:        # every shown object with a map of that name
+                idx = o.data.uv_layers.find(data)
+                if idx >= 0:
+                    o.data.uv_layers.active_index = idx
         self._data_changed()
 
     def _image_chosen(self, i):
@@ -1903,11 +1956,12 @@ class UVEditor(QtWidgets.QWidget):
         if ob.mode != "EDIT":
             ensure_edit(select_all=True)
         else:
-            bm = bmesh.from_edit_mesh(ob.data)
-            if not any(f.select for f in bm.faces):
+            edit = [o for o in uv_objects() if o.mode == "EDIT"]
+            if not any(f.select for o in edit for f in bmesh.from_edit_mesh(o.data).faces):
                 bridge.run_op("mesh.select_all", {"action": "SELECT"})
-        if not ob.data.uv_layers:
-            ob.data.uv_layers.new()
+        for o in uv_objects():
+            if not o.data.uv_layers:
+                o.data.uv_layers.new()
         bridge.run_op(idname, props or {})
         self.canvas.invalidate()
         self._sync_toolbar()
@@ -1927,23 +1981,22 @@ class UVEditor(QtWidgets.QWidget):
             return None, []
         seen, out = set(), []
         for fi, ci in s.selected_corners(self.mode):
-            l = s.loops[fi][ci]
-            if id(l) not in seen:
-                seen.add(id(l))
-                out.append(l)
+            k = s.corner_key(fi, ci)
+            if k not in seen:
+                seen.add(k)
+                out.append((s.loops[fi][ci], s.uvl_of(fi)))
         if not out:
             self.canvas.status.emit("No UVs are selected.")
         return s, out
 
     def _apply(self, s, loops, fn, name):
-        uvl = s.uvl
         if not loops:
             return
-        uvs = [l[uvl].uv.copy() for l in loops]
+        uvs = [l[uvl].uv.copy() for l, uvl in loops]
         new = fn(uvs)
-        for l, uv in zip(loops, new):
+        for (l, uvl), uv in zip(loops, new):
             l[uvl].uv = uv
-        bmesh.update_edit_mesh(s.ob.data, loop_triangles=False, destructive=False)
+        s.update_meshes()
         bridge.undo_push(name)
         self.canvas.invalidate()
         self._sync_mesh_views()
@@ -2038,7 +2091,6 @@ class UVEditor(QtWidgets.QWidget):
         if not faces:
             self.canvas.status.emit("No UVs are selected.")
             return
-        uvl = s.uvl
         size = self._texture_size()
         target = self.td.value()
         by_island = {}
@@ -2052,13 +2104,14 @@ class UVEditor(QtWidgets.QWidget):
                 continue
             cur = math.sqrt(auv / a3) * size
             k = target / cur
-            loops = {id(l): l for fi in all_faces for l in s.loops[fi]}.values()
-            uvs = [l[uvl].uv.copy() for l in loops]
+            loops = list({s.corner_key(fi, ci): (l, s.uvl_of(fi))
+                          for fi in all_faces for ci, l in enumerate(s.loops[fi])}.values())
+            uvs = [l[uvl].uv.copy() for l, uvl in loops]
             lo, hi = self._bounds(uvs)
             c = (lo + hi) / 2
-            for l, u in zip(loops, uvs):
+            for (l, uvl), u in zip(loops, uvs):
                 l[uvl].uv = c + (u - c) * k
-        bmesh.update_edit_mesh(s.ob.data, loop_triangles=False, destructive=False)
+        s.update_meshes()
         bridge.undo_push("Set Texel Density")
         self.canvas.invalidate()
         self._sync_mesh_views()
