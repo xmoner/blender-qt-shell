@@ -205,7 +205,7 @@ add("BRUSH_DATA BRUSHES_ALL", f'<path {_s()} d="M10.5 2.5 L13.5 5.5 L7 12 L4 9 Z
 M = MO
 add("MOD_ARRAY", f'<rect x="1.5" y="5.5" width="4" height="5" {_s(M)}/><rect x="6" y="5.5" width="4" height="5" {_s(M)}/>'
     f'<rect x="10.5" y="5.5" width="4" height="5" {_s(M)} opacity=".55"/>')
-add("MOD_BEVEL", f'<path {_s(M)} d="M2 14 V7 L7 2 H14"/><path {_s(M)} d="M2 7 L7 2" stroke-width="2.2"/>')
+add("MOD_BEVEL", f'<path {_s(M)} d="M2 14 V7 L7 2 H14"/><path {_s(M, 2.2)} d="M2 7 L7 2"/>')
 add("MOD_BOOLEAN", f'<rect x="2" y="2" width="8" height="8" {_s(M)}/><circle cx="10" cy="10" r="4.2" {_s(M)}/>')
 add("MOD_MIRROR", f'<path {_s(M)} d="M8 1.5 V14.5" stroke-dasharray="1.6 1.4"/><path fill="{M}" d="M6.5 4 L2 8 L6.5 12 Z"/>'
     f'<path {_s(M)} d="M9.5 4 L14 8 L9.5 12 Z"/>')
