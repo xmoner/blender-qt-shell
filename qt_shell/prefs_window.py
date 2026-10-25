@@ -43,7 +43,7 @@ def _hint(parent_lay, text, parent):
 
 
 class QtPreferences(QtWidgets.QDialog):
-    PAGES = ("Interface", "Window", "Viewport", "Shortcuts", "Text Editor", "Scripts", "System")
+    PAGES = ("Interface", "Window", "Viewport", "Shelf", "Shortcuts", "Text Editor", "Scripts", "System")
 
     def __init__(self, win):
         super().__init__(win)
@@ -62,7 +62,8 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addWidget(self.nav)
         lay.addWidget(self.stack, 1)
         self._builders = {"Interface": self._page_interface, "Window": self._page_window,
-                          "Viewport": self._page_viewport, "Shortcuts": self._page_shortcuts,
+                          "Viewport": self._page_viewport, "Shelf": self._page_shelf,
+                          "Shortcuts": self._page_shortcuts,
                           "Text Editor": self._page_text,
                           "Scripts": self._page_scripts, "System": self._page_system}
         for name in self.PAGES:
@@ -287,6 +288,78 @@ class QtPreferences(QtWidgets.QDialog):
                                  "Circle, Lasso · Space Cursor · G Move · R Rotate · S Scale – again: Scale Cage · "
                                  "T Transform · D Annotate · M Measure · A Add). Hold or right click a toolbar button with a small triangle for its "
                                  "variants."), page)
+
+    def _page_shelf(self, page, lay):
+        from . import shelf, pytips
+        st = shelf.style()
+        _section(lay, "Icons", page)
+        icons = self._check(page, lay, "Show icons", st["show_icons"], lambda on: self._shelf_style(show_icons=on),
+                            "Off: the buttons show only their names")
+        pytips.tag(icons, "from qt_shell import shelf; shelf.set_style(show_icons=True)")
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Icon size", page))
+        isz = QtWidgets.QSpinBox(page)
+        isz.setRange(12, 96)
+        isz.setSingleStep(2)
+        isz.setSuffix(" px")
+        isz.setValue(st["icon_size"])
+        isz.setToolTip("Size of the shelf button icons (default 22 px)")
+        isz.valueChanged.connect(lambda v: self._shelf_style(icon_size=v))
+        pytips.tag(isz, "from qt_shell import shelf; shelf.set_style(icon_size=32)")
+        row.addWidget(isz)
+        row.addStretch(1)
+        lay.addLayout(row)
+        _section(lay, "Names under the icons", page)
+        labels = self._check(page, lay, "Show names", st["show_labels"],
+                             lambda on: self._shelf_style(show_labels=on),
+                             "Off: icons only (the name stays in the tooltip)")
+        pytips.tag(labels, "from qt_shell import shelf; shelf.set_style(show_labels=False)")
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Name size", page))
+        lsz = QtWidgets.QSpinBox(page)
+        lsz.setRange(6, 24)
+        lsz.setSuffix(" px")
+        lsz.setValue(st["label_size"])
+        lsz.setToolTip("Font size of the names under the icons (default 10 px)")
+        lsz.valueChanged.connect(lambda v: self._shelf_style(label_size=v))
+        pytips.tag(lsz, "from qt_shell import shelf; shelf.set_style(label_size=12)")
+        row.addWidget(lsz)
+        row.addStretch(1)
+        lay.addLayout(row)
+        reset = QtWidgets.QPushButton("Reset Shelf Look", page)
+        reset.setToolTip("Icons 22 px and names 10 px, both shown")
+        reset.setSizePolicy(QtWidgets.QSizePolicy.Maximum, QtWidgets.QSizePolicy.Fixed)
+
+        def do_reset():
+            d = shelf.STYLE_DEFAULTS
+            for w, v in ((icons, d["show_icons"]), (labels, d["show_labels"])):
+                w.blockSignals(True)
+                w.setChecked(v)
+                w.blockSignals(False)
+            for w, v in ((isz, d["icon_size"]), (lsz, d["label_size"])):
+                w.blockSignals(True)
+                w.setValue(v)
+                w.blockSignals(False)
+            self._shelf_style(**d)
+            sync()
+        reset.clicked.connect(do_reset)
+        lay.addWidget(reset)
+
+        def sync():
+            isz.setEnabled(icons.isChecked())
+            lsz.setEnabled(labels.isChecked())
+        icons.toggled.connect(lambda _on: sync())
+        labels.toggled.connect(lambda _on: sync())
+        sync()
+        _hint(lay, "Changes apply right away. A button without an icon keeps its name even when names are off.",
+              page)
+
+    def _shelf_style(self, **kw):
+        from . import shelf
+        shelf.set_style(**kw)
+        bar = getattr(self.win, "shelf", None)
+        if bar is not None:
+            bar.apply_style()
 
     def _viewport_scale(self, percent):
         self._set_pref("viewport_scale", percent / 100.0)

@@ -71,6 +71,34 @@ def load():
     return data
 
 
+STYLE_DEFAULTS = {"show_icons": True, "icon_size": 22, "show_labels": True, "label_size": 10}
+
+
+def style():
+    """Shelf look (Qt Preferences → Shelf): icons on / size, labels on / size – QSettings shelf/*."""
+    st = QtCore.QSettings("QtShell", "QtShell")
+    out = {}
+    for k, d in STYLE_DEFAULTS.items():
+        v = st.value(f"shelf/{k}", d)
+        if isinstance(d, bool):
+            out[k] = v in (True, "true", "1", 1)
+        else:
+            try:
+                out[k] = int(v)
+            except (TypeError, ValueError):
+                out[k] = d
+    out["icon_size"] = max(12, min(96, out["icon_size"]))
+    out["label_size"] = max(6, min(24, out["label_size"]))
+    return out
+
+
+def set_style(**kw):
+    st = QtCore.QSettings("QtShell", "QtShell")
+    for k, v in kw.items():
+        if k in STYLE_DEFAULTS:
+            st.setValue(f"shelf/{k}", ("true" if v else "false") if isinstance(STYLE_DEFAULTS[k], bool) else int(v))
+
+
 def button_icon(spec):
     """QIcon for a button's icon field: "bl:NAME" (Blender icon) or an image file; None otherwise."""
     if not spec:
@@ -317,27 +345,48 @@ class ShelfBar(QtWidgets.QWidget):
             if w is not None:
                 w.hide()
                 w.deleteLater()
-        size = theme.px(40)
+        st = style()
+        icon_px = theme.px(st["icon_size"])
+        btn_h = 0
         for idx, b in enumerate(self._shelf().get("buttons", [])):
             tb = QtWidgets.QToolButton(self.row_widget)
-            tb.setFixedSize(theme.px(52), size + theme.px(4))
             icon = b.get("icon", "")
             label = b.get("label", "")
-            qicon = button_icon(icon)
+            qicon = button_icon(icon) if st["show_icons"] else None
+            # an emoji / symbol icon is text – shown like an icon when icons are on
+            emoji = icon if st["show_icons"] and icon and button_icon(icon) is None \
+                and not icon.startswith("bl:") and not os.path.isfile(icon) else ""
+            # never an empty button: no icon to show → the label stays
+            show_label = st["show_labels"] or (qicon is None and not emoji)
+            f = tb.font()
+            f.setPixelSize(theme.fs(st["label_size"]))
+            tb.setFont(f)
+            fm = QtGui.QFontMetrics(f)
             if qicon is not None:
                 tb.setIcon(qicon)
-                tb.setIconSize(QtCore.QSize(theme.px(22), theme.px(22)))
+                tb.setIconSize(QtCore.QSize(icon_px, icon_px))
                 tb.setText(label)
-                tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
+                tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon if show_label
+                                      else QtCore.Qt.ToolButtonIconOnly)
+                text_w = fm.horizontalAdvance(label) if show_label else 0
+                h = icon_px + (fm.height() + theme.px(2) if show_label else 0) + theme.px(10)
             else:
-                tb.setText(f"{icon}\n{label}" if icon else label)
+                if emoji and not show_label:
+                    f.setPixelSize(max(theme.fs(8), int(icon_px * 0.8)))
+                    tb.setFont(f)
+                    fm = QtGui.QFontMetrics(f)
+                tb.setText("\n".join(t for t in (emoji, label if show_label else "") if t))
                 tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-            f = tb.font()
-            f.setPixelSize(theme.fs(10))
-            tb.setFont(f)
-            # wide enough for the whole label (no "Su…de"), at least the classic square
-            text_w = max((QtGui.QFontMetrics(f).horizontalAdvance(t) for t in tb.text().split("\n")), default=0)
-            tb.setFixedWidth(max(theme.px(52), text_w + theme.px(26)))
+                text_w = max((fm.horizontalAdvance(t) for t in tb.text().split("\n")), default=0)
+                h = fm.height() * len(tb.text().split("\n")) + theme.px(12)
+                if emoji and show_label:
+                    h = max(h, icon_px + fm.height() + theme.px(12))
+            # wide enough for the whole label (no "Su…de"); QToolButton needs ~26 px of margins
+            w = max(icon_px + theme.px(14), (text_w + theme.px(26)) if text_w else 0,
+                    theme.px(52) if show_label else 0)
+            h = max(h, theme.px(24))
+            tb.setFixedSize(w, h)
+            btn_h = max(btn_h, h)
             tip = b.get("tooltip") or label
             tb.setToolTip(f"<b>{label}</b><br>{tip}<br><i>Right click: edit, duplicate, delete…</i>")
             if b.get("file"):
@@ -356,6 +405,12 @@ class ShelfBar(QtWidgets.QWidget):
             hint.setProperty("dim", True)
             self.row.addWidget(hint)
         self.row.addStretch(1)
+        # the row grows / shrinks with the icon and label size (+ room for the horizontal scroll bar)
+        self.scroll.setFixedHeight(max(btn_h, theme.px(28)) + theme.px(4) + theme.px(14))
+
+    def apply_style(self):
+        """Qt Preferences → Shelf changed: rebuild the buttons with the new sizes."""
+        self._fill_buttons()
 
     # --- actions
     def _run(self, i):
