@@ -99,14 +99,21 @@ def set_style(**kw):
             st.setValue(f"shelf/{k}", ("true" if v else "false") if isinstance(STYLE_DEFAULTS[k], bool) else int(v))
 
 
-def button_icon(spec):
+def button_icon(spec, px=None):
     """QIcon for a button's icon field: "bl:NAME" (Blender icon) or an image file; None otherwise."""
     if not spec:
         return None
     if spec.startswith("bl:"):
         from . import blicons
         name = spec[3:].strip()
-        return blicons.icon(name) if blicons.has(name) else None
+        if not blicons.has(name):
+            return None
+        if px:                                   # sharp at any shelf icon size (blicons' set ends at 48 px)
+            ic = QtGui.QIcon()
+            for k in (1, 2):
+                ic.addPixmap(QtGui.QPixmap.fromImage(blicons._render(name, int(px * k))))
+            return ic
+        return blicons.icon(name)
     if os.path.isfile(spec):
         return QtGui.QIcon(spec)
     return None
@@ -352,7 +359,7 @@ class ShelfBar(QtWidgets.QWidget):
             tb = QtWidgets.QToolButton(self.row_widget)
             icon = b.get("icon", "")
             label = b.get("label", "")
-            qicon = button_icon(icon) if st["show_icons"] else None
+            qicon = button_icon(icon, icon_px) if st["show_icons"] else None
             # an emoji / symbol icon is text – shown like an icon when icons are on
             emoji = icon if st["show_icons"] and icon and button_icon(icon) is None \
                 and not icon.startswith("bl:") and not os.path.isfile(icon) else ""
@@ -364,6 +371,9 @@ class ShelfBar(QtWidgets.QWidget):
             fm = QtGui.QFontMetrics(f)
             if qicon is not None:
                 tb.setIcon(qicon)
+                # the app stylesheet sets qproperty-iconSize on every button when it is polished, which
+                # would undo setIconSize – the button's own stylesheet wins over it
+                tb.setStyleSheet(f"QToolButton {{ qproperty-iconSize: {icon_px}px {icon_px}px; }}")
                 tb.setIconSize(QtCore.QSize(icon_px, icon_px))
                 tb.setText(label)
                 tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon if show_label
