@@ -29,6 +29,8 @@ _MODE_KEYS = {"object": "OBJECT", "edit": "EDIT", "pose": "POSE", "sculpt": "SCU
 
 # names of the axis-aligned views (rotating from them switches to a "User" view)
 _AXIS_VIEWS = ("Front", "Back", "Right", "Left", "Top", "Bottom")
+NAV_SCALE = 0.5   # default resolution factor while orbiting / panning / zooming in Material Preview / Rendered
+NAV_IDLE = 0.2    # seconds after the last navigation step before the sharp frame is drawn
 
 
 def digit_of(ev):
@@ -86,6 +88,9 @@ class Viewport(QtWidgets.QWidget):
         self.cam_offset = [0.0, 0.0]
         # render
         self._off = None
+        self._off_nav = None        # second offscreen for the lower navigation resolution (kept, not re-created)
+        self._nav_t = 0.0           # time of the last orbit / pan / zoom
+        self._lowres = False        # the shown picture was drawn at the navigation resolution
         self._image = None
         self._dirty = True
         self._fps_samples = deque(maxlen=120)   # (time, frame) of each newly shown frame during playback
@@ -313,13 +318,18 @@ class Viewport(QtWidgets.QWidget):
             return
         if getattr(self.hub, "playing", False):
             return   # during playback every frame is drawn by render_now()
+        if (self._lowres and not self._dirty and self._extra_frames <= 0
+                and time.perf_counter() - self._nav_t >= NAV_IDLE):
+            self._dirty = True                  # navigation stopped: one sharp picture
         if self._dirty or self._extra_frames > 0:
             sh = self.shading()
             self._dirty = False
             if self._extra_frames > 0:
                 self._extra_frames -= 1
-            elif sh in ("MATERIAL", "RENDERED"):
-                self._extra_frames = 16 if sh == "MATERIAL" else 64  # progressive refinement
+            elif sh == "RENDERED":
+                # progressive refinement (Material Preview needs none: draw_view3d renders EEVEE as an
+                # image render – all samples in one call, the next calls only repeat the same picture)
+                self._extra_frames = 64
             self.render_frame()
             self.update()
 
@@ -328,31 +338,30 @@ class Viewport(QtWidgets.QWidget):
             self._dirty = True
             return
         scale = getattr(self.prefs, "viewport_scale", 1.0) if self.prefs else 1.0
-        dpr = self.devicePixelRatioF() * scale
-        w = max(2, min(4096, int(self.width() * dpr)))
-        h = max(2, min(4096, int(self.height() * dpr)))
         space, region = self.space()
         if space is None:
             self._failed = "No 3D area found in Blender."
             return
+        nav = self._nav_scale(space)
+        dpr = self.devicePixelRatioF() * scale * nav
+        w = max(2, min(4096, int(self.width() * dpr)))
+        h = max(2, min(4096, int(self.height() * dpr)))
         try:
-            if self._off is None or self._off.width != w or self._off.height != h:
-                if self._off is not None:
-                    self._off.free()
-                self._off = gpu.types.GPUOffScreen(w, h)
+            off = self._offscreen(w, h, nav < 1.0)
             vm, pm = self.matrices(w, h)
             ctx = bpy.context
             # Solid / Wireframe with the Theme background: Blender's picture is transparent and Qt draws the
             # gradient; Background World / Viewport (shading popover) need Blender's own background
             transparent = (space.shading.type in ("SOLID", "WIREFRAME")
                            and getattr(space.shading, "background_type", "THEME") == "THEME")
-            self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent)
+            self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent, off)
             try:
                 from . import uvchecker               # UV editor's Checker map on the mesh (Maya)
-                uvchecker.draw(self._off, vm, pm, space)
+                uvchecker.draw(off, vm, pm, space)
             except Exception as ex:
                 bridge.log(f"UV checker: {ex}", "WARNING")
-            img = self._read_image(w, h, dpr, transparent)
+            img = self._read_image(w, h, dpr, transparent, off)
+            self._lowres = nav < 1.0
             self._image = img
             self._geo_frame = False
             if getattr(self.hub, "playing", False):
@@ -362,10 +371,36 @@ class Viewport(QtWidgets.QWidget):
                     self._fps_samples.append((time.perf_counter(), f))
             self._img_transparent = transparent and self._draw_kwargs.get("draw_background") is False
             self._failed = None
-            if self._modal is None:
+            if self._modal is None and not self._lowres:
                 playcache.store(self, ctx.scene.frame_current, img, self._img_transparent)
         except Exception as ex:
             self._failed = f"Viewport render failed: {ex}"
+
+    def _navigated(self):
+        """Orbit / pan / zoom: Material Preview and Rendered draw at the navigation resolution for a moment."""
+        self._nav_t = time.perf_counter()
+
+    def _nav_scale(self, space):
+        """Resolution factor for this frame: EEVEE / Cycles through draw_view3d are slow (Blender renders
+        them as an image render), so while the view moves they draw smaller; a sharp frame follows."""
+        if time.perf_counter() - self._nav_t >= NAV_IDLE or getattr(self.hub, "playing", False):
+            return 1.0
+        if space.shading.type not in ("MATERIAL", "RENDERED"):
+            return 1.0
+        f = getattr(self.prefs, "nav_scale", NAV_SCALE) if self.prefs else NAV_SCALE
+        return min(max(float(f), 0.1), 1.0)
+
+    def _offscreen(self, w, h, nav=False):
+        """The offscreen for this size; the navigation one is separate so neither is re-created (a new
+        offscreen makes EEVEE set itself up again – slower than the frame it should speed up)."""
+        attr = "_off_nav" if nav else "_off"
+        off = getattr(self, attr)
+        if off is None or off.width != w or off.height != h:
+            if off is not None:
+                off.free()
+            off = gpu.types.GPUOffScreen(w, h)
+            setattr(self, attr, off)
+        return off
 
     def _offscreen_size(self):
         scale = getattr(self.prefs, "viewport_scale", 1.0) if self.prefs else 1.0
@@ -378,9 +413,9 @@ class Viewport(QtWidgets.QWidget):
             self._off = gpu.types.GPUOffScreen(w, h)
         return w, h, dpr
 
-    def _read_image(self, w, h, dpr, transparent):
+    def _read_image(self, w, h, dpr, transparent, off=None):
         """The offscreen's pixels as a QImage."""
-        with self._off.bind():
+        with (off or self._off).bind():
             fb = gpu.state.active_framebuffer_get()
             buf = fb.read_color(0, 0, w, h, 4, 0, "UBYTE")
         try:
@@ -427,7 +462,7 @@ class Viewport(QtWidgets.QWidget):
         self.repaint()
         return True
 
-    def _draw(self, scene, view_layer, space, region, vm, pm, transparent):
+    def _draw(self, scene, view_layer, space, region, vm, pm, transparent, off=None):
         # Blender hides the camera we look through only when its view is a camera view (rv3d.persp) –
         # the hidden 3D view we draw with follows our camera view
         try:
@@ -448,7 +483,7 @@ class Viewport(QtWidgets.QWidget):
         last = None
         for kw in attempts:
             try:
-                self._off.draw_view3d(scene, view_layer, space, region, vm, pm, **kw)
+                (off or self._off).draw_view3d(scene, view_layer, space, region, vm, pm, **kw)
                 self._draw_kwargs = kw
                 return
             except TypeError as ex:
@@ -948,6 +983,7 @@ class Viewport(QtWidgets.QWidget):
         self.request_redraw()
 
     def _orbit(self, dx, dy):
+        self._navigated()
         self.leave_camera()
         if self.view_name.startswith(_AXIS_VIEWS):
             self.view_name = "User Orthographic" if self.ortho else "User Perspective"
@@ -966,6 +1002,7 @@ class Viewport(QtWidgets.QWidget):
         self.update()
 
     def _pan(self, dx, dy):
+        self._navigated()
         if self.camera_view and bpy.context.scene.camera is not None:
             # like Blender: panning in the camera view moves the camera frame, the camera stays
             self.cam_offset[0] += 2 * dx / max(self.width(), 1)
@@ -979,6 +1016,7 @@ class Viewport(QtWidgets.QWidget):
         self.request_redraw()
 
     def _zoom(self, factor):
+        self._navigated()
         if self.camera_view and bpy.context.scene.camera is not None:
             # like Blender: zooming in the camera view makes the camera frame bigger / smaller
             z = min(max(self.cam_zoom / factor, 0.05), 40.0)
@@ -2083,12 +2121,14 @@ class Viewport(QtWidgets.QWidget):
 
     def shutdown(self):
         self._timer.stop()
-        if self._off is not None:
-            try:
-                self._off.free()
-            except Exception:
-                pass
-            self._off = None
+        for attr in ("_off", "_off_nav"):
+            off = getattr(self, attr, None)
+            if off is not None:
+                try:
+                    off.free()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
 
 
 # ---------------------------------------------------------------- several views

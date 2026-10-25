@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Qt Shell – Blender UI in PySide6",
     "author": "Lukas Bilek",
-    "version": (0, 62, 1),
+    "version": (0, 63, 0),
     "blender": (4, 2, 0),
     "location": "F3 → Open Qt Shell / Preferences → Add-ons → Qt Shell",
     "description": "Replaces the Blender UI with a Qt (PySide6) window: viewport, outliner, "
@@ -50,6 +50,10 @@ class QTSHELL_Preferences(bpy.types.AddonPreferences):
     viewport_scale: bpy.props.FloatProperty(
         name="Viewport resolution", default=1.0, min=0.25, max=2.0,
         description="Viewport render resolution multiplier (lower = faster)")
+    nav_scale: bpy.props.FloatProperty(
+        name="Navigation resolution", default=0.5, min=0.1, max=1.0,
+        description="Resolution multiplier while orbiting / panning / zooming in Material Preview and "
+                    "Rendered shading (lower = smoother navigation; a sharp frame follows when the view stops)")
     ui_scale: bpy.props.FloatProperty(
         name="Interface scale", default=1.0, min=0.5, max=3.0, step=5, subtype="FACTOR",
         description="Size of buttons, fields, icons, spacing and text in Qt Shell",
@@ -71,6 +75,7 @@ class QTSHELL_Preferences(bpy.types.AddonPreferences):
         col.prop(self, "auto_start")
         col.prop(self, "hide_blender")
         col.prop(self, "viewport_scale")
+        col.prop(self, "nav_scale")
         col.separator()
         col.label(text="Interface size (also in Qt Shell: Window → Interface Size…)")
         col.prop(self, "ui_scale")

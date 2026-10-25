@@ -247,6 +247,21 @@ class QtPreferences(QtWidgets.QDialog):
         row.addWidget(sp)
         row.addStretch(1)
         lay.addLayout(row)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Navigation resolution", page))
+        sp = QtWidgets.QDoubleSpinBox(page)
+        sp.setRange(10, 100)
+        sp.setSingleStep(10)
+        sp.setDecimals(0)
+        sp.setSuffix(" %")
+        sp.setValue(getattr(p, "nav_scale", 0.5) * 100)
+        sp.setToolTip("Material Preview / Rendered: resolution while orbiting, panning or zooming.\n"
+                      "Lower = smoother navigation; a sharp picture is drawn when the view stops.\n"
+                      "100 % = always full resolution.")
+        sp.valueChanged.connect(lambda v: self._set_pref("nav_scale", v / 100.0))
+        row.addWidget(sp)
+        row.addStretch(1)
+        lay.addLayout(row)
 
         _section(lay, "Layout", page)
         row = QtWidgets.QHBoxLayout()
