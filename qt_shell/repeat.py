@@ -1,4 +1,5 @@
 """Repeat Last (Maya's G, Blender's Shift+R): runs the last action again.
+Repeat Last Command (Shift+G in the Maya set): the same, but skips Move / Rotate / Scale.
 
 Recorded actions: an interactive Move / Rotate / Scale in the 3D view (the same offset / angle / factor
 again, around the current pivot), Blender operators run from Qt Shell's menus, headers, shortcuts and
@@ -6,6 +7,7 @@ tools (bridge.run_op – not view, selection, file or UI operators), and shelf b
 """
 
 _last = None          # (label, fn)
+_last_cmd = None      # the same without the interactive Move / Rotate / Scale (Shift+G)
 _suspend = 0          # > 0 while a recorded action runs its own operators (a shelf button's code)
 
 # operators that are not "commands" worth repeating (navigation, selection, UI, files …)
@@ -23,12 +25,15 @@ def repeatable_op(idname):
     return not any(w in name for w in _SKIP_WORDS)
 
 
-def record(label, fn, force=False):
-    """Remembers fn (no arguments) as the action Repeat Last runs."""
-    global _last
+def record(label, fn, force=False, transform=False):
+    """Remembers fn (no arguments) as the action Repeat Last runs. transform=True: an interactive
+    Move / Rotate / Scale – Repeat Last Command (Shift+G) skips those."""
+    global _last, _last_cmd
     if _suspend and not force:
         return
     _last = (label, fn)
+    if not transform:
+        _last_cmd = (label, fn)
 
 
 class suspended:
@@ -60,17 +65,20 @@ def record_op(idname, props=None, invoke=False):
     record(label, again)
 
 
-def last_label():
-    return _last[0] if _last else None
+def last_label(commands_only=False):
+    e = _last_cmd if commands_only else _last
+    return e[0] if e else None
 
 
-def repeat():
-    """Runs the last recorded action. Returns its label (None when there is nothing to repeat)."""
+def repeat(commands_only=False):
+    """Runs the last recorded action (commands_only: the last one that isn't a Move / Rotate / Scale).
+    Returns its label (None when there is nothing to repeat)."""
     from . import api, bridge
-    if _last is None:
+    entry = _last_cmd if commands_only else _last
+    if entry is None:
         api.status("Repeat Last: nothing to repeat yet.")
         return None
-    label, fn = _last
+    label, fn = entry
     try:
         fn()
     except Exception:

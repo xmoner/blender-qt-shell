@@ -1505,7 +1505,8 @@ class Viewport(QtWidgets.QWidget):
         if confirm and m.get("spec") is not None:
             from . import repeat
             spec = m["spec"]
-            repeat.record(self._spec_label(spec), lambda spec=spec, vp=self: vp.repeat_transform(spec))
+            repeat.record(self._spec_label(spec), lambda spec=spec, vp=self: vp.repeat_transform(spec),
+                          transform=True)
         if not confirm:
             pass
         elif m.get("edit") is not None:
@@ -1932,6 +1933,9 @@ class Viewport(QtWidgets.QWidget):
                 if n:
                     bridge.undo_push("Insert Keyframe")
             self.redraw_scene()
+        elif H("view3d.repeat_last_command"):
+            from . import repeat
+            repeat.repeat(commands_only=True)
         elif H("view3d.repeat_last"):
             from . import repeat
             repeat.repeat()
