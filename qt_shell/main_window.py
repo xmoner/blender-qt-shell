@@ -1168,6 +1168,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if idname == "view3d.view_all":
             vp.frame_all()
             return True
+        if idname == "view3d.view_center_camera":       # View → Frame Camera Bounds
+            if not vp.camera_view and bpy.context.scene.camera is not None:
+                vp.set_view("CAMERA")
+            vp.camera_view_reset()
+            return True
+        if idname == "view3d.zoom_camera_1_to_1":        # View → Zoom Camera 1:1 (frame = render pixels)
+            if vp.camera_view and bpy.context.scene.camera is not None:
+                r = bpy.context.scene.render
+                fw = vp.camera_frame_rect().width() / vp.cam_zoom
+                px = r.resolution_x * r.resolution_percentage / 100 / vp.devicePixelRatioF()
+                vp.cam_zoom = max(0.05, min(40.0, px / max(fw, 1)))
+                vp.request_redraw()
+                vp.update()
+            return True
         if idname in DISCARDING_OPS and bpy.data.is_dirty:
             if not self._confirm_discard():
                 return True

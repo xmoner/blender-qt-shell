@@ -76,6 +76,10 @@ class Viewport(QtWidgets.QWidget):
         self.ortho = False
         self.camera_view = False
         self.view_name = "User Perspective"
+        # camera view (like Blender): zoom of the camera frame (1 = fits the view with a margin) and its
+        # offset in normalized view units – wheel / pan in the camera view change these, not the camera
+        self.cam_zoom = 1.0
+        self.cam_offset = [0.0, 0.0]
         # render
         self._off = None
         self._image = None
@@ -182,8 +186,7 @@ class Viewport(QtWidgets.QWidget):
             cam = scene.camera
             view = cam.matrix_world.normalized().inverted()
             try:
-                proj = cam.calc_matrix_camera(bpy.context.evaluated_depsgraph_get(), x=w, y=h)
-                return view, proj
+                return view, self._camera_projection(cam, w, h)
             except Exception:
                 pass
         rot = self.view_rotation().to_matrix().to_4x4()
@@ -204,6 +207,46 @@ class Viewport(QtWidgets.QWidget):
                            (0, 0, (far + near) / (near - far), 2 * far * near / (near - far)),
                            (0, 0, -1, 0)))
         return cam.inverted(), proj
+
+    CAM_MARGIN = 0.9            # the camera frame at zoom 1 fills 90 % of the view (Blender leaves a margin)
+
+    def camera_frame_ndc(self, w, h):
+        """(scale_x, scale_y, offset_x, offset_y) of the camera frame in the view's normalized coordinates:
+        the render frame (render resolution aspect) fitted into w × h, zoomed and moved."""
+        r = bpy.context.scene.render
+        ra = (r.resolution_x * r.pixel_aspect_x) / max(r.resolution_y * r.pixel_aspect_y, 1e-6)
+        va = w / max(h, 1)
+        z = self.CAM_MARGIN * self.cam_zoom
+        if ra >= va:
+            sx, sy = z, z * va / ra
+        else:
+            sx, sy = z * ra / va, z
+        return sx, sy, self.cam_offset[0], self.cam_offset[1]
+
+    def camera_frame_rect(self, w=None, h=None):
+        """The camera frame in widget coordinates (QRectF)."""
+        w = w or self.width()
+        h = h or self.height()
+        sx, sy, ox, oy = self.camera_frame_ndc(w, h)
+        x0, x1 = (-sx + ox + 1) * 0.5 * w, (sx + ox + 1) * 0.5 * w
+        y0, y1 = (1 - (sy + oy)) * 0.5 * h, (1 - (-sy + oy)) * 0.5 * h
+        return QtCore.QRectF(x0, y0, x1 - x0, y1 - y0)
+
+    def _camera_projection(self, cam, w, h):
+        r = bpy.context.scene.render
+        proj = cam.calc_matrix_camera(bpy.context.evaluated_depsgraph_get(), x=r.resolution_x,
+                                      y=r.resolution_y, scale_x=r.pixel_aspect_x, scale_y=r.pixel_aspect_y)
+        sx, sy, ox, oy = self.camera_frame_ndc(w, h)
+        # clip space: x' = sx·x + ox·w (the frame's normalized coordinates → the view's)
+        S = Matrix(((sx, 0, 0, ox), (0, sy, 0, oy), (0, 0, 1, 0), (0, 0, 0, 1)))
+        return S @ proj
+
+    def camera_view_reset(self):
+        """View → Frame Camera Bounds (Home in the camera view): the frame fits the view again."""
+        self.cam_zoom = 1.0
+        self.cam_offset = [0.0, 0.0]
+        self.request_redraw()
+        self.update()
 
     def project(self, co, mats=None):
         w, h = self.width(), self.height()
@@ -234,6 +277,13 @@ class Viewport(QtWidgets.QWidget):
 
     def pixel_size_at(self, point):
         w, h = self.width(), self.height()
+        if self.camera_view and bpy.context.scene.camera is not None:
+            vm, pm = self.matrices(w, h)
+            fy = pm[1][1] or 1.0
+            if abs(pm[3][3]) > 0.5:                      # orthographic camera
+                return 2 / (fy * max(h, 1))
+            depth = max(-(vm @ point).z, 1e-3)
+            return 2 * depth / (fy * max(h, 1))
         fov_y = self.fov(w, h)
         if self.ortho and not self.camera_view:
             return 2 * self.dist * math.tan(fov_y / 2) / max(h, 1)
@@ -366,6 +416,15 @@ class Viewport(QtWidgets.QWidget):
         return True
 
     def _draw(self, scene, view_layer, space, region, vm, pm, transparent):
+        # Blender hides the camera we look through only when its view is a camera view (rv3d.persp) –
+        # the hidden 3D view we draw with follows our camera view
+        try:
+            rv3d = space.region_3d
+            want = "CAMERA" if self.camera_view and scene.camera is not None else "PERSP"
+            if rv3d.view_perspective != want and (want == "CAMERA" or rv3d.view_perspective == "CAMERA"):
+                rv3d.view_perspective = want
+        except Exception:
+            pass
         attempts = []
         if self._draw_kwargs is not None:
             kw = dict(self._draw_kwargs)
@@ -398,6 +457,8 @@ class Viewport(QtWidgets.QWidget):
             self._paint_grid(p, mats)
         if self._image is not None:
             p.drawImage(r, self._image)
+        if self.camera_view:
+            self._paint_camera_frame(p)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         if self.show_boxes:
             self._paint_selection(p, mats)
@@ -444,6 +505,35 @@ class Viewport(QtWidgets.QWidget):
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
             p.drawRect(QtCore.QRectF(self._box[0], self._box[1]).normalized())
         p.end()
+
+    def _paint_camera_frame(self, p):
+        """Passepartout (camera setting) and the camera frame border, like Blender's camera view."""
+        cam = bpy.context.scene.camera
+        if cam is None:
+            return
+        try:
+            rect = self.camera_frame_rect()
+        except Exception:
+            return
+        full = QtCore.QRectF(self.rect())
+        data = cam.data
+        if getattr(data, "show_passepartout", False) and data.passepartout_alpha > 0:
+            path = QtGui.QPainterPath()
+            path.addRect(full)
+            inner = QtGui.QPainterPath()
+            inner.addRect(rect)
+            p.fillPath(path.subtracted(inner), QtGui.QColor(0, 0, 0, int(255 * data.passepartout_alpha)))
+        try:
+            sp, _r = self.space()
+            show = sp.overlay.show_overlays
+        except Exception:
+            show = True
+        if show:
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 160), 3))
+            p.drawRect(rect)
+            p.setPen(QtGui.QPen(QtGui.QColor("#d8d8d8"), 1))
+            p.drawRect(rect)
 
     def _paint_grid(self, p, mats):
         if self.camera_view:
@@ -814,6 +904,9 @@ class Viewport(QtWidgets.QWidget):
         self.frame_objects(sel or list(bpy.context.visible_objects))
 
     def frame_all(self):
+        if self.camera_view and bpy.context.scene.camera is not None:
+            self.camera_view_reset()             # Home in the camera view: Frame Camera Bounds
+            return
         self.frame_objects(list(bpy.context.visible_objects))
 
     def set_view(self, name):
@@ -861,6 +954,12 @@ class Viewport(QtWidgets.QWidget):
         self.update()
 
     def _pan(self, dx, dy):
+        if self.camera_view and bpy.context.scene.camera is not None:
+            # like Blender: panning in the camera view moves the camera frame, the camera stays
+            self.cam_offset[0] += 2 * dx / max(self.width(), 1)
+            self.cam_offset[1] -= 2 * dy / max(self.height(), 1)
+            self.request_redraw()
+            return
         self.leave_camera()
         right, up, _f = self.view_vectors()
         s = self.pixel_size_at(self.target)
@@ -868,6 +967,14 @@ class Viewport(QtWidgets.QWidget):
         self.request_redraw()
 
     def _zoom(self, factor):
+        if self.camera_view and bpy.context.scene.camera is not None:
+            # like Blender: zooming in the camera view makes the camera frame bigger / smaller
+            z = min(max(self.cam_zoom / factor, 0.05), 40.0)
+            k = z / self.cam_zoom
+            self.cam_zoom = z
+            self.cam_offset = [self.cam_offset[0] * k, self.cam_offset[1] * k]   # around the view centre
+            self.request_redraw()
+            return
         self.leave_camera()
         self.dist = min(max(self.dist * factor, 0.01), 1e5)
         self.request_redraw()
