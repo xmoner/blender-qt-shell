@@ -1155,6 +1155,36 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("window.quad", self.viewports.toggle_quad)
 
     # ------------------------------------------------------------ operator handling
+    @staticmethod
+    def _macro_parts(idname):
+        """(base operator, its property name in the macro, 'G' / 'R' / 'S' / 'N' (= along the normal)) of a
+        transform macro such as
+        mesh.extrude_region_move / mesh.extrude_faces_move / mesh.duplicate_move, else None."""
+        names = bridge.op_rna_props(idname)
+        subs = [n for n in names if "_OT_" in n]
+        trs = [n for n in subs if n.startswith("TRANSFORM_OT_")]
+        bases = [n for n in subs if not n.startswith("TRANSFORM_OT_")]
+        if not trs or not bases:
+            return None
+        mod, name = bases[0].split("_OT_", 1)
+        base = f"{mod.lower()}.{name}"
+        if not bridge.op_exists(base):
+            return None
+        kind = {"TRANSFORM_OT_translate": "G", "TRANSFORM_OT_rotate": "R", "TRANSFORM_OT_resize": "S",
+                "TRANSFORM_OT_shrink_fatten": "N"}.get(trs[0], "G")
+        return base, bases[0], kind
+
+    def _extrude_then_move(self, base, base_props, normal=False, kind="G"):
+        vp = self.viewport
+        res = run_op(base, dict(base_props))
+        if "FINISHED" in res:
+            vp.start_modal(kind)
+            m = vp._modal
+            if m and normal and kind == "G":
+                m["axis"] = "Z"                    # along the normal of the selection (Blender's extrude)
+                vp._set_modal_orient("NORMAL")
+        return True
+
     def special_op(self, idname, props, ctx=None):
         vp = self.viewport
         if idname == "wm.properties_edit":          # Blender's dialog can't open from Qt – our own one
@@ -1168,6 +1198,21 @@ class MainWindow(QtWidgets.QMainWindow):
             if "FINISHED" in res:
                 vp.start_modal("G")
             return True
+        # Blender's extrude menu items (Python operators) invoke a transform macro – Blender's own modal
+        # transform would then run in the hidden 3D view and crash in recalcData_mesh (2026-10-25).
+        # Extrude without moving, then Qt Shell's G along the normal (like Blender's default).
+        extrude = {"view3d.edit_mesh_extrude_move_normal": "mesh.extrude_region",
+                   "view3d.edit_mesh_extrude_move_shrink_fatten": "mesh.extrude_region",
+                   "view3d.edit_mesh_extrude_manifold_normal": "mesh.extrude_region",
+                   "view3d.edit_mesh_extrude_individual_move": "mesh.extrude_faces_indiv"}
+        if idname in extrude:
+            return self._extrude_then_move(extrude[idname], {}, normal=True)
+        # any transform macro ("…_move", "…_shrink_fatten" …): run its first operator, then the Qt transform
+        macro = self._macro_parts(idname)
+        if macro is not None:
+            base, key, tkind = macro
+            sub_props = props.get(key) if isinstance(props.get(key), dict) else {}
+            return self._extrude_then_move(base, sub_props, normal=tkind == "N", kind="G" if tkind == "N" else tkind)
         # "<operator>_move" macros (extrude, duplicate, …): run the operator, then an interactive G
         if idname.endswith("_move") and bridge.op_exists(idname[:-5]):
             mod, name = idname[:-5].split(".", 1)
