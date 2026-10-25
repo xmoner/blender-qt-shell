@@ -3,8 +3,10 @@
 Most tabs are generated from Blender's original Python panels (bl_ui + add-ons)
 via fake_ui → qt_ui. Modifiers and constraints (drawn in C in Blender) have their own Qt version.
 """
+import re
+
 import bpy
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, fake_ui, qt_ui, rna_widgets as rw, theme
 from . import blicons
@@ -490,6 +492,118 @@ class TabColumn(QtWidgets.QWidget):
         return not self.nav.item(i).isHidden()
 
 
+# ---------------------------------------------------------------- search (like Blender's Ctrl+F)
+_HIT_STYLE = "color: #ffb347; font-weight: bold;"
+_HIT_LABEL = "color: #ffb347; font-weight: bold;"
+
+
+def _norm(text):
+    """lower case, '&' removed, doubled letters collapsed (like Help → Search)."""
+    return re.sub(r"(.)\1+", r"\1", (text or "").replace("&", "").lower())
+
+
+def _widget_texts(w):
+    """Texts a person sees on a widget (+ the name in its tooltip for icon-only buttons)."""
+    out = []
+    try:
+        if isinstance(w, QtWidgets.QLabel):
+            out.append(re.sub(r"<[^>]+>", "", w.text()))
+        elif isinstance(w, QtWidgets.QAbstractButton):
+            out.append(w.text())
+        elif isinstance(w, QtWidgets.QComboBox):
+            out.append(w.currentText())
+        elif isinstance(w, QtWidgets.QAbstractSpinBox):
+            out.append(getattr(w, "prefix", lambda: "")())
+            out.append(w.specialValueText())
+        elif isinstance(w, QtWidgets.QLineEdit):
+            out.append(w.placeholderText())
+        else:
+            return out
+        tip = (w.toolTip() or "").strip()
+        if tip:
+            out.append(re.sub(r"<[^>]+>", "", tip.splitlines()[0]))
+    except RuntimeError:
+        pass
+    return [t for t in out if t]
+
+
+class _Search:
+    """Filters the built widgets of a page: panels without a match are hidden, panels with a match are
+    opened (without changing their remembered state) and the matching widgets are highlighted."""
+
+    def __init__(self, text):
+        self.words = [_norm(w) for w in text.split()]
+
+    def match(self, text):
+        t = _norm(text)
+        return bool(self.words) and all(w in t for w in self.words)
+
+    def _own(self, panel):
+        """Widgets that belong to this panel, not to a nested panel."""
+        for d in panel.findChildren(QtWidgets.QWidget):
+            p = d.parentWidget()
+            while p is not None and p is not panel and not isinstance(p, qt_ui.CollapsiblePanel):
+                p = p.parentWidget()
+            if p is panel and not isinstance(d, qt_ui.CollapsiblePanel) and d is not getattr(panel, "btn", None):
+                yield d
+
+    def _nested(self, w):
+        for d in w.findChildren(qt_ui.CollapsiblePanel):
+            p = d.parentWidget()
+            while p is not None and p is not w and not isinstance(p, qt_ui.CollapsiblePanel):
+                p = p.parentWidget()
+            if p is w:
+                yield d
+
+    def _hit(self, d):
+        if not any(self.match(t) for t in _widget_texts(d)):
+            return False
+        # mark only text widgets – a style sheet on spin boxes / combo boxes changes their size and look
+        if isinstance(d, QtWidgets.QLabel):
+            d.setStyleSheet(_HIT_LABEL)
+        elif isinstance(d, (QtWidgets.QCheckBox, QtWidgets.QRadioButton)):
+            d.setStyleSheet(f"{type(d).__name__} {{ {_HIT_LABEL} }}")
+        elif isinstance(d, QtWidgets.QAbstractButton) and d.text():
+            d.setStyleSheet(f"{type(d).__name__} {{ color: #ffb347; }}")
+        return True
+
+    def block(self, w, show_all=False):
+        """Filters one block (a panel or a plain widget); returns the number of matches in it."""
+        if isinstance(w, qt_ui.CollapsiblePanel):
+            title = self.match(w.btn.text())
+            if title:
+                w.btn.setStyleSheet(_HIT_STYLE)
+            hits = sum(1 for d in self._own(w) if self._hit(d))
+            sub = sum(self.block(c, show_all or title) for c in self._nested(w))
+            n = hits + sub + (1 if title else 0)
+            w.setVisible(bool(n) or show_all)
+            if n:
+                w.body.setVisible(True)          # opened for the search only (state unchanged)
+            return n
+        hits = sum(1 for d in list(self._own(w)) + [w] if self._hit(d))
+        hits += sum(self.block(c, show_all) for c in self._nested(w))
+        w.setVisible(bool(hits) or show_all)
+        return hits
+
+    def page(self, page):
+        host = page.widget()
+        if host is None or host.layout() is None:
+            return 0
+        n = 0
+        lay = host.layout()
+        for i in range(lay.count()):
+            w = lay.itemAt(i).widget()
+            if w is not None:
+                n += self.block(w)
+        # panels opened just now (closed ones never had a size) – lay the page out at once
+        for pnl in host.findChildren(qt_ui.CollapsiblePanel):
+            if pnl.layout() is not None:
+                pnl.layout().activate()
+        lay.activate()
+        host.adjustSize()
+        return n
+
+
 class PropertiesEditor(QtWidgets.QWidget):
     def __init__(self, hub):
         super().__init__()
@@ -509,6 +623,27 @@ class PropertiesEditor(QtWidgets.QWidget):
             self.tabs.addTab(page, label, blicons.icon(blicons.TAB_ICONS.get(key, "")))
         self.tabs.setCurrentIndex([k for k, _ in TABS].index("object"))
         self.tabs.currentChanged.connect(lambda _i: self.refresh(force=True))
+        # search (like Blender's Ctrl+F in the Properties editor): text, buttons, property names of all tabs
+        self.search = QtWidgets.QLineEdit(self)
+        self.search.setClearButtonEnabled(True)
+        from . import keymap
+        keymap.tip(self.search, "Search properties, buttons and texts of all tabs ({properties.search}) – "
+                                "panels without a match are hidden, tabs without one are greyed out")
+        keymap.tip(self.search, "Search… ({properties.search})", "setPlaceholderText")
+        self.search.addAction(blicons.icon("VIEWZOOM"), QtWidgets.QLineEdit.LeadingPosition)
+        self.search.textChanged.connect(lambda _t: self._search_timer.start())
+        self.search.installEventFilter(self)
+        self._search_timer = QtCore.QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(250)
+        self._search_timer.timeout.connect(self._run_search)
+        self._search_counts = {}
+        act = QtGui.QAction(self)
+        act.setShortcutContext(QtCore.Qt.WidgetWithChildrenShortcut)
+        act.triggered.connect(lambda: (self.search.setFocus(), self.search.selectAll()))
+        keymap.bind_action(act, "properties.search")
+        self.addAction(act)
+        lay.addWidget(self.search)
         lay.addWidget(self.tabs)
         self._pending = False
         self._throttle = QtCore.QTimer(self)
@@ -523,6 +658,61 @@ class PropertiesEditor(QtWidgets.QWidget):
         hub.undo_done.connect(lambda: self.refresh(force=True))
         hub.mode_changed.connect(lambda _m: self.refresh(force=True))
         self.refresh(force=True)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.search and ev.type() == QtCore.QEvent.KeyPress and ev.key() == QtCore.Qt.Key_Escape:
+            self.search.clear()
+            return True
+        return super().eventFilter(obj, ev)
+
+    def search_text(self):
+        try:
+            return self.search.text().strip()
+        except (AttributeError, RuntimeError):
+            return ""
+
+    def _run_search(self):
+        """Builds every visible tab, filters it and greys out the tabs without a match."""
+        text = self.search_text()
+        keys = [k for k, _ in TABS]
+        try:
+            vis = self._visible_tabs()
+        except Exception:
+            vis = set(keys)
+        if not text:
+            self._search_counts = {}
+            for i, (key, label) in enumerate(TABS):
+                it = self.tabs.nav.item(i)
+                it.setForeground(QtGui.QBrush())
+                it.setToolTip(label)
+            self.refresh(force=True)             # fresh widgets without the search marks
+            return
+        s = _Search(text)
+        counts = {}
+        for key in keys:
+            if key not in vis:
+                continue
+            page = self.pages[key]
+            try:
+                page.refresh(force=True)
+                counts[key] = s.page(page)
+            except Exception as ex:
+                bridge.log(f"Properties search/{key}: {ex}", "WARNING")
+                counts[key] = 0
+        self._search_counts = counts
+        for i, (key, label) in enumerate(TABS):
+            it = self.tabs.nav.item(i)
+            n = counts.get(key, 0)
+            it.setForeground(QtGui.QBrush() if n else QtGui.QBrush(QtGui.QColor("#6a6a6a")))
+            it.setToolTip(f"{label} – {n} match{'es' if n != 1 else ''}" if n else f"{label} – no match")
+        cur = keys[self.tabs.currentIndex()]
+        if not counts.get(cur):
+            best = next((k for k in keys if counts.get(k)), None)
+            if best is not None:
+                self.tabs.nav.blockSignals(True)
+                self.tabs.setCurrentIndex(keys.index(best))
+                self.tabs.stack.setCurrentIndex(keys.index(best))
+                self.tabs.nav.blockSignals(False)
 
     def _changed(self, data, prop):
         self.undo(data, prop)
@@ -587,4 +777,11 @@ class PropertiesEditor(QtWidgets.QWidget):
             for b in getattr(page, "builders", []):
                 b.refresh()
             return
+        old = page.widget()
         page.refresh(force=force)
+        text = self.search_text()
+        if text and page.widget() is not old:        # rebuilt → apply the search again
+            try:
+                _Search(text).page(page)
+            except Exception as ex:
+                bridge.log(f"Properties search: {ex}", "WARNING")

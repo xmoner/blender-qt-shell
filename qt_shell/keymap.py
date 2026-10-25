@@ -179,6 +179,7 @@ MAYA_DEFAULTS = {
 PROFILES = {"BLENDER": "Blender", "MAYA": "Maya"}
 
 # outliner
+_a("properties.search", "Properties", "Search Properties", "Ctrl+F")
 _a("outliner.show_selected", OL, "Show Selected", "F", "Num+.")
 _a("outliner.show_hierarchy", OL, "Show Object Hierarchy", "Home")
 _a("outliner.show_one_level", OL, "Show One Level", "Num++")
