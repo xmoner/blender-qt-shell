@@ -687,6 +687,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
 | 1.5 | 0.34.0 | `set_tool()`, `active_tool()`, `TOOLS` – the 3D viewport's toolbar tools (incl. Annotate, Measure, Add); Render View: `set_tool()`, annotations (`add_annotation`, `annotations`, `clear_annotations`, `undo_annotation`, `set_annotation_style`), `set_overlays`, `set_gizmos`, `set_toolbar`. |
+| 1.8 | 0.58.0 | `run_op(idname, invoke=False, **props)` – a Blender operator run like Qt Shell's menus (3D view context, Qt-handled operators, undo). |
 | 1.7 | 0.53.1 | `uv_editor()` – the UV editor: component mode, Blender UV operators in a UV editor context, projections, unwrap / layout, move / rotate / flip / align / normalize, texel density, display toggles, image. |
 | 1.6 | 0.36.0 | `timeline()` – the Timeline: view range / zoom, play / stop / step, loop mode, preview range, frame rate, seconds, key selection / moving, markers. |
 | 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
@@ -838,3 +839,18 @@ uv.canvas.select_all("SELECT"); uv.canvas.frame_selected()
 ```
 
 The UV editor works on the active mesh in Edit Mode (Tab).
+
+## Operators from a script
+
+`qt_shell.api.run_op(idname, invoke=False, **props)` (API 1.8) runs a Blender operator the way Qt Shell's menus
+do: in a 3D view context, with Qt Shell's own handling where it has one (e.g. `render.render` opens the
+Render View like F12, `transform.translate` starts the interactive move) and an undo step. Shelf buttons can
+also call `bpy.ops` directly – their code runs in a 3D view context.
+
+```python
+import qt_shell
+qt_shell.api.run_op("mesh.primitive_cube_add", size=2)
+qt_shell.api.run_op("render.render", animation=True)
+```
+
+Shelf button icons: an emoji / symbol, an image file, or `bl:NAME` for any Blender icon (`bl:MESH_CUBE`).

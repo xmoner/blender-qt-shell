@@ -40,7 +40,7 @@ __all__ = [
     "active_tool", "set_tool", "TOOLS", "timeline",
 ]
 
-API_VERSION = (1, 7)
+API_VERSION = (1, 8)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -329,6 +329,17 @@ def set_viewport_layout(mode):
         return False
     area.set_layout(mode)
     return True
+
+
+def run_op(idname, invoke=False, **props):
+    """Runs a Blender operator the way Qt Shell's menus do (3D view context, Qt Shell's own handling of
+    e.g. render.render / transform.translate, an undo step). Returns the result set.
+
+        import qt_shell
+        qt_shell.api.run_op("mesh.primitive_cube_add", size=2)
+        qt_shell.api.run_op("render.render")          # opens the Render View like F12"""
+    from . import bridge
+    return bridge.run_op(idname, props, invoke=invoke)
 
 
 def status(text, timeout_ms=4000):

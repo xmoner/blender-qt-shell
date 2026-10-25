@@ -6,6 +6,10 @@
 - Right click a button: Edit… (label, icon, tooltip, code), Duplicate, Move Left / Right, Delete.
 - Right click the tabs / empty space: New Shelf…, Rename Shelf…, Delete Shelf.
 - Stored in Blender's config folder: config/qt_shell/shelves.json.
+- Built-in shelves (Polygons, Modeling, Modifiers, UV, Rigging, Animation, Rendering) come from
+  shelf_presets.py – added once, then they are the user's like any other shelf.
+- Icon: an emoji / symbol, an image file, or "bl:NAME" – a Blender icon (MESH_CUBE, MOD_MIRROR, …).
+- Button code runs in a 3D view context, so bpy.ops work as in Blender's 3D view.
 """
 import copy
 import json
@@ -45,16 +49,39 @@ def _path():
 
 
 def load():
+    data = None
     try:
         with open(_path(), encoding="utf-8") as f:
             data = json.load(f)
-        if isinstance(data, dict) and isinstance(data.get("shelves"), list) and data["shelves"]:
-            return data
+        if not (isinstance(data, dict) and isinstance(data.get("shelves"), list) and data["shelves"]):
+            data = None
     except FileNotFoundError:
         pass
     except Exception:
         bridge.log(f"Shelf: cannot read {_path()}:\n{traceback.format_exc()}", "WARNING")
-    return copy.deepcopy(DEFAULT)
+        return copy.deepcopy(DEFAULT)           # never overwrite a file we couldn't read
+    if data is None:
+        data = copy.deepcopy(DEFAULT)
+    try:
+        from . import shelf_presets
+        if shelf_presets.add_builtin_shelves(data):
+            save(data)
+    except Exception:
+        bridge.log(f"Shelf: built-in shelves:\n{traceback.format_exc()}", "WARNING")
+    return data
+
+
+def button_icon(spec):
+    """QIcon for a button's icon field: "bl:NAME" (Blender icon) or an image file; None otherwise."""
+    if not spec:
+        return None
+    if spec.startswith("bl:"):
+        from . import blicons
+        name = spec[3:].strip()
+        return blicons.icon(name) if blicons.has(name) else None
+    if os.path.isfile(spec):
+        return QtGui.QIcon(spec)
+    return None
 
 
 def save(data):
@@ -86,7 +113,12 @@ def run_button(btn):
     ns = {"__name__": "__main__", "__file__": filename, "bpy": bpy}
     info = {"ns": ns, "handlers": [], "classes": [], "status": "ran", "time": time.time(),
             "filename": filename}
-    ok, output, line = scripts._execute(f"shelf:{label}", src, filename, ns, info)
+    try:
+        with bridge.blender_context():          # bpy.ops behave as in Blender's 3D view
+            ok, output, line = scripts._execute(f"shelf:{label}", src, filename, ns, info)
+    except Exception as ex:                     # no 3D view to override – run as before
+        bridge.log(f"Shelf '{label}': context: {ex}", "WARNING")
+        ok, output, line = scripts._execute(f"shelf:{label}", src, filename, ns, info)
     if output:
         scripts.report(f"\n▶ Shelf: {label}\n", "#8fb3ff")
         scripts.report(output if output.endswith("\n") else output + "\n", "#e5e5e5" if ok else "#ff7070")
@@ -138,7 +170,7 @@ class ButtonDialog(QtWidgets.QDialog):
         form.addRow("Label", self.label)
         icon_row = QtWidgets.QHBoxLayout()
         self.icon = QtWidgets.QLineEdit(self.btn.get("icon", ""), self)
-        self.icon.setPlaceholderText("emoji / symbol (🧊 ◍ ★) or an image file (.png .svg)")
+        self.icon.setPlaceholderText("emoji / symbol (🧊 ◍ ★), bl:MESH_CUBE (Blender icon) or an image file")
         icon_row.addWidget(self.icon, 1)
         browse = QtWidgets.QPushButton("Image…", self)
         browse.clicked.connect(self._browse_icon)
@@ -291,8 +323,9 @@ class ShelfBar(QtWidgets.QWidget):
             tb.setFixedSize(theme.px(52), size + theme.px(4))
             icon = b.get("icon", "")
             label = b.get("label", "")
-            if icon and os.path.isfile(icon):
-                tb.setIcon(QtGui.QIcon(icon))
+            qicon = button_icon(icon)
+            if qicon is not None:
+                tb.setIcon(qicon)
                 tb.setIconSize(QtCore.QSize(theme.px(22), theme.px(22)))
                 tb.setText(label)
                 tb.setToolButtonStyle(QtCore.Qt.ToolButtonTextUnderIcon)
@@ -302,9 +335,11 @@ class ShelfBar(QtWidgets.QWidget):
             f = tb.font()
             f.setPixelSize(theme.fs(10))
             tb.setFont(f)
+            # wide enough for the whole label (no "Su…de"), at least the classic square
+            text_w = max((QtGui.QFontMetrics(f).horizontalAdvance(t) for t in tb.text().split("\n")), default=0)
+            tb.setFixedWidth(max(theme.px(52), text_w + theme.px(26)))
             tip = b.get("tooltip") or label
-            src = b.get("file") or (b.get("command", "").strip().splitlines() or [""])[0]
-            tb.setToolTip(f"{tip}\n{src[:80]}\n(right click: edit, delete…)")
+            tb.setToolTip(f"<b>{label}</b><br>{tip}<br><i>Right click: edit, duplicate, delete…</i>")
             if b.get("file"):
                 pytips.tag(tb, f'exec(open(r"{b["file"]}").read())')
             else:

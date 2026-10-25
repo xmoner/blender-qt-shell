@@ -51,6 +51,35 @@ DISCARDING_OPS = {"wm.open_mainfile", "wm.read_homefile", "wm.revert_mainfile",
                   "wm.recover_last_session", "wm.recover_auto_save", "wm.read_factory_settings"}
 
 
+# icons of the 3D view header menus (View, Select, Add, Object, Mesh, Vertex, Edge, Face, UV …) –
+# matched on the menu's idname, first match wins
+_HEADER_ICONS = [
+    ("_MT_view", "HIDE_OFF"), ("_MT_select", "RESTRICT_SELECT_OFF"), ("_MT_add", "ADD"),
+    ("_MT_mesh_add", "ADD"), ("_MT_armature_add", "ADD"), ("_MT_curve_add", "ADD"),
+    ("_MT_edit_mesh_vertices", "VERTEXSEL"), ("_MT_edit_mesh_edges", "EDGESEL"),
+    ("_MT_edit_mesh_faces", "FACESEL"), ("_MT_uv_map", "UV"), ("_MT_edit_mesh", "EDITMODE_HLT"),
+    ("_MT_object", "OBJECT_DATAMODE"), ("_MT_pose", "POSE_HLT"), ("_MT_edit_armature", "ARMATURE_DATA"),
+    ("_MT_edit_curve_ctrlpoints", "CURVE_BEZCURVE"), ("_MT_edit_curve_segments", "CURVE_BEZCURVE"),
+    ("_MT_edit_curve", "CURVE_DATA"), ("_MT_edit_surface", "SURFACE_DATA"), ("_MT_edit_text", "FONT_DATA"),
+    ("_MT_edit_meta", "META_DATA"), ("_MT_edit_lattice", "LATTICE_DATA"), ("_MT_edit_font", "FONT_DATA"),
+    ("_MT_edit_greasepencil", "GREASEPENCIL"), ("_MT_greasepencil", "GREASEPENCIL"), ("_MT_gpencil", "GREASEPENCIL"),
+    ("_MT_stroke", "STROKE"), ("_MT_weight", "MOD_VERTEX_WEIGHT"), ("_MT_paint_weight", "MOD_VERTEX_WEIGHT"),
+    ("_MT_paint_vertex", "VPAINT_HLT"), ("_MT_paint", "TPAINT_HLT"), ("_MT_brush", "BRUSH_DATA"),
+    ("_MT_sculpt", "SCULPTMODE_HLT"), ("_MT_mask", "MOD_MASK"), ("_MT_face_sets", "FACE_MAPS"),
+    ("_MT_particle", "PARTICLEMODE"), ("_MT_image", "IMAGE_DATA"),
+]
+
+
+def _header_menu_icon(mid):
+    """Blender icon for a 3D view header menu (None when there is no fitting one)."""
+    from . import blicons
+    m = mid.lower()
+    for key, name in _HEADER_ICONS:
+        if key.lower() in m and blicons.has(name):
+            return blicons.icon(name)
+    return None
+
+
 def _mode_menu(kind):
     def resolve():
         mode = bpy.context.mode
@@ -977,6 +1006,11 @@ class MainWindow(QtWidgets.QMainWindow):
             label = text if text else tr(getattr(cls, "bl_label", mid)) if cls else mid
             b = QtWidgets.QToolButton(self.menu_box)
             b.setText(label)
+            ic = _header_menu_icon(mid)
+            if ic is not None:
+                b.setIcon(ic)
+                b.setIconSize(QtCore.QSize(theme.px(14), theme.px(14)))
+                b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
             b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
             b.setAutoRaise(True)
             # View keeps Qt Shell's own menu: Blender's view3d.* operators would move the hidden Blender view
