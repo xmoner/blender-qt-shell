@@ -1204,6 +1204,7 @@ class TextEditor(QtWidgets.QWidget):
         f = m.addMenu("File")
         act(f, "New Text", self.new_text)
         act(f, "Open…", self.open_file)
+        self._fill_recent(f.addMenu("Open Recent"))
         act(f, "Save", self.save, "text.save")
         act(f, "Save As…", self.save_as)
         f.addSeparator()
@@ -1486,20 +1487,85 @@ class TextEditor(QtWidgets.QWidget):
         self.editor.setFocus()
 
     def open_file(self):
-        start = os.path.dirname(bpy.data.filepath) or os.path.expanduser("~")
+        recent = self.recent_files()
+        start = (os.path.dirname(recent[0]) if recent else "") or os.path.dirname(bpy.data.filepath) \
+            or os.path.expanduser("~")
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Open Text", start,
                                                         "Python (*.py);;Text (*.txt);;All files (*)")
         if not path:
             return
+        self.open_path(path)
+
+    def open_path(self, path):
+        """Opens a file in the Text editor – a text already loaded from that file is just shown."""
         self._write_back()
-        try:
-            t = bpy.data.texts.load(path)
-        except Exception as ex:
-            QtWidgets.QMessageBox.warning(self, "Open Text", str(ex))
-            return
+        norm = os.path.normcase(os.path.abspath(path))
+        t = next((x for x in bpy.data.texts
+                  if x.filepath and os.path.normcase(os.path.abspath(bpy.path.abspath(x.filepath))) == norm), None)
+        if t is None:
+            try:
+                t = bpy.data.texts.load(path)
+            except Exception as ex:
+                QtWidgets.QMessageBox.warning(self, "Open Text", str(ex))
+                return None
+        self._add_recent(path)
         self._name = t.name
         self._load()
         self.refresh_list()
+        return t
+
+    # --- recent files (File → Open Recent)
+    RECENT_MAX = 20
+
+    @staticmethod
+    def recent_files():
+        """Text files opened / saved in the Text editor, newest first (shared by all Blender sessions)."""
+        v = QtCore.QSettings("QtShell", "QtShell").value("text_editor/recent", [])
+        if isinstance(v, str):
+            v = [v] if v else []
+        return [str(p) for p in (v or []) if p]
+
+    def _add_recent(self, path):
+        path = os.path.abspath(path)
+        norm = os.path.normcase(path)
+        files = [path] + [p for p in self.recent_files() if os.path.normcase(os.path.abspath(p)) != norm]
+        QtCore.QSettings("QtShell", "QtShell").setValue("text_editor/recent", files[:self.RECENT_MAX])
+
+    def clear_recent(self):
+        QtCore.QSettings("QtShell", "QtShell").setValue("text_editor/recent", [])
+
+    def _fill_recent(self, menu):
+        """Like File → Open Recent of the main window: numbered, newest first, missing files greyed out."""
+        menu.setToolTipsVisible(True)
+        files = self.recent_files()
+        if not files:
+            menu.addAction("No recent files").setEnabled(False)
+        fm = menu.fontMetrics()
+        names = [os.path.basename(p) for p in files]
+        icon = None
+        try:
+            from . import blicons
+            icon = blicons.icon("FILE_SCRIPT") if blicons.has("FILE_SCRIPT") else None
+        except Exception:
+            pass
+        for i, path in enumerate(files):
+            name = names[i]
+            label = name if names.count(name) == 1 else f"{name}  ({os.path.basename(os.path.dirname(path))})"
+            label = fm.elidedText(label, QtCore.Qt.ElideMiddle, theme.px(420))
+            prefix = f"&{i + 1}  " if i < 9 else ("1&0  " if i == 9 else f"{i + 1}  ")
+            a = menu.addAction(prefix + label)
+            a.setToolTip(path)
+            a.setStatusTip(path)
+            if icon is not None:
+                a.setIcon(icon)
+            if not os.path.exists(path):
+                a.setEnabled(False)
+                a.setToolTip(path + "\n(file not found)")
+            a.triggered.connect(lambda _=False, p=path: self.open_path(p))
+        menu.addSeparator()
+        clear = menu.addAction("Clear Recent Files List")
+        clear.setEnabled(bool(files))
+        clear.triggered.connect(self.clear_recent)
 
     def save(self):
         t = self._text()
@@ -1535,6 +1601,7 @@ class TextEditor(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "Save Text", str(ex))
             return False
         self._status(f"Saved {path}")
+        self._add_recent(path)
         return True
 
     def delete_text(self):
