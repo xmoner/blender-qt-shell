@@ -1010,6 +1010,9 @@ class MainWindow(QtWidgets.QMainWindow):
                        f"{label}\t{{view3d.view_{key.lower()}}}", "setText")
         keymap.tip(m.addAction("", lambda: vp().toggle_ortho()),
                    "Perspective / Orthographic\t{view3d.view_persp}", "setText")
+        # camera view (also in the 3D header: View ▸ Cameras / View ▸ Navigation, like Blender)
+        m.addAction("Frame Camera Bounds", lambda: run_op("view3d.view_center_camera"))
+        m.addAction("Zoom Camera 1:1", lambda: run_op("view3d.zoom_camera_1_to_1"))
         m.addSeparator()
         m.addMenu(self._layout_menu(m))
         m.addSeparator()

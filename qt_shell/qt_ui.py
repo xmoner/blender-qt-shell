@@ -622,6 +622,10 @@ def fill_operator_enum_menu(menu, idname, prop, base_props=None, ctx=None):
         act.triggered.connect(lambda _=False, p=props: run_op(idname, p, ctx))
 
 
+# operators Qt Shell runs itself (main_window.special_op) – Blender's poll would test its hidden 3D view
+QT_HANDLED_OPS = {"view3d.view_center_camera", "view3d.zoom_camera_1_to_1"}
+
+
 def fill_menu(menu, node):
     """Fills a QMenu from the recorded tree of a Blender menu."""
     _fill(menu, node, top=True)
@@ -663,7 +667,7 @@ def _fill(menu, node, top=False):
         pytips.tag_op(act, idname, props)
         ctx = f.get("ctx_ptrs")
         act.triggered.connect(lambda _=False: run_op(idname, dict(props), ctx))
-        if not op_poll(idname, ctx):
+        if idname not in QT_HANDLED_OPS and not op_poll(idname, ctx):
             act.setEnabled(False)
     elif k == "operator_enum":
         fill_operator_enum_menu(menu, a["idname"], a["prop"], None, f.get("ctx_ptrs"))
