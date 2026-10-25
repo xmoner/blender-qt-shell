@@ -687,6 +687,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
 | 1.5 | 0.34.0 | `set_tool()`, `active_tool()`, `TOOLS` – the 3D viewport's toolbar tools (incl. Annotate, Measure, Add); Render View: `set_tool()`, annotations (`add_annotation`, `annotations`, `clear_annotations`, `undo_annotation`, `set_annotation_style`), `set_overlays`, `set_gizmos`, `set_toolbar`. |
+| 1.7 | 0.53.1 | `uv_editor()` – the UV editor: component mode, Blender UV operators in a UV editor context, projections, unwrap / layout, move / rotate / flip / align / normalize, texel density, display toggles, image. |
 | 1.6 | 0.36.0 | `timeline()` – the Timeline: view range / zoom, play / stop / step, loop mode, preview range, frame rate, seconds, key selection / moving, markers. |
 | 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
 | 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
@@ -815,3 +816,24 @@ ge.frame_all(); ge.frame_selected()
 Tangents and infinity apply to the selected keys, or to all shown curves when no key is selected.
 Blender's own `bpy.ops.graph.*` operators and `bpy.context.space_data.auto_snap` only work inside a Blender
 Graph Editor area – from a script in Qt Shell `space_data` is the 3D view.
+
+## UV editor from a script
+
+`qt_shell.api.uv_editor()` (API 1.7) returns the UV editor of the Qt Shell window (None when Qt Shell is closed).
+Every button of the UV editor shows its Python line in the tooltip (Shift + middle click copies it).
+
+```python
+import qt_shell
+uv = qt_shell.api.uv_editor()
+uv.set_mode("FACE")                          # VERT, EDGE, FACE, ISLAND (shell)
+uv.tool("uv.pack_islands", {"margin": 0.01}) # any bpy.ops.uv operator, run in a UV editor context
+uv.mesh_tool("uv.smart_project")             # projections on the selected faces (all when none)
+uv.unwrap(); uv.layout_shells()
+uv.move_by(0.1, 0); uv.rotate_by(90); uv.flip(True)   # flip(True) = horizontally (U)
+uv.align("UMIN"); uv.normalize()
+uv.texel_get(); uv.set_texel_density(512)
+uv.set_display("checker", True); uv.set_image("UV Grid")
+uv.canvas.select_all("SELECT"); uv.canvas.frame_selected()
+```
+
+The UV editor works on the active mesh in Edit Mode (Tab).

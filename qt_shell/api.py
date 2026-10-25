@@ -40,7 +40,7 @@ __all__ = [
     "active_tool", "set_tool", "TOOLS", "timeline",
 ]
 
-API_VERSION = (1, 6)
+API_VERSION = (1, 7)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -212,6 +212,22 @@ def graph_editor():
     Tangents / infinity apply to the selected keys, or to all shown curves when no key is selected."""
     w = main_window()
     return getattr(w, "graph_editor", None) if w is not None else None
+
+
+def uv_editor():
+    """The UV editor of the Qt Shell window (None when Qt Shell is not open).
+
+        import qt_shell
+        uv = qt_shell.api.uv_editor()
+        uv.set_mode("FACE")                       # VERT, EDGE, FACE, ISLAND
+        uv.tool("uv.pack_islands", {"margin": 0.01})   # any bpy.ops.uv operator, run in a UV editor context
+        uv.mesh_tool("uv.smart_project")          # projections on the selected faces (all when none)
+        uv.unwrap(); uv.layout_shells()
+        uv.move_by(0.1, 0); uv.rotate_by(90); uv.flip(True); uv.align("UMIN"); uv.normalize()
+        uv.texel_get(); uv.set_texel_density(512); uv.set_display("checker", True)
+        uv.canvas.select_all("SELECT"); uv.canvas.frame_selected()"""
+    w = main_window()
+    return getattr(w, "uv_editor", None) if w is not None else None
 
 
 def timeline():

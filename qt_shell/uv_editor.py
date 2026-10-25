@@ -913,7 +913,8 @@ class UVCanvas(QtWidgets.QWidget):
         self.update()
 
     # --- G / R / S
-    def start_modal(self, kind):
+    def start_modal(self, kind, start=None, drag=False):
+        """G / R / S – drag: started by dragging with the mouse, releasing the button confirms."""
         s = self.snap()
         if s is None or not s.editable or s.uvl is None:
             self.status.emit("UVs can be edited in Edit mode (Tab).")
@@ -927,16 +928,20 @@ class UVCanvas(QtWidgets.QWidget):
         seen = set()
         for fi, ci in corners:
             l = s.loops[fi][ci]
-            if id(l) in seen:
+            key = (s.faces[fi][0].index, ci)
+            if key in seen:
                 continue
-            seen.add(id(l))
-            pts.append((l, l[uvl].uv.copy()))
+            seen.add(key)
+            # keep indices, not BMLoop references: the edit BMesh can be rebuilt between mouse
+            # events (viewport redraw), the old references then write into a dead copy
+            pts.append((key, l[uvl].uv.copy()))
         lo = Vector((min(uv.x for _l, uv in pts), min(uv.y for _l, uv in pts)))
         hi = Vector((max(uv.x for _l, uv in pts), max(uv.y for _l, uv in pts)))
         pivot = (lo + hi) / 2
         self._modal = {"kind": kind, "pts": pts, "pivot": pivot, "uvl": uvl, "ob": s.ob,
-                       "start": QtCore.QPointF(self.mapFromGlobal(QtGui.QCursor.pos())), "axis": None,
-                       "value": None}
+                       "start": QtCore.QPointF(start) if start is not None else
+                       QtCore.QPointF(self.mapFromGlobal(QtGui.QCursor.pos())), "axis": None,
+                       "value": None, "drag": drag}
         self._numeric = ""
         self.grabMouse()
         self.setFocus()
@@ -1020,12 +1025,18 @@ class UVCanvas(QtWidgets.QWidget):
 
     def _write(self, pairs):
         m = self._modal
-        uvl = m["uvl"]
         try:
-            for loop, uv in pairs:
-                loop[uvl].uv = uv
-            bmesh.update_edit_mesh(m["ob"].data, loop_triangles=False, destructive=False)
-        except ReferenceError:
+            me = m["ob"].data
+            bm = bmesh.from_edit_mesh(me)
+            uvl = bm.loops.layers.uv.active
+            if uvl is None:
+                return
+            bm.faces.ensure_lookup_table()
+            faces = bm.faces
+            for (fidx, ci), uv in pairs:
+                faces[fidx].loops[ci][uvl].uv = uv
+            bmesh.update_edit_mesh(me, loop_triangles=False, destructive=False)
+        except (ReferenceError, IndexError, ValueError):
             pass
 
     def _modal_end(self, confirm):
@@ -1064,20 +1075,40 @@ class UVCanvas(QtWidgets.QWidget):
         self.offset += pos - self.to_screen(u, v)
         self.update()
 
+    def _is_selected(self, hit):
+        s = self.snap()
+        kind, item = hit
+        if kind in ("FACE", "ISLAND"):
+            return s.face_sel[item]
+        fi, ci = item
+        return s.edge_sel[fi][ci] if kind == "EDGE" else s.vert_sel[fi][ci]
+
     def mousePressEvent(self, ev):
         self.setFocus()
         if self._modal:
-            self._modal_end(ev.button() == QtCore.Qt.LeftButton)
+            if not self._modal.get("drag"):
+                self._modal_end(ev.button() == QtCore.Qt.LeftButton)
+            elif ev.button() == QtCore.Qt.RightButton:
+                self._modal_end(False)          # right click cancels a drag (Blender)
             return
         alt = bool(ev.modifiers() & QtCore.Qt.AltModifier)
+        self._press_hit = None
         if ev.button() == QtCore.Qt.MiddleButton:
-            self._pan = ev.position()
+            from . import keymap
+            if keymap.nav_scheme() == "MAYA" and not alt:
+                # Maya: middle drag moves the selected UVs (Alt + middle pans)
+                self._mmb_move = ev.position()
+            else:
+                self._pan = ev.position()
         elif ev.button() == QtCore.Qt.RightButton and alt:      # Maya: Alt+RMB zoom
             self._zoom = ev.position()
         elif ev.button() == QtCore.Qt.RightButton:
             self.editor.marking_menu(ev.globalPosition().toPoint(), ev.position())
         elif ev.button() == QtCore.Qt.LeftButton:
             self._press = ev.position()
+            s = self.snap()
+            if s is not None and s.editable and s.uvl is not None:
+                self._press_hit = self.pick(ev.position())      # dragging an element moves it (tweak)
 
     def mouseDoubleClickEvent(self, ev):
         if ev.button() == QtCore.Qt.LeftButton and not self._modal:
@@ -1093,6 +1124,14 @@ class UVCanvas(QtWidgets.QWidget):
         if self._modal:
             self._modal_update(pos)
             return
+        if getattr(self, "_mmb_move", None) is not None:
+            if (pos - self._mmb_move).manhattanLength() > 3:
+                start = self._mmb_move
+                self._mmb_move = None
+                self.start_modal("G", start=start, drag=True)
+                if self._modal:
+                    self._modal_update(pos)
+            return
         if self._pan is not None:
             self.offset += pos - self._pan
             self._pan = pos
@@ -1102,6 +1141,21 @@ class UVCanvas(QtWidgets.QWidget):
             self._zoom_at(self.rect().center().toPointF(), 1.01 ** d)
             self._zoom = pos
         elif self._press is not None and (pos - self._press).manhattanLength() > 5:
+            hit = getattr(self, "_press_hit", None)
+            if hit is not None and self._box is None:
+                # drag on a UV / edge / face / shell: select it (if it isn't) and move the selection
+                mods = QtWidgets.QApplication.keyboardModifiers()
+                if not self._is_selected(hit):
+                    add = bool(mods & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier))
+                    write_selection(self.snap(), self._items(*hit), hit[0], "ADD" if add else "SET")
+                    self._snap = None
+                start = self._press
+                self._press = None
+                self._press_hit = None
+                self.start_modal("G", start=start, drag=True)
+                if self._modal:
+                    self._modal_update(pos)
+                return
             self._box = (self._press, pos)
             self.update()
         else:
@@ -1113,8 +1167,12 @@ class UVCanvas(QtWidgets.QWidget):
             self.update()
 
     def mouseReleaseEvent(self, ev):
+        if self._modal and self._modal.get("drag"):
+            self._modal_end(True)
+            return
         if ev.button() == QtCore.Qt.MiddleButton:
             self._pan = None
+            self._mmb_move = None
             return
         if ev.button() == QtCore.Qt.RightButton:
             self._zoom = None
@@ -1137,6 +1195,7 @@ class UVCanvas(QtWidgets.QWidget):
             else:
                 self.select_at(ev.position(), action)
             self._press = None
+            self._press_hit = None
 
     def keyPressEvent(self, ev):
         k = ev.key()
@@ -1225,6 +1284,41 @@ def _seg_dist(x, y, a, b):
 
 
 # ---------------------------------------------------------------- the UV Toolkit (Maya) panel
+# ---------------------------------------------------------------- Python tooltips
+PY = "qt_shell.api.uv_editor()"
+
+
+class _Val:
+    """An argument read from a toolkit field when the button is clicked (shown as <field> in the tooltip)."""
+
+    def __init__(self, attr, mul=1):
+        self.attr = attr
+        self.mul = mul
+
+    def get(self, editor):
+        return getattr(editor, self.attr).value() * self.mul
+
+    def __repr__(self):
+        return f"-<{self.attr}>" if self.mul == -1 else (f"<{self.attr}>" if self.mul else "0")
+
+
+def _resolve(editor, v):
+    if isinstance(v, _Val):
+        return v.get(editor)
+    if isinstance(v, dict):
+        return {k: _resolve(editor, x) for k, x in v.items()}
+    return v
+
+
+def _pytag(w, code):
+    from . import pytips
+    pytips.tag(w, code)
+
+
+def _args(args):
+    return ", ".join(repr(a) for a in args)
+
+
 class _Section(QtWidgets.QWidget):
     def __init__(self, title, parent, opened=True):
         super().__init__(parent)
@@ -1261,6 +1355,9 @@ class _Section(QtWidgets.QWidget):
         b = QtWidgets.QToolButton(self.body)
         b.setText(text)
         b.setToolTip(tip)
+        if getattr(fn, "py", None):
+            from . import pytips
+            pytips.tag(b, fn.py)
         if icon:
             b.setIcon(_icon(icon))
             b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
@@ -1360,7 +1457,8 @@ class UVEditor(QtWidgets.QWidget):
 
     # --- toolbar
     def _toolbar(self):
-        from . import keymap
+        from . import keymap, pytips
+        self.display_buttons = {}
         bar = QtWidgets.QWidget(self)
         h = QtWidgets.QHBoxLayout(bar)
         h.setContentsMargins(theme.px(4), theme.px(2), theme.px(4), theme.px(2))
@@ -1376,6 +1474,7 @@ class UVEditor(QtWidgets.QWidget):
             keymap.tip(b, f"{label} selection ({{{aid}}})")
             b.setChecked(mode == self.mode)
             b.clicked.connect(lambda _=False, m=mode: self.set_mode(m))
+            pytips.tag(b, f"{PY}.set_mode({mode!r})")
             grp.addButton(b)
             self.mode_buttons[mode] = b
             h.addWidget(b)
@@ -1383,16 +1482,20 @@ class UVEditor(QtWidgets.QWidget):
                                          "UV Sync Selection (Blender): on – the mesh selection is the UV selection and "
                                          "all faces are shown (like Maya); off – the UVs of the selected faces",
                                          None, self._set_sync)
+        pytips.tag(self.sync_btn, "bpy.context.scene.tool_settings.use_uv_select_sync = True")
         h.addSpacing(theme.px(8))
         # UV map and image
         self.uvmap_combo = QtWidgets.QComboBox(bar)
         self.uvmap_combo.setToolTip("UV map (the active one is edited) – “+ New UV Map” adds one")
         self.uvmap_combo.activated.connect(self._uvmap_chosen)
+        pytips.tag(self.uvmap_combo, "bpy.context.object.data.uv_layers.active_index = 0\n"
+                                     "bpy.context.object.data.uv_layers.new(name=\"UVMap.001\")")
         h.addWidget(self.uvmap_combo)
         self.image_combo = QtWidgets.QComboBox(bar)
         self.image_combo.setToolTip("Image shown behind the UVs – Auto = the active material's texture")
         self.image_combo.setMinimumContentsLength(10)
         self.image_combo.activated.connect(self._image_chosen)
+        pytips.tag(self.image_combo, f"{PY}.set_image(\"UV Grid\")   # None = the material's texture")
         h.addWidget(self.image_combo)
         h.addSpacing(theme.px(8))
         # display (Maya's UV editor toolbar)
@@ -1406,12 +1509,15 @@ class UVEditor(QtWidgets.QWidget):
                                                    "green / yellow / red = stretched or squeezed", False),
                 ("borders", None, "Borders", "Thick shell (island) borders", True),
                 ("grid", "MESH_GRID", "Grid", "Grid with labels", True)):
-            self._toggle_btn(bar, h, icon, text, tip, key, None, default)
+            b = self._toggle_btn(bar, h, icon, text, tip, key, None, default)
+            self.display_buttons[key] = b
+            pytips.tag(b, f"{PY}.set_display({key!r}, True)")
         h.addStretch(1)
         fb = QtWidgets.QToolButton(bar)
         fb.setText("Frame")
         keymap.tip(fb, "Frame the selection ({uv.frame_selected}) – 0–1 ({uv.fit})")
         fb.clicked.connect(self.canvas.frame_selected)
+        pytips.tag(fb, f"{PY}.canvas.frame_selected()   # {PY}.canvas.fit() = 0–1")
         h.addWidget(fb)
         tk = QtWidgets.QToolButton(bar)
         tk.setText("UV Toolkit")
@@ -1419,6 +1525,7 @@ class UVEditor(QtWidgets.QWidget):
         tk.setChecked(setting("toolkit", True))
         tk.setToolTip("Show / hide the UV Toolkit (Maya) on the right")
         tk.toggled.connect(self._show_toolkit)
+        pytips.tag(tk, f"{PY}.toolkit.setVisible(True)")
         h.addWidget(tk)
         return bar
 
@@ -1515,36 +1622,37 @@ class UVEditor(QtWidgets.QWidget):
         # Select
         s = _Section("Select", host)
         s.button("Shell", keymap.render("Select the whole shell of the selection – {uv.select_linked} under the "
-                                        "mouse, double click a shell"), lambda: T("uv.select_linked"), cols=3)
-        s.button("Grow", keymap.render("Grow the selection ({uv.select_more})"), lambda: T("uv.select_more"), cols=3)
-        s.button("Shrink", keymap.render("Shrink the selection ({uv.select_less})"), lambda: T("uv.select_less"),
+                                        "mouse, double click a shell"), self._op("uv.select_linked"), cols=3)
+        s.button("Grow", keymap.render("Grow the selection ({uv.select_more})"), self._op("uv.select_more"), cols=3)
+        s.button("Shrink", keymap.render("Shrink the selection ({uv.select_less})"), self._op("uv.select_less"),
                  cols=3)
-        s.button("Overlapping", "Select overlapping UVs", lambda: T("uv.select_overlap"), cols=3)
-        s.button("Flipped", "Select flipped (reversed) UV faces", self.canvas.select_flipped, cols=3)
-        s.button("Pinned", "Select pinned UVs", lambda: T("uv.select_pinned"), cols=3)
+        s.button("Overlapping", "Select overlapping UVs", self._op("uv.select_overlap"), cols=3)
+        s.button("Flipped", "Select flipped (reversed) UV faces", self._call("canvas.select_flipped"), cols=3)
+        s.button("Pinned", "Select pinned UVs", self._op("uv.select_pinned"), cols=3)
         s.button("Invert", keymap.render("Invert the selection ({uv.select_invert})"),
-                 lambda: self.canvas.select_all("INVERT"), cols=3)
+                 self._call("canvas.select_all", "INVERT"), cols=3)
         s.button("Split", "Select Split – the selected faces get their own UVs (detach)",
-                 lambda: T("uv.select_split"), cols=3)
+                 self._op("uv.select_split"), cols=3)
         s.button("Similar", "Select UV islands similar to the selected ones",
-                 lambda: T("uv.select_similar"), cols=3)
+                 self._op("uv.select_similar"), cols=3)
         cv = QtWidgets.QLabel("Convert to:", s.body)
         s.widget(cv, cols=4, span=4)
         for to, txt in (("VERT", "UVs"), ("EDGE", "Edges"), ("FACE", "Faces"), ("ISLAND", "Shell")):
-            s.button(txt, f"Convert the selection to {txt}", lambda _=False, t=to: self.canvas.convert_selection(t),
+            s.button(txt, f"Convert the selection to {txt}", self._call("canvas.convert_selection", to),
                      cols=4)
         v.addWidget(s)
         # Pin
         s = _Section("Pin", host)
         s.button("Pin", keymap.render("Pin the selected UVs ({uv.pin}) – Unfold keeps them in place"),
-                 lambda: T("uv.pin", {"clear": False}), "PINNED", cols=3)
-        s.button("Unpin", keymap.render("Unpin the selected UVs ({uv.unpin})"), lambda: T("uv.pin", {"clear": True}),
+                 self._op("uv.pin", {"clear": False}), "PINNED", cols=3)
+        s.button("Unpin", keymap.render("Unpin the selected UVs ({uv.unpin})"), self._op("uv.pin", {"clear": True}),
                  "UNPINNED", cols=3)
-        s.button("Invert", "Invert the pins of the selected UVs", lambda: T("uv.pin", {"invert": True}), cols=3)
+        s.button("Invert", "Invert the pins of the selected UVs", self._op("uv.pin", {"invert": True}), cols=3)
         v.addWidget(s)
         # Transform
         s = _Section("Transform", host)
         self.step = QtWidgets.QDoubleSpinBox(s.body)
+        _pytag(self.step, f"{PY}.step.setValue(0.1)")
         self.step.setRange(0.0001, 100)
         self.step.setDecimals(4)
         self.step.setSingleStep(0.05)
@@ -1554,39 +1662,41 @@ class UVEditor(QtWidgets.QWidget):
         s.widget(QtWidgets.QLabel("Move", s.body), cols=5)
         for txt, d, tip in (("◀", (-1, 0), "Move left (−U)"), ("▶", (1, 0), "Move right (+U)"),
                             ("▲", (0, 1), "Move up (+V)"), ("▼", (0, -1), "Move down (−V)")):
-            s.button(txt, tip, lambda _=False, d=d: self.move_by(d[0] * self.step.value(), d[1] * self.step.value()),
+            s.button(txt, tip, self._call("move_by", _Val("step", d[0]), _Val("step", d[1])),
                      cols=5)
         s.widget(QtWidgets.QLabel("Step", s.body), cols=5, span=2)
         s.widget(self.step, cols=5, span=3)
         self.angle = QtWidgets.QDoubleSpinBox(s.body)
+        _pytag(self.angle, f"{PY}.angle.setValue(45)")
         self.angle.setRange(-360, 360)
         self.angle.setValue(setting("rotate_angle", 45.0))
         self.angle.setSuffix("°")
         self.angle.valueChanged.connect(lambda val: set_setting("rotate_angle", val))
-        s.button("⟲ 90°", "Rotate 90° counter-clockwise", lambda: self.rotate_by(90), cols=4)
-        s.button("⟳ 90°", "Rotate 90° clockwise", lambda: self.rotate_by(-90), cols=4)
+        s.button("⟲ 90°", "Rotate 90° counter-clockwise", self._call("rotate_by", 90), cols=4)
+        s.button("⟳ 90°", "Rotate 90° clockwise", self._call("rotate_by", -90), cols=4)
         s.widget(self.angle, cols=4)
-        s.button("Rotate", "Rotate by the angle (counter-clockwise)", lambda: self.rotate_by(self.angle.value()),
+        s.button("Rotate", "Rotate by the angle (counter-clockwise)", self._call("rotate_by", _Val("angle")),
                  cols=4)
-        s.button("Flip U", "Flip horizontally (around the selection centre)", lambda: self.flip(True), cols=2)
-        s.button("Flip V", "Flip vertically", lambda: self.flip(False), cols=2)
+        s.button("Flip U", "Flip horizontally (around the selection centre)", self._call("flip", True), cols=2)
+        s.button("Flip V", "Flip vertically", self._call("flip", False), cols=2)
         s.widget(QtWidgets.QLabel("Align", s.body), cols=4, span=4)
         for txt, how, tip in (("U min", "UMIN", "Align to the leftmost UV"), ("U mid", "UMID", "Align to the U centre"),
                               ("U max", "UMAX", "Align to the rightmost UV"), ("V min", "VMIN", "Align to the lowest UV"),
                               ("V mid", "VMID", "Align to the V centre"), ("V max", "VMAX", "Align to the highest UV")):
-            s.button(txt, tip, lambda _=False, how=how: self.align(how), cols=3)
+            s.button(txt, tip, self._call("align", how), cols=3)
         s.button("Straighten", "Straighten the selected UV edges (Blender Align → Straighten)",
-                 lambda: T("uv.align", {"axis": "ALIGN_S"}), cols=2)
+                 self._op("uv.align", {"axis": "ALIGN_S"}), cols=2)
         s.button("Orient Shells", "Rotate shells so their longest edge is horizontal / vertical (Maya Orient)",
-                 lambda: T("uv.align_rotation", {"method": "AUTO"}), cols=2)
-        s.button("Normalize", "Scale the selection to fit the 0–1 tile (keeps the proportions)", self.normalize,
+                 self._op("uv.align_rotation", {"method": "AUTO"}), cols=2)
+        s.button("Normalize", "Scale the selection to fit the 0–1 tile (keeps the proportions)", self._call("normalize"),
                  cols=2)
         s.button("Snap to Pixels", "Snap the selected UVs to the image pixels",
-                 lambda: T("uv.snap_selected", {"target": "PIXELS"}), cols=2)
+                 self._op("uv.snap_selected", {"target": "PIXELS"}), cols=2)
         v.addWidget(s)
         # Create
         s = _Section("Create", host)
         self.unwrap_method = QtWidgets.QComboBox(s.body)
+        _pytag(self.unwrap_method, f"{PY}.unwrap_method.setCurrentIndex(0)   # Angle Based, Conformal, Minimum Stretch")
         for ident, label in (("ANGLE_BASED", "Angle Based"), ("CONFORMAL", "Conformal"),
                              ("MINIMUM_STRETCH", "Minimum Stretch")):
             self.unwrap_method.addItem(label, ident)
@@ -1595,56 +1705,59 @@ class UVEditor(QtWidgets.QWidget):
         self.unwrap_method.currentIndexChanged.connect(
             lambda _i: set_setting("unwrap_method", self.unwrap_method.currentData()))
         s.button("Unwrap", keymap.render("Unwrap the selected faces along the seams ({uv.unwrap}); pinned UVs stay"),
-                 self.unwrap, cols=2)
+                 self._call("unwrap"), cols=2)
         s.widget(self.unwrap_method, cols=2)
-        s.button("Smart UV", "Smart UV Project (automatic, splits by angle)", lambda: self.mesh_tool("uv.smart_project"),
+        s.button("Smart UV", "Smart UV Project (automatic, splits by angle)", self._call("mesh_tool", "uv.smart_project"),
                  cols=2)
-        s.button("Planar / Cube", "Cube Projection", lambda: self.mesh_tool("uv.cube_project"), cols=2)
-        s.button("Cylindrical", "Cylinder Projection", lambda: self.mesh_tool("uv.cylinder_project"), cols=2)
-        s.button("Spherical", "Sphere Projection", lambda: self.mesh_tool("uv.sphere_project"), cols=2)
+        s.button("Planar / Cube", "Cube Projection", self._call("mesh_tool", "uv.cube_project"), cols=2)
+        s.button("Cylindrical", "Cylinder Projection", self._call("mesh_tool", "uv.cylinder_project"), cols=2)
+        s.button("Spherical", "Sphere Projection", self._call("mesh_tool", "uv.sphere_project"), cols=2)
         s.button("Follow Quads", "Follow Active Quads – unwrap quads following the active face",
-                 lambda: self.mesh_tool("uv.follow_active_quads"), cols=2)
+                 self._call("mesh_tool", "uv.follow_active_quads"), cols=2)
         s.button("Lightmap", "Lightmap Pack – every face its own square",
-                 lambda: self.mesh_tool("uv.lightmap_pack"), cols=2)
-        s.button("Reset", "Reset UVs – every face fills the whole tile", lambda: self.mesh_tool("uv.reset"), cols=2)
+                 self._call("mesh_tool", "uv.lightmap_pack"), cols=2)
+        s.button("Reset", "Reset UVs – every face fills the whole tile", self._call("mesh_tool", "uv.reset"), cols=2)
         v.addWidget(s)
         # Cut and Sew
         s = _Section("Cut and Sew", host)
         s.button("Mark Seam", "Mark the selected UV edges as seams (cut here at the next Unwrap)",
-                 lambda: T("uv.mark_seam", {"clear": False}), cols=2)
-        s.button("Clear Seam", "Clear the seams of the selected UV edges", lambda: T("uv.mark_seam", {"clear": True}),
+                 self._op("uv.mark_seam", {"clear": False}), cols=2)
+        s.button("Clear Seam", "Clear the seams of the selected UV edges", self._op("uv.mark_seam", {"clear": True}),
                  cols=2)
-        s.button("Seams from Shells", "Mark seams on all shell borders", lambda: T("uv.seams_from_islands"), cols=2)
-        s.button("Split", "Split the selected faces off their neighbours (Maya Cut)", lambda: T("uv.select_split"),
+        s.button("Seams from Shells", "Mark seams on all shell borders", self._op("uv.seams_from_islands"), cols=2)
+        s.button("Split", "Split the selected faces off their neighbours (Maya Cut)", self._op("uv.select_split"),
                  cols=2)
         s.button("Stitch", keymap.render("Stitch / Sew the selected edges together ({uv.stitch})"),
-                 lambda: T("uv.stitch"), cols=2)
-        s.button("Weld", keymap.render("Merge the selected UVs to their centre ({uv.weld})"), lambda: T("uv.weld"),
+                 self._op("uv.stitch"), cols=2)
+        s.button("Weld", keymap.render("Merge the selected UVs to their centre ({uv.weld})"), self._op("uv.weld"),
                  cols=2)
-        s.button("Merge by Distance", "Merge UVs closer than 0.0001", lambda: T("uv.remove_doubles"), cols=2)
+        s.button("Merge by Distance", "Merge UVs closer than 0.0001", self._op("uv.remove_doubles"), cols=2)
         v.addWidget(s)
         # Unfold / Layout
         s = _Section("Unfold & Layout", host)
         s.button("Unfold", "Unfold the selected faces (pins stay) – Blender Unwrap with the chosen method",
-                 self.unwrap, cols=2)
+                 self._call("unwrap"), cols=2)
         self.iters = QtWidgets.QSpinBox(s.body)
+        _pytag(self.iters, f"{PY}.iters.setValue(50)")
         self.iters.setRange(1, 1000)
         self.iters.setValue(setting("optimize_iterations", 50))
         self.iters.valueChanged.connect(lambda val: set_setting("optimize_iterations", val))
         s.button("Optimize", "Minimize stretch (iterations)",
-                 lambda: T("uv.minimize_stretch", {"iterations": self.iters.value()}), cols=2)
+                 self._op("uv.minimize_stretch", {"iterations": _Val("iters")}), cols=2)
         s.widget(QtWidgets.QLabel("Iterations", s.body), cols=2)
         s.widget(self.iters, cols=2)
         s.button("Average Scale", "Average the shells' scale (same texel density)",
-                 lambda: T("uv.average_islands_scale"), cols=2)
-        s.button("Layout", "Pack the shells into the 0–1 tile (margin, rotate)", self.layout_shells, cols=2)
+                 self._op("uv.average_islands_scale"), cols=2)
+        s.button("Layout", "Pack the shells into the 0–1 tile (margin, rotate)", self._call("layout_shells"), cols=2)
         self.margin = QtWidgets.QDoubleSpinBox(s.body)
+        _pytag(self.margin, f"{PY}.margin.setValue(0.01)")
         self.margin.setRange(0, 0.5)
         self.margin.setDecimals(3)
         self.margin.setSingleStep(0.005)
         self.margin.setValue(setting("pack_margin", 0.01))
         self.margin.valueChanged.connect(lambda val: set_setting("pack_margin", val))
         self.rotate_pack = QtWidgets.QCheckBox("Rotate", s.body)
+        _pytag(self.rotate_pack, f"{PY}.rotate_pack.setChecked(True)")
         self.rotate_pack.setChecked(setting("pack_rotate", True))
         self.rotate_pack.toggled.connect(lambda on: set_setting("pack_rotate", on))
         s.widget(QtWidgets.QLabel("Margin", s.body), cols=3)
@@ -1654,11 +1767,13 @@ class UVEditor(QtWidgets.QWidget):
         # Texel density
         s = _Section("Texel Density", host)
         self.td_size = QtWidgets.QSpinBox(s.body)
+        _pytag(self.td_size, f"{PY}.td_size.setValue(1024)")
         self.td_size.setRange(1, 32768)
         self.td_size.setValue(setting("td_size", 1024))
         self.td_size.setToolTip("Texture size in pixels (the image's own size when an image is shown)")
         self.td_size.valueChanged.connect(lambda val: set_setting("td_size", val))
         self.td = QtWidgets.QDoubleSpinBox(s.body)
+        _pytag(self.td, f"{PY}.set_texel_density(512)")
         self.td.setRange(0.001, 1e6)
         self.td.setDecimals(2)
         self.td.setValue(setting("td_value", 512.0))
@@ -1668,46 +1783,96 @@ class UVEditor(QtWidgets.QWidget):
         s.widget(self.td_size, cols=2)
         s.widget(QtWidgets.QLabel("Density", s.body), cols=2)
         s.widget(self.td, cols=2)
-        s.button("Get", "Texel density of the selection (pixels per metre)", self.texel_get, cols=2)
-        s.button("Set", "Scale every selected shell to this texel density", self.texel_set, cols=2)
+        s.button("Get", "Texel density of the selection (pixels per metre)", self._call("texel_get"), cols=2)
+        s.button("Set", "Scale every selected shell to this texel density", self._call("texel_set"), cols=2)
         v.addWidget(s)
         v.addStretch(1)
         sa.setWidget(host)
         return sa
 
+    # --- callables that carry their Python command (Python tooltips, Shift+MMB copies it)
+    def _op(self, idname, props=None):
+        def fn(*_a):
+            self.tool(idname, _resolve(self, props) if props else None)
+        p = f", {props!r}" if props else ""
+        mod, name = idname.split(".", 1)
+        args = ", ".join(f"{k}={v!r}" for k, v in (props or {}).items())
+        fn.py = f"{PY}.tool({idname!r}{p})\n# = bpy.ops.{mod}.{name}({args}) in a UV editor context"
+        return fn
+
+    def _call(self, name, *args):
+        def fn(*_a):
+            obj = self
+            for part in name.split("."):
+                obj = getattr(obj, part)
+            obj(*[_resolve(self, a) for a in args])
+        fn.py = f"{PY}.{name}({_args(args)})"
+        return fn
+
+    def set_display(self, key, on=True):
+        """Display options: image, dim, checker, shaded, distortion, borders, grid."""
+        set_setting(key, bool(on))
+        b = self.display_buttons.get(key)
+        if b is not None:
+            b.blockSignals(True)
+            b.setChecked(bool(on))
+            b.blockSignals(False)
+        self.canvas.update()
+
+    def set_image(self, name=None):
+        """Image shown behind the UVs – None = the active material's texture."""
+        self._image_name = name
+        self._sync_toolbar()
+        self.canvas.update()
+
+    def set_texel_density(self, value):
+        """Scales every selected shell to value pixels per metre."""
+        self.td.setValue(float(value))
+        self.texel_set()
+
     # --- marking menu (right click)
     def marking_menu(self, gpos, pos):
-        from . import keymap
+        from . import keymap, pytips
         m = QtWidgets.QMenu(self)
+        m.setToolTipsVisible(True)
+
+        def add(menu, text, fn):
+            a = menu.addAction(text, fn)
+            if getattr(fn, "py", None):
+                pytips.tag(a, fn.py)
+            return a
         for mode, label, icon, aid in MODES:
             a = m.addAction(_icon(icon), label + "\t" + keymap.render(f"{{{aid}}}"))
             a.setCheckable(True)
             a.setChecked(mode == self.mode)
             a.triggered.connect(lambda _=False, md=mode: self.set_mode(md))
+            pytips.tag(a, f"{PY}.set_mode({mode!r})")
         m.addSeparator()
-        m.addAction("Select Shell Here", lambda: self.canvas.select_island_at(pos, "ADD"))
+        sh = m.addAction("Select Shell Here", lambda: self.canvas.select_island_at(pos, "ADD"))
+        pytips.tag(sh, f"{PY}.tool('uv.select_linked')   # shell of the selection")
         conv = m.addMenu("Convert Selection")
+        conv.setToolTipsVisible(True)
         for to, txt in (("VERT", "To UVs"), ("EDGE", "To Edges"), ("FACE", "To Faces"), ("ISLAND", "To Shell")):
-            conv.addAction(txt, lambda t=to: self.canvas.convert_selection(t))
+            add(conv, txt, self._call("canvas.convert_selection", to))
         m.addSeparator()
-        m.addAction("Unfold", self.unwrap)
-        m.addAction("Optimize", lambda: self.tool("uv.minimize_stretch", {"iterations": self.iters.value()}))
-        m.addAction("Layout", self.layout_shells)
+        add(m, "Unfold", self._call("unwrap"))
+        add(m, "Optimize", self._op("uv.minimize_stretch", {"iterations": _Val("iters")}))
+        add(m, "Layout", self._call("layout_shells"))
         m.addSeparator()
-        m.addAction("Split (Cut)", lambda: self.tool("uv.select_split"))
-        m.addAction("Stitch (Sew)", lambda: self.tool("uv.stitch"))
-        m.addAction("Weld", lambda: self.tool("uv.weld"))
+        add(m, "Split (Cut)", self._op("uv.select_split"))
+        add(m, "Stitch (Sew)", self._op("uv.stitch"))
+        add(m, "Weld", self._op("uv.weld"))
         m.addSeparator()
-        m.addAction("Pin", lambda: self.tool("uv.pin", {"clear": False}))
-        m.addAction("Unpin", lambda: self.tool("uv.pin", {"clear": True}))
+        add(m, "Pin", self._op("uv.pin", {"clear": False}))
+        add(m, "Unpin", self._op("uv.pin", {"clear": True}))
         m.addSeparator()
-        m.addAction("Rotate 90° CCW", lambda: self.rotate_by(90))
-        m.addAction("Rotate 90° CW", lambda: self.rotate_by(-90))
-        m.addAction("Flip U", lambda: self.flip(True))
-        m.addAction("Flip V", lambda: self.flip(False))
+        add(m, "Rotate 90° CCW", self._call("rotate_by", 90))
+        add(m, "Rotate 90° CW", self._call("rotate_by", -90))
+        add(m, "Flip U", self._call("flip", True))
+        add(m, "Flip V", self._call("flip", False))
         m.addSeparator()
-        m.addAction("Frame Selection", self.canvas.frame_selected)
-        m.addAction("Frame 0–1", self.canvas.fit)
+        add(m, "Frame Selection", self._call("canvas.frame_selected"))
+        add(m, "Frame 0–1", self._call("canvas.fit"))
         m.exec(gpos)
 
     # --- tools
