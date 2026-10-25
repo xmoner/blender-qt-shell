@@ -185,6 +185,9 @@ def outline(source):
             elif isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 items.append((level, "def", ch.name, ch.lineno))
                 walk(ch, level + 1)
+            elif isinstance(ch, (ast.If, ast.Try, ast.With, ast.For, ast.While)) or \
+                    type(ch).__name__ == "TryStar":
+                walk(ch, level)                  # defs inside `if …:` / `try:` blocks (rig UI scripts)
     walk(tree, 0)
     return items
 
@@ -1081,12 +1084,15 @@ class TextEditor(QtWidgets.QWidget):
         self.split.addWidget(self.outline)
         self.split.setStretchFactor(0, 1)
         self.split.setStretchFactor(1, 0)
-        self.outline.setVisible(str(settings.value("text_editor/outline", "false")).lower() == "true")
+        # the outline's own on/off state – isVisible() is also False while the Text editor tab / dock is hidden
+        # (e.g. a .blend opened with another tab in front), which used to leave the outline empty
+        self._outline_on = str(settings.value("text_editor/outline", "false")).lower() == "true"
+        self.outline.setVisible(self._outline_on)
         self._outline_timer = QtCore.QTimer(self)
         self._outline_timer.setSingleShot(True)
         self._outline_timer.setInterval(600)
         self._outline_timer.timeout.connect(self._fill_outline)
-        self.editor.textChanged.connect(lambda: self.outline.isVisible() and self._outline_timer.start())
+        self.editor.textChanged.connect(lambda: self._outline_on and self._outline_timer.start())
         lay.addWidget(self.split, 1)
 
         # find / replace bar (Ctrl+F / Ctrl+H)
@@ -1233,7 +1239,7 @@ class TextEditor(QtWidgets.QWidget):
             tip="The line with the cursor, without its indentation")
         act(r, "Unload", self.unload_script)
         v = m.addMenu("View")
-        act(v, "Outline", self.toggle_outline, "text.outline", checked=self.outline.isVisible())
+        act(v, "Outline", self.toggle_outline, "text.outline", checked=self._outline_on)
         act(v, "Show Whitespace", lambda: ed.set_option("show_whitespace", not ed.show_whitespace),
             "text.show_whitespace", checked=ed.show_whitespace)
         act(v, "Indent Guides", lambda: ed.set_option("indent_guides", not ed.indent_guides),
@@ -1259,14 +1265,15 @@ class TextEditor(QtWidgets.QWidget):
 
     # --- outline
     def toggle_outline(self):
-        on = not self.outline.isVisible()
+        on = not self._outline_on
+        self._outline_on = on
         self.outline.setVisible(on)
         QtCore.QSettings("QtShell", "QtShell").setValue("text_editor/outline", "true" if on else "false")
         if on:
             self._fill_outline()
 
     def _fill_outline(self):
-        if not self.outline.isVisible():
+        if not self._outline_on:
             return
         self.outline.clear()
         stack = []
