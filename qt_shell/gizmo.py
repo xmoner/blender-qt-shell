@@ -7,9 +7,10 @@ Add tools live in annotate.py.
 - Gizmo: drawn at the pivot of the selection (median of the selected objects' origins, or of the
   selected vertices in Edit mode), in the transform orientation of the header (Global, Local, Normal,
   Gimbal, View, Cursor, Parent or a custom one – orientation_matrix()):
-    Move   – X / Y / Z arrows, a circle in the middle = free move in the view plane
+    Move   – X / Y / Z arrows, squares between two axes = move in that plane (YZ / XZ / XY),
+             a circle in the middle = free move in the view plane
     Rotate – X / Y / Z rings, the outer white ring = rotate around the view axis
-    Scale  – X / Y / Z handles with boxes, the outer white ring = uniform scale
+    Scale  – X / Y / Z handles with boxes, plane squares = scale in that plane, the outer white ring = uniform
     Transform – all in one: arrows move, rings rotate, boxes on the axes scale
     Scale Cage – a box around the selection: drag a side (one axis) or a corner (all axes);
                  the opposite side / corner stays where it is
@@ -987,6 +988,21 @@ def handles(vp, tool):
                 mid = vp.project(pv + a * (L * 0.55), mats)
                 if mid is not None:
                     out.append({"id": f"S:{name}", "kind": "box", "center": mid, "color": col})
+    if tool in ("MOVE", "SCALE"):
+        # plane handles (Blender): small squares between two axes – move / scale in that plane;
+        # coloured like the axis they leave out
+        op = "G" if tool == "MOVE" else "S"
+        names = {n: (a, col) for n, a, col in oaxes}
+        for plane, normal in (("YZ", "X"), ("XZ", "Y"), ("XY", "Z")):
+            a1, a2 = names[plane[0]][0], names[plane[1]][0]
+            q = [vp.project(pv + (a1 * u + a2 * v) * L, mats)
+                 for u, v in ((0.22, 0.22), (0.42, 0.22), (0.42, 0.42), (0.22, 0.42))]
+            if any(x is None for x in q):
+                continue
+            area = abs(sum(q[i].x() * q[(i + 1) % 4].y() - q[(i + 1) % 4].x() * q[i].y() for i in range(4))) / 2
+            if area < (6 * sc) ** 2:            # plane seen edge-on – hide it
+                continue
+            out.append({"id": f"{op}:{plane}", "kind": "plane", "pts": q, "color": names[normal][1]})
     if tool == "SCALE":
         # uniform scale: the outer ring (like Blender) – dragging from it scales by the ratio of
         # distances from the pivot, so it must not start right at the pivot
@@ -1019,6 +1035,11 @@ def hit(hs, pos):
             d = abs(dc - h["r"]) if h.get("ring_hit") else max(0.0, dc - h["r"])
         elif kind == "box":
             d = max(0.0, math.hypot(pos.x() - h["center"].x(), pos.y() - h["center"].y()) - 6 * sc)
+        elif kind == "plane":
+            poly = QtGui.QPolygonF(h["pts"])
+            if not poly.containsPoint(pos, QtCore.Qt.OddEvenFill):
+                continue
+            d = 0.0
         elif kind == "line":
             # skip the part inside the centre circle, so the centre stays easy to grab;
             # the arrow head / box at the end is a bit bigger than the line
@@ -1033,7 +1054,7 @@ def hit(hs, pos):
             d = min(_seg_dist(pos, pts[i], pts[i + 1]) for i in range(len(pts) - 1))
         if d > pick:
             continue
-        rank = 0 if kind == "box" else (1 if h["id"].split(":")[1] in ("X", "Y", "Z") else 2)
+        rank = 0 if kind in ("box", "plane") else (1 if h["id"].split(":")[1] in ("X", "Y", "Z") else 2)
         key = (rank, d)
         if best_key is None or key < best_key:
             best, best_key = h["id"], key
@@ -1062,6 +1083,12 @@ def paint(vp, p, tool, hover):
             p.setPen(QtGui.QPen(col, width))
             p.setBrush(QtCore.Qt.NoBrush)
             p.drawPolyline(QtGui.QPolygonF(h["pts"]))
+        elif h["kind"] == "plane":
+            fill = QtGui.QColor(col)
+            fill.setAlpha(230 if h["id"] == hover else 150)
+            p.setPen(QtGui.QPen(col, 1.0 * sc))
+            p.setBrush(fill)
+            p.drawPolygon(QtGui.QPolygonF(h["pts"]))
         elif h["kind"] == "box":
             r = (6.5 if h["id"] == hover else 5.5) * sc
             p.setPen(QtCore.Qt.NoPen)
@@ -1108,7 +1135,7 @@ def start_drag(vp, handle_id, tool=None):
     m = vp._modal
     if not m:
         return False
-    m["axis"] = axis if axis in ("X", "Y", "Z") else None
+    m["axis"] = axis if axis in ("X", "Y", "Z", "YZ", "XZ", "XY") else None
     m["drag"] = True                  # release of the mouse button confirms
     vp._modal_update(m["start"])
     return True

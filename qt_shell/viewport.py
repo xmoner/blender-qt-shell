@@ -1295,7 +1295,8 @@ class Viewport(QtWidgets.QWidget):
 
     def _modal_axis_key(self, ax):
         """X / Y / Z like Blender: 1st press – axis in the header's orientation, 2nd – in Global (Local when
-        the header is Global), 3rd – no constraint."""
+        the header is Global), 3rd – no constraint. ax can also be a plane "YZ" / "XZ" / "XY"
+        (Shift+X / Y / Z – everything but that axis), cycled the same way."""
         m = self._modal
         scene_kind = gizmo.orientation_type()
         alt = "LOCAL" if scene_kind == "GLOBAL" else "GLOBAL"
@@ -1314,8 +1315,9 @@ class Viewport(QtWidgets.QWidget):
     def _modal_text(self):
         m = self._modal
         names = {"G": "Move", "R": "Rotate", "S": "Scale"}
-        axis = f" along {m['axis']} ({gizmo.orientation_label(m.get('orient_kind', 'GLOBAL'))})" \
-            if m["axis"] else ""
+        ax = m["axis"]
+        where = "along" if ax in ("X", "Y", "Z") else "in plane"
+        axis = f" {where} {ax} ({gizmo.orientation_label(m.get('orient_kind', 'GLOBAL'))})" if ax else ""
         val = m.get("value")
         if isinstance(val, Vector):
             val = f"{val.x:.3f}, {val.y:.3f}, {val.z:.3f}"
@@ -1323,16 +1325,23 @@ class Viewport(QtWidgets.QWidget):
             val = f"{math.degrees(val):.1f}°" if m["kind"] == "R" else f"{val:.3f}"
         num = f"   [{self._numeric}]" if self._numeric else ""
         return (f"{names[m['kind']]}{axis}: {val or ''}{num}   "
-                "(X/Y/Z axis, number + Enter, LMB/Enter confirm, RMB/Esc cancel)")
+                "(X/Y/Z axis, Shift+X/Y/Z plane, number + Enter, LMB/Enter confirm, RMB/Esc cancel)")
 
     def _modal_update(self, pos):
         m = self._modal
         pivot = m["pivot"]
         axis_vec = None
+        plane = None                  # (normal, first axis, second axis) for a plane constraint (Shift+X/Y/Z)
+        orient = m.get("orient")
+
+        def col(name):
+            return (orient.col["XYZ".index(name)].normalized() if orient is not None else
+                    Vector([1.0 if c == name else 0.0 for c in "XYZ"]))
         if m["axis"] in ("X", "Y", "Z"):
-            orient = m.get("orient")
-            axis_vec = (orient.col["XYZ".index(m["axis"])].normalized() if orient is not None else
-                        Vector([1.0 if c == m["axis"] else 0.0 for c in "XYZ"]))
+            axis_vec = col(m["axis"])
+        elif m["axis"] in ("YZ", "XZ", "XY"):
+            normal = next(c for c in "XYZ" if c not in m["axis"])
+            plane = (col(normal), col(m["axis"][0]), col(m["axis"][1]))
         num = None
         if self._numeric not in ("", "-", ".", "-."):
             try:
@@ -1342,7 +1351,25 @@ class Viewport(QtWidgets.QWidget):
         start = m["start"]
         if m["kind"] == "G":
             if num is not None:
-                delta = (axis_vec or Vector((1, 0, 0))) * num
+                delta = (axis_vec or (plane[1] if plane else Vector((1, 0, 0)))) * num
+            elif plane is not None:
+                # the point under the mouse slides on the plane through the pivot (ray ∩ plane)
+                n = plane[0]
+                o0, d0 = self.ray(start.x(), start.y())
+                o1, d1 = self.ray(pos.x(), pos.y())
+                den0, den1 = d0.dot(n), d1.dot(n)
+                if abs(den0) > 1e-4 and abs(den1) > 1e-4:
+                    h0 = o0 + d0 * ((pivot - o0).dot(n) / den0)
+                    h1 = o1 + d1 * ((pivot - o1).dot(n) / den1)
+                    delta = h1 - h0
+                    lim = self.pixel_size_at(pivot) * max(self.width(), self.height()) * 20
+                    if delta.length > lim:              # plane seen edge-on – keep it sane
+                        delta = delta.normalized() * lim
+                else:
+                    right, up, _f = self.view_vectors()
+                    d = pos - start
+                    delta = (right * d.x() - up * d.y()) * self.pixel_size_at(pivot)
+                    delta = delta - n * delta.dot(n)
             else:
                 right, up, _f = self.view_vectors()
                 s = self.pixel_size_at(pivot)
@@ -1369,6 +1396,8 @@ class Viewport(QtWidgets.QWidget):
                     delta = snapper.move(delta, pos, axis_vec, m.get("orient") if axis_vec is None else None)
                 except Exception as ex:
                     bridge.log(f"Snap: {ex}", "WARNING")
+                if plane is not None:
+                    delta = delta - plane[0] * delta.dot(plane[0])      # snapped, but still on the plane
             m["value"] = delta
             X = Matrix.Translation(delta)
         elif m["kind"] == "R":
@@ -1380,6 +1409,8 @@ class Viewport(QtWidgets.QWidget):
                 a1 = math.atan2(-(pos.y() - ps.y()), pos.x() - ps.x())
                 angle = a1 - a0
             _r, _u, fwd = self.view_vectors()
+            if plane is not None:
+                axis_vec = plane[0]                 # rotating "in" a plane = around its normal (Blender)
             axis = axis_vec if axis_vec is not None else -fwd
             if axis_vec is not None and axis_vec.dot(-fwd) < 0 and num is None:
                 angle = -angle
@@ -1402,7 +1433,10 @@ class Viewport(QtWidgets.QWidget):
             if num is None and m.get("snapper") is not None:
                 fac = m["snapper"].scale(fac)
             m["value"] = fac
-            S = Matrix.Scale(fac, 4, axis_vec) if axis_vec is not None else Matrix.Scale(fac, 4)
+            if plane is not None:
+                S = Matrix.Scale(fac, 4, plane[1]) @ Matrix.Scale(fac, 4, plane[2])
+            else:
+                S = Matrix.Scale(fac, 4, axis_vec) if axis_vec is not None else Matrix.Scale(fac, 4)
             X = Matrix.Translation(pivot) @ S @ Matrix.Translation(-pivot)
         if m.get("edit") is not None:
             m["edit"].apply(X)
@@ -1739,7 +1773,10 @@ class Viewport(QtWidgets.QWidget):
             elif key in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
                 self._modal_end(True)
             elif key in (QtCore.Qt.Key_X, QtCore.Qt.Key_Y, QtCore.Qt.Key_Z):
-                self._modal_axis_key(chr(key))
+                ax = chr(key)
+                if mods & QtCore.Qt.ShiftModifier and not self._modal.get("cage"):
+                    ax = {"X": "YZ", "Y": "XZ", "Z": "XY"}[ax]     # Shift: plane without that axis
+                self._modal_axis_key(ax)
                 self._modal_update(self.mapFromGlobal(QtGui.QCursor.pos()).toPointF())
             elif key in (QtCore.Qt.Key_Control, QtCore.Qt.Key_Shift):     # Ctrl: snapping, Shift: fine
                 self._modal_update(self.mapFromGlobal(QtGui.QCursor.pos()).toPointF())
