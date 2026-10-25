@@ -338,7 +338,10 @@ class Viewport(QtWidgets.QWidget):
                 self._off = gpu.types.GPUOffScreen(w, h)
             vm, pm = self.matrices(w, h)
             ctx = bpy.context
-            transparent = space.shading.type in ("SOLID", "WIREFRAME")
+            # Solid / Wireframe with the Theme background: Blender's picture is transparent and Qt draws the
+            # gradient; Background World / Viewport (shading popover) need Blender's own background
+            transparent = (space.shading.type in ("SOLID", "WIREFRAME")
+                           and getattr(space.shading, "background_type", "THEME") == "THEME")
             self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent)
             img = self._read_image(w, h, dpr, transparent)
             self._image = img
