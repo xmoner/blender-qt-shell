@@ -347,6 +347,11 @@ class Viewport(QtWidgets.QWidget):
             transparent = (space.shading.type in ("SOLID", "WIREFRAME")
                            and getattr(space.shading, "background_type", "THEME") == "THEME")
             self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent)
+            try:
+                from . import uvchecker               # UV editor's Checker map on the mesh (Maya)
+                uvchecker.draw(self._off, vm, pm, space)
+            except Exception as ex:
+                bridge.log(f"UV checker: {ex}", "WARNING")
             img = self._read_image(w, h, dpr, transparent)
             self._image = img
             self._geo_frame = False

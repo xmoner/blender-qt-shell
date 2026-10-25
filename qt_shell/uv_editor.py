@@ -1016,6 +1016,8 @@ class UVCanvas(QtWidgets.QWidget):
         self._write([(l, uv) for (l, _o), uv in zip(m["pts"], out)])
         self._snap = None
         self.update()
+        if self.flag("checker", False):
+            self.editor._sync_mesh_views()      # the 3D view's checker follows the drag live
 
     def _grid_step(self):
         step = 10 ** math.floor(math.log10(max(60 / self.scale, 1e-6)))
@@ -1502,7 +1504,7 @@ class UVEditor(QtWidgets.QWidget):
         for key, icon, text, tip, default in (
                 ("image", "IMAGE_DATA", "Image", "Show the texture image", True),
                 ("dim", None, "Dim", "Dim the image so the UVs stand out", False),
-                ("checker", "TEXTURE", "Checker", "Checker map instead of the image (Maya) – shows stretching", False),
+                ("checker", "TEXTURE", "Checker", "Checker map instead of the image (Maya) – shows stretching; also on the mesh in the 3D view", False),
                 ("shaded", None, "Shaded", "Shaded UVs (Maya): front faces blue, flipped faces red, overlaps darker",
                  False),
                 ("distortion", None, "Distortion", "Colour faces by area distortion: blue = right size, "
@@ -1539,11 +1541,17 @@ class UVEditor(QtWidgets.QWidget):
         b.setToolTip(tip)
         if key:
             b.setChecked(setting(key, default))
-            b.toggled.connect(lambda on, k=key: (set_setting(k, on), self.canvas.update()))
+            b.toggled.connect(lambda on, k=key: self._display_changed(k, on))
         if fn:
             b.toggled.connect(fn)
         h.addWidget(b)
         return b
+
+    def _display_changed(self, key, on):
+        set_setting(key, bool(on))
+        self.canvas.update()
+        if key == "checker":
+            self._sync_mesh_views()             # the checker is shown on the mesh in the 3D view too
 
     def _show_toolkit(self, on):
         set_setting("toolkit", on)
@@ -1811,13 +1819,12 @@ class UVEditor(QtWidgets.QWidget):
 
     def set_display(self, key, on=True):
         """Display options: image, dim, checker, shaded, distortion, borders, grid."""
-        set_setting(key, bool(on))
         b = self.display_buttons.get(key)
         if b is not None:
             b.blockSignals(True)
             b.setChecked(bool(on))
             b.blockSignals(False)
-        self.canvas.update()
+        self._display_changed(key, on)
 
     def set_image(self, name=None):
         """Image shown behind the UVs – None = the active material's texture."""

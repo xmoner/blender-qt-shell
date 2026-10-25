@@ -832,7 +832,8 @@ uv.unwrap(); uv.layout_shells()
 uv.move_by(0.1, 0); uv.rotate_by(90); uv.flip(True)   # flip(True) = horizontally (U)
 uv.align("UMIN"); uv.normalize()
 uv.texel_get(); uv.set_texel_density(512)
-uv.set_display("checker", True); uv.set_image("UV Grid")
+uv.set_display("checker", True)             # also shown on the mesh in the 3D viewport (0.54.0)
+uv.set_image("UV Grid")
 uv.canvas.select_all("SELECT"); uv.canvas.frame_selected()
 ```
 
