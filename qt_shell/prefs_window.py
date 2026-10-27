@@ -254,10 +254,10 @@ class QtPreferences(QtWidgets.QDialog):
         sp.setSingleStep(10)
         sp.setDecimals(0)
         sp.setSuffix(" %")
-        sp.setValue(getattr(p, "nav_scale", 0.5) * 100)
+        sp.setValue(getattr(p, "nav_scale", 1.0) * 100)
         sp.setToolTip("Material Preview / Rendered: resolution while orbiting, panning or zooming.\n"
-                      "Lower = smoother navigation; a sharp picture is drawn when the view stops.\n"
-                      "100 % = always full resolution.")
+                      "EEVEE already draws 1 sample while the view moves (like Blender);\n"
+                      "lower only helps on slow GPUs. A sharp picture is drawn when the view stops.")
         sp.valueChanged.connect(lambda v: self._set_pref("nav_scale", v / 100.0))
         row.addWidget(sp)
         row.addStretch(1)

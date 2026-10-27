@@ -260,6 +260,21 @@ def undo_push(message="Qt Shell"):
 
 
 # ---------------------------------------------------------------- handlers
+_quiet = 0      # > 0 while Qt Shell changes scene settings only for a moment (not an edit)
+
+
+@contextmanager
+def quiet_updates():
+    """with bridge.quiet_updates(): … – depsgraph updates inside are not reported as scene edits
+    (e.g. the viewport's temporary EEVEE sample count while navigating)."""
+    global _quiet
+    _quiet += 1
+    try:
+        yield
+    finally:
+        _quiet -= 1
+
+
 @bpy.app.handlers.persistent
 def _on_depsgraph(*_args):
     Flags.depsgraph = True
@@ -268,6 +283,8 @@ def _on_depsgraph(*_args):
 @bpy.app.handlers.persistent
 def _on_depsgraph_edit(*_args):
     # depsgraph_update_post runs for edits, not for frame changes (those run frame_change_post)
+    if _quiet:
+        return
     Flags.depsgraph = True
     Flags.edit_version += 1
 

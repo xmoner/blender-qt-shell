@@ -6,6 +6,7 @@ read into numpy and shown as a QImage. Navigation, selection and G/R/S transform
 import math
 import time
 from collections import deque
+from contextlib import contextmanager
 
 import bpy
 import gpu
@@ -29,8 +30,37 @@ _MODE_KEYS = {"object": "OBJECT", "edit": "EDIT", "pose": "POSE", "sculpt": "SCU
 
 # names of the axis-aligned views (rotating from them switches to a "User" view)
 _AXIS_VIEWS = ("Front", "Back", "Right", "Left", "Top", "Bottom")
-NAV_SCALE = 0.5   # default resolution factor while orbiting / panning / zooming in Material Preview / Rendered
-NAV_IDLE = 0.2    # seconds after the last navigation step before the sharp frame is drawn
+NAV_SCALE = 1.0   # default resolution factor while orbiting / panning / zooming in Material Preview / Rendered
+NAV_IDLE = 0.2    # seconds after the last interactive change before the full-quality frame is drawn
+
+
+@contextmanager
+def eevee_samples(n):
+    """with eevee_samples(1): draw_view3d renders EEVEE with n viewport samples (None = unchanged).
+    The scene setting is changed only for the draw and put back at once; the depsgraph updates it
+    needs are not reported as edits (bridge.quiet_updates)."""
+    ee = getattr(bpy.context.scene, "eevee", None)
+    old = getattr(ee, "taa_samples", None)
+    if n is None or old is None or old == n or (old == 0 and n == 1):
+        yield
+        return
+    try:
+        dg = bpy.context.evaluated_depsgraph_get()      # pending edits are evaluated (and reported) first
+        with bridge.quiet_updates():
+            ee.taa_samples = n
+            dg.update()
+    except Exception:
+        yield
+        return
+    try:
+        yield
+    finally:
+        with bridge.quiet_updates():
+            try:
+                ee.taa_samples = old
+                dg.update()
+            except Exception:
+                pass
 
 
 def digit_of(ev):
@@ -90,7 +120,11 @@ class Viewport(QtWidgets.QWidget):
         self._off = None
         self._off_nav = None        # second offscreen for the lower navigation resolution (kept, not re-created)
         self._nav_t = 0.0           # time of the last orbit / pan / zoom
+        self._busy_t = 0.0          # time of the last interactive change (navigation, changes in a row)
+        self._change_t = 0.0        # time of the last redraw caused by a change
         self._lowres = False        # the shown picture was drawn at the navigation resolution
+        self._degraded = False      # … or with 1 EEVEE sample: a full-quality frame follows when things settle
+        self._settling = False
         self._image = None
         self._dirty = True
         self._fps_samples = deque(maxlen=120)   # (time, frame) of each newly shown frame during playback
@@ -318,11 +352,18 @@ class Viewport(QtWidgets.QWidget):
             return
         if getattr(self.hub, "playing", False):
             return   # during playback every frame is drawn by render_now()
-        if (self._lowres and not self._dirty and self._extra_frames <= 0
-                and time.perf_counter() - self._nav_t >= NAV_IDLE):
-            self._dirty = True                  # navigation stopped: one sharp picture
+        now = time.perf_counter()
+        if (self._degraded and not self._dirty and self._extra_frames <= 0 and self._modal is None
+                and now - self._busy_t >= NAV_IDLE):
+            self._dirty = True                  # things settled: one full-quality picture
+            self._settling = True
         if self._dirty or self._extra_frames > 0:
             sh = self.shading()
+            if self._dirty and not self._settling:
+                if now - self._change_t < NAV_IDLE:
+                    self._busy_t = now          # changes in a row (dragging a value, scrubbing …): interactive
+                self._change_t = now
+            self._settling = False
             self._dirty = False
             if self._extra_frames > 0:
                 self._extra_frames -= 1
@@ -354,7 +395,9 @@ class Viewport(QtWidgets.QWidget):
             # gradient; Background World / Viewport (shading popover) need Blender's own background
             transparent = (space.shading.type in ("SOLID", "WIREFRAME")
                            and getattr(space.shading, "background_type", "THEME") == "THEME")
-            self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent, off)
+            fast = self._fast_samples(space)
+            with eevee_samples(1 if fast else None):
+                self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent, off)
             try:
                 from . import uvchecker               # UV editor's Checker map on the mesh (Maya)
                 uvchecker.draw(off, vm, pm, space)
@@ -362,6 +405,7 @@ class Viewport(QtWidgets.QWidget):
                 bridge.log(f"UV checker: {ex}", "WARNING")
             img = self._read_image(w, h, dpr, transparent, off)
             self._lowres = nav < 1.0
+            self._degraded = self._lowres or fast
             self._image = img
             self._geo_frame = False
             if getattr(self.hub, "playing", False):
@@ -371,18 +415,31 @@ class Viewport(QtWidgets.QWidget):
                     self._fps_samples.append((time.perf_counter(), f))
             self._img_transparent = transparent and self._draw_kwargs.get("draw_background") is False
             self._failed = None
-            if self._modal is None and not self._lowres:
+            if self._modal is None and not self._lowres and (not fast or getattr(self.hub, "playing", False)):
                 playcache.store(self, ctx.scene.frame_current, img, self._img_transparent)
         except Exception as ex:
             self._failed = f"Viewport render failed: {ex}"
 
     def _navigated(self):
-        """Orbit / pan / zoom: Material Preview and Rendered draw at the navigation resolution for a moment."""
-        self._nav_t = time.perf_counter()
+        """Orbit / pan / zoom: Material Preview / Rendered draw the fast way for a moment."""
+        self._nav_t = self._busy_t = time.perf_counter()
+
+    def _fast_samples(self, space):
+        """True when EEVEE should draw 1 sample (like Blender's own viewport while something moves):
+        draw_view3d renders all the viewport samples in every call (16 samples ≈ 9 ms each here),
+        Blender's editor draws 1 sample per redraw and adds the others only while the view is still."""
+        sh = space.shading.type
+        if sh == "RENDERED":
+            if not bpy.context.scene.render.engine.startswith("BLENDER_EEVEE"):
+                return False
+        elif sh != "MATERIAL":
+            return False
+        return (self._modal is not None or getattr(self.hub, "playing", False)
+                or time.perf_counter() - self._busy_t < NAV_IDLE)
 
     def _nav_scale(self, space):
-        """Resolution factor for this frame: EEVEE / Cycles through draw_view3d are slow (Blender renders
-        them as an image render), so while the view moves they draw smaller; a sharp frame follows."""
+        """Resolution factor while the view moves (Qt Preferences → Viewport → Navigation resolution,
+        Material Preview / Rendered only; 100 % by default since EEVEE draws 1 sample then)."""
         if time.perf_counter() - self._nav_t >= NAV_IDLE or getattr(self.hub, "playing", False):
             return 1.0
         if space.shading.type not in ("MATERIAL", "RENDERED"):
