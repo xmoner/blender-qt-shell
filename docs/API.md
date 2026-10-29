@@ -876,7 +876,7 @@ source **COMPOSITOR** it shows the compositor's Viewer node and follows every ch
 ```python
 import qt_shell
 ie = qt_shell.api.image_editor()
-ie.set_source("COMPOSITOR")           # COMPOSITOR, RENDER, ANIMATION or the name of an image
+ie.set_source("COMPOSITOR")           # COMPOSITOR (result), VIEWER, RENDER, ANIMATION or an image name
 ie.set_live(True)                     # re-read the Viewer whenever the compositor ran
 ie.reload(); ie.fit(); ie.zoom(1)     # 1 = 1:1
 ie.set_channel("ALPHA")               # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE

@@ -1,7 +1,11 @@
 """Image Editor – Blender's Image Editor in Qt, linked to the compositor.
 
 Sources (header combo):
-- **Compositor** – the Viewer node's picture. Blender runs the compositor only while its result is visible
+- **Compositor (Result)** – what goes to the compositor's output (Group Output). Blender's compositor only
+  computes a picture for the Viewer node, so the Viewer is kept linked to the output's source (`follow_output`,
+  after every change – a node put in front of the output is shown at once).
+- **Viewer Node** – the Viewer node's picture wherever the Viewer is linked (to look at any node).
+- Both: Blender runs the compositor only while its result is visible
   somewhere (a node editor backdrop or an Image Editor showing "Viewer Node"), so while this source is shown
   one area of Blender's hidden main window is a Compositor node editor with its backdrop on
   (`CompositorLink`). Every change of the compositor nodes – also from Qt Shell's Node editor – then runs
@@ -37,8 +41,11 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import bridge, icons, keymap, pytips, theme
 from .anim_player import load_image, output_info
 
-SRC_COMP, SRC_RENDER, SRC_ANIM = "COMPOSITOR", "RENDER", "ANIMATION"
-SOURCE_LABELS = {SRC_COMP: "Compositor (Viewer)", SRC_RENDER: "Render Result", SRC_ANIM: "Rendered Animation"}
+SRC_COMP, SRC_VIEWER, SRC_RENDER, SRC_ANIM = "COMPOSITOR", "VIEWER", "RENDER", "ANIMATION"
+COMP_SOURCES = (SRC_COMP, SRC_VIEWER)
+SOURCES = (SRC_COMP, SRC_VIEWER, SRC_RENDER, SRC_ANIM)
+SOURCE_LABELS = {SRC_COMP: "Compositor (Result)", SRC_VIEWER: "Viewer Node", SRC_RENDER: "Render Result",
+                 SRC_ANIM: "Rendered Animation"}
 VIEWER = "Viewer Node"
 CHANNELS = [("COLOR_ALPHA", "Color & Alpha"), ("COLOR", "Color"), ("ALPHA", "Alpha"),
             ("RED", "Red"), ("GREEN", "Green"), ("BLUE", "Blue")]
@@ -89,6 +96,40 @@ def _image_source(tree):
                     return inp.links[0].from_socket
     rl = next((n for n in tree.nodes if n.bl_idname == "CompositorNodeRLayers"), None)
     return rl.outputs[0] if rl is not None and rl.outputs else None
+
+
+def output_socket(tree):
+    """The socket that feeds the compositor's output (Group Output / Composite) – the final result – or None."""
+    for n in tree.nodes:
+        if n.bl_idname in ("NodeGroupOutput", "CompositorNodeComposite") and not n.mute:
+            for inp in n.inputs:
+                if inp.is_linked and inp.links[0].is_valid:
+                    return inp.links[0].from_socket
+    return None
+
+
+def follow_output(tree):
+    """Source Compositor (Result): the Viewer node shows what goes to the output. Blender's compositor only computes
+    a picture for the Viewer, so the Viewer is (re)linked to the output's source after every change (a Viewer is
+    added when there is none). Returns False when nothing is connected to the output."""
+    src = output_socket(tree)
+    if src is None:
+        return False
+    vs = viewer_nodes(tree)
+    act = tree.nodes.active
+    v = act if act is not None and act in vs else (vs[0] if vs else None)
+    if v is None:
+        v = tree.nodes.new("CompositorNodeViewer")
+        v.location = (src.node.location.x + 260, src.node.location.y - 200)
+        tree.nodes.active = v
+    inp = v.inputs[0]
+    if inp.is_linked and inp.links[0].from_socket == src:
+        return True
+    with bridge.quiet_updates():
+        for link in list(inp.links):
+            tree.links.remove(link)
+    tree.links.new(src, inp)             # this change runs the compositor (not quiet)
+    return True
 
 
 def ensure_compositor(viewer=True):
@@ -556,9 +597,9 @@ class ImageEditor(QtWidgets.QWidget):
         bl.setContentsMargins(4, 2, 4, 2)
         bl.setSpacing(3)
         self.source_combo = _SourceCombo(self)
-        self.source_combo.setToolTip("What the Image Editor shows: the compositor's Viewer node (updates when "
-                                     "the compositor nodes change), the last render, the rendered animation "
-                                     "or an image of the file")
+        self.source_combo.setToolTip("What the Image Editor shows: the compositor's result (what goes to the Group "
+                                     "Output – updates when the compositor nodes change), the Viewer node, the last "
+                                     "render, the rendered animation or an image of the file")
         self.source_combo.activated.connect(lambda i: self.set_source(self.source_combo.itemData(i)))
         pytips.tag(self.source_combo, _api('set_source("COMPOSITOR")'))
         bl.addWidget(self.source_combo)
@@ -665,8 +706,9 @@ class ImageEditor(QtWidgets.QWidget):
         cb = self.source_combo
         cb.blockSignals(True)
         cb.clear()
-        for ident in (SRC_COMP, SRC_RENDER, SRC_ANIM):
-            cb.addItem(icons.icon({SRC_COMP: "nodetree", SRC_RENDER: "camera", SRC_ANIM: "play"}[ident]),
+        for ident in SOURCES:
+            cb.addItem(icons.icon({SRC_COMP: "nodetree", SRC_VIEWER: "nodetree", SRC_RENDER: "camera",
+                                   SRC_ANIM: "play"}[ident]),
                        SOURCE_LABELS[ident], ident)
         names = [im.name for im in bpy.data.images if im.name not in ("Render Result", VIEWER)]
         if names:
@@ -679,8 +721,8 @@ class ImageEditor(QtWidgets.QWidget):
 
     def _update_controls(self):
         src = self.source
-        self.live_btn.setVisible(src == SRC_COMP)
-        self.render_btn.setVisible(src in (SRC_COMP, SRC_RENDER))
+        self.live_btn.setVisible(src in COMP_SOURCES)
+        self.render_btn.setVisible(src in COMP_SOURCES or src == SRC_RENDER)
         self.anim_box.setVisible(src == SRC_ANIM)
         self.spacer.setVisible(src != SRC_ANIM)
         i = self.source_combo.findData(src)
@@ -735,7 +777,7 @@ class ImageEditor(QtWidgets.QWidget):
             self.reload()
 
     def _update_link(self):
-        want = self.isVisible() and self.source == SRC_COMP and self.live
+        want = self.isVisible() and self.source in COMP_SOURCES and self.live
         try:
             if want:
                 LINK.acquire()
@@ -757,7 +799,7 @@ class ImageEditor(QtWidgets.QWidget):
         """COMPOSITOR, RENDER, ANIMATION or the name of an image ("IMAGE:<name>" or just the name)."""
         if src is None:
             return
-        if src not in (SRC_COMP, SRC_RENDER, SRC_ANIM) and not src.startswith("IMAGE:"):
+        if src not in SOURCES and not src.startswith("IMAGE:"):
             src = "IMAGE:" + src
         if src.startswith("IMAGE:") and bpy.data.images.get(src[6:]) is None:
             bridge.log(f"Image Editor: no image '{src[6:]}'", "WARNING")
@@ -789,7 +831,7 @@ class ImageEditor(QtWidgets.QWidget):
         """Reads the picture of the current source again."""
         src = self.source
         try:
-            if src == SRC_COMP:
+            if src in COMP_SOURCES:
                 self._load_compositor(keep_view)
             elif src == SRC_RENDER:
                 self._load_render(keep_view)
@@ -813,7 +855,18 @@ class ImageEditor(QtWidgets.QWidget):
             self._set_picture(None)
             self._set_hint("The scene has no compositor nodes.", "Create Compositor Nodes", self._create_nodes)
             return
-        if not viewer_nodes(tree):
+        if self.source == SRC_COMP:
+            try:
+                ok = follow_output(tree)
+            except Exception as ex:
+                ok = True
+                bridge.log(f"Image Editor: {ex}", "WARNING")
+            if not ok:
+                self._set_picture(None)
+                self._set_hint("Nothing is connected to the compositor's output (Group Output).",
+                               "Show the Viewer Node", lambda: self.set_source(SRC_VIEWER))
+                return
+        elif not viewer_nodes(tree):
             self._set_picture(None)
             self._set_hint("The compositor has no Viewer node – the Image Editor shows the Viewer's picture.",
                            "Add Viewer Node", self._add_viewer)
@@ -1062,7 +1115,14 @@ class ImageEditor(QtWidgets.QWidget):
 
     # --- compositor updates
     def _on_data_changed(self):
-        if self.source == SRC_COMP and self.live and self.isVisible():
+        if self.source in COMP_SOURCES and self.live and self.isVisible():
+            if self.source == SRC_COMP:
+                tree = comp_tree()
+                if tree is not None:
+                    try:
+                        follow_output(tree)        # a node put before the output → the Viewer moves along
+                    except Exception as ex:
+                        bridge.log(f"Image Editor: {ex}", "WARNING")
             self._comp_changed()
         elif self.source.startswith("IMAGE:") and self.isVisible():
             pass
@@ -1100,9 +1160,9 @@ class ImageEditor(QtWidgets.QWidget):
     def _on_render_done(self):
         if not self.isVisible():
             return
-        if self.source in (SRC_COMP, SRC_RENDER):
+        if self.source in COMP_SOURCES or self.source == SRC_RENDER:
             QtCore.QTimer.singleShot(50, self.reload)
-            if self.source == SRC_COMP:
+            if self.source in COMP_SOURCES:
                 self._comp_changed()
         elif self.source == SRC_ANIM:
             self._anim = None
@@ -1135,7 +1195,7 @@ class ImageEditor(QtWidgets.QWidget):
 
     def _blender_image(self):
         """The Blender image behind the current picture (saved by Blender – keeps float values), or None."""
-        if self.source == SRC_COMP:
+        if self.source in COMP_SOURCES:
             return bpy.data.images.get(VIEWER)
         if self.source == SRC_RENDER:
             return bpy.data.images.get("Render Result")
@@ -1169,7 +1229,7 @@ class ImageEditor(QtWidgets.QWidget):
             return False
         fmt = None
         if not path:
-            name = {SRC_COMP: "compositor", SRC_RENDER: "render"}.get(self.source) or (
+            name = {SRC_COMP: "compositor", SRC_VIEWER: "viewer", SRC_RENDER: "render"}.get(self.source) or (
                 f"frame_{self._frame:04d}" if self.source == SRC_ANIM and self._frame is not None
                 else os.path.splitext(self.source[6:])[0])
             start = os.path.join(self._default_dir(), name + ".png")

@@ -272,7 +272,7 @@ def image_editor():
 
         import qt_shell
         ie = qt_shell.api.image_editor()
-        ie.set_source("COMPOSITOR")       # COMPOSITOR (the Viewer node), RENDER, ANIMATION or an image name
+        ie.set_source("COMPOSITOR")       # COMPOSITOR (result), VIEWER (the Viewer node), RENDER, ANIMATION or an image
         ie.set_live(True)                 # follow every change of the compositor nodes
         ie.reload(); ie.fit(); ie.zoom(1)
         ie.set_channel("ALPHA")           # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
