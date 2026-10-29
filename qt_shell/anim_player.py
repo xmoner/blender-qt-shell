@@ -117,7 +117,7 @@ class _Canvas(QtWidgets.QWidget):
         self.zoom = None              # None = fit
         self.offset = QtCore.QPointF(0, 0)
         self._pan = None
-        self.setMinimumSize(theme.px(240), theme.px(160))
+        self.setMinimumSize(theme.px(80), theme.px(40))     # the dock can be made small
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         s = theme.px(8)
         self._checker = QtGui.QPixmap(2 * s, 2 * s)
@@ -294,6 +294,19 @@ class _FrameBar(QtWidgets.QWidget):
             self.player.step(-1 if steps > 0 else 1)
 
 
+class _WheelScroll(QtWidgets.QScrollArea):
+    """The controls row: when it is wider than the player, the mouse wheel scrolls it sideways."""
+
+    def wheelEvent(self, ev):
+        sb = self.horizontalScrollBar()
+        if sb.maximum() <= 0:
+            return super().wheelEvent(ev)
+        d = ev.angleDelta()
+        step = d.y() if abs(d.y()) >= abs(d.x()) else d.x()
+        sb.setValue(sb.value() - int(step / 2))
+        ev.accept()
+
+
 # ---------------------------------------------------------------- window
 class AnimPlayer(QtWidgets.QWidget, Dockable):
     """Render → View Animation: plays the rendered frames with a timeline."""
@@ -338,7 +351,9 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         lay.addWidget(self.stack, 1)
         self.bar = _FrameBar(self)
         lay.addWidget(self.bar)
-        row = QtWidgets.QHBoxLayout()
+        # the controls row scrolls sideways when the player is narrower than the row (wheel, like the 3D header)
+        self.controls = QtWidgets.QWidget(self)
+        row = QtWidgets.QHBoxLayout(self.controls)
         row.setContentsMargins(theme.px(6), theme.px(3), theme.px(6), theme.px(3))
         row.setSpacing(theme.px(3))
 
@@ -433,7 +448,15 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         self.dock_btn.setToolTip("Dock – put the player into the Qt Shell window (drag its title to any side, "
                                  "tab it with other editors); off: a separate window")
         self.dock_btn.toggled.connect(self.set_docked)
-        lay.addLayout(row)
+        self.controls_area = _WheelScroll(self)
+        self.controls_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.controls_area.setWidgetResizable(True)
+        self.controls_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.controls_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.controls_area.setWidget(self.controls)
+        self.controls_area.setFixedHeight(self.controls.sizeHint().height())
+        self.controls_area.setToolTip("")
+        lay.addWidget(self.controls_area)
         self.synced = False
         self._scene_seen = None
         self._sync_timer = QtCore.QTimer(self)      # follows the Timeline (also its cached playback)
