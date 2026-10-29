@@ -56,6 +56,7 @@ KEY_TYPES = {
     "JITTER": ("Jitter", 0.75, "#94e575", "#61c042"),
     "GENERATED": ("Generated", 0.75, "#585858", "#a28962"),
 }
+AUTO_CACHE_IDLE = 0.6   # background caching waits this long after the last mouse / wheel / key input
 _KEY_PRIORITY = ("EXTREME", "KEYFRAME", "BREAKDOWN", "JITTER", "MOVING_HOLD", "GENERATED")
 INTERPOLATIONS = [("CONSTANT", "Constant"), ("LINEAR", "Linear"), ("BEZIER", "Bézier")]
 _COPY = []             # copied keys: {"ob", "path", "index", "offset", "value", "interp", "type"}
@@ -1226,6 +1227,9 @@ class Timeline(QtWidgets.QWidget):
             if (app.mouseButtons() != QtCore.Qt.NoButton or app.activePopupWidget() is not None
                     or app.activeModalWidget() is not None):
                 return
+            from . import app as shell_app
+            if shell_app.idle_seconds() < AUTO_CACHE_IDLE:
+                return                         # scrolling / moving the mouse / typing: a step blocks the UI
             views = self._views()
             if not views:
                 return
@@ -1247,6 +1251,9 @@ class Timeline(QtWidgets.QWidget):
             if now - self._ac_since < 0.6:
                 return
             sc = bpy.context.scene
+            full_key = (key, play_range(sc), round(playcache.used_mb(), 3))
+            if full_key == getattr(self, "_ac_full_key", None):
+                return                         # all frames were cached and nothing changed since
             pkey = (key, sc.frame_current)
             if getattr(self, "_ac_pending_key", None) != pkey:
                 self._ac_pending_key = pkey
@@ -1261,6 +1268,7 @@ class Timeline(QtWidgets.QWidget):
             i0 = rng.index(keep) if keep in rng else 0
             missing = [f for f in rng[i0:] + rng[:i0] if not self._cache_has(views, f)]
             if not missing:
+                self._ac_full_key = full_key
                 return
             saved = [(v._image, v._img_transparent) for v in views]
             dirty_flag = bridge.Flags.depsgraph

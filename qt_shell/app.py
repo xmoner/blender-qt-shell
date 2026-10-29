@@ -13,6 +13,9 @@ _win = None
 _hub = None
 _pump_on = False
 _prefs = None
+_last_input = 0.0       # time.monotonic() of the last mouse / wheel / key event in a Qt window
+_INPUT_EVENTS = frozenset((QtCore.QEvent.Wheel, QtCore.QEvent.MouseMove, QtCore.QEvent.MouseButtonPress,
+                           QtCore.QEvent.MouseButtonRelease, QtCore.QEvent.KeyPress))
 
 
 class Hub(QtCore.QObject):
@@ -117,6 +120,12 @@ def hub():
     return _hub
 
 
+def idle_seconds():
+    """Seconds since the user last moved the mouse, scrolled or pressed a key in Qt Shell (background work
+    such as filling the playback cache waits for this)."""
+    return time.monotonic() - _last_input
+
+
 def prefs():
     return _prefs
 
@@ -129,6 +138,10 @@ def _notify_with_context(app, obj, ev):
     module state through sys.modules every time."""
     base = QtWidgets.QApplication.notify
     et = ev.type()
+    if et in _INPUT_EVENTS:
+        m = sys.modules.get(__name__)
+        if m is not None:
+            m._last_input = time.monotonic()
     if et == QtCore.QEvent.ToolTip:
         # Python tooltips (Edit → Qt Preferences… → Interface)
         pt = sys.modules.get(__name__.rsplit(".", 1)[0] + ".pytips")
