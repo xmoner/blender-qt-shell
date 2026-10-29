@@ -127,7 +127,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
         super().__init__()
         self.editor = editor
-        self.node = node
+        self._node = node
         self.name = node.name
         self._ptr = node.as_pointer()
         self.kind = "reroute" if node.bl_idname == "NodeReroute" else (
@@ -143,7 +143,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self.setSelected(bool(node.select))
 
     def _build(self):
-        node = self.node
+        node = self._node
         self.rows = []
         self.sockets = {}
         if self.kind == "reroute":
@@ -185,6 +185,12 @@ class NodeItem(QtWidgets.QGraphicsItem):
     def boundingRect(self):
         return QtCore.QRectF(-SOCK_R - 2, -2, self.w + 2 * SOCK_R + 4, self.h + 4)
 
+    @property
+    def node(self):
+        """The Blender node – None once it was removed (never the stale Python object: reading or writing it
+        crashes Blender)."""
+        return self._node if self.alive() else None
+
     def alive(self):
         """False when the node was removed meanwhile (a script, undo, the Image editor's animation cache): node
         structs are no IDs, so the Python object of a removed node is not invalidated – reading it reads freed
@@ -198,7 +204,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
 
     def paint(self, p, _opt, _w):
         node = self.node
-        if not self.alive():
+        if node is None:
             self.editor._timer.start()          # rebuild from the tree as it is now
             return
         p.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -855,6 +861,8 @@ class NodeEditor(QtWidgets.QWidget):
 
     # --- operations
     def set_active(self, item):
+        if item.node is None:
+            return
         try:
             self.tree.nodes.active = item.node
             self.active_name = item.name
@@ -866,8 +874,11 @@ class NodeEditor(QtWidgets.QWidget):
         if self.tree is None:
             return
         for name, it in self.items.items():
+            node = it.node                       # None: removed meanwhile (e.g. by the Image editor's cache)
+            if node is None:
+                continue
             try:
-                it.node.select = it.isSelected()
+                node.select = it.isSelected()
             except ReferenceError:
                 pass
         self.view.viewport().update()
@@ -877,6 +888,8 @@ class NodeEditor(QtWidgets.QWidget):
         for it in self.items.values():
             try:
                 node = it.node
+                if node is None:
+                    continue
                 px, py = it.pos().x(), -it.pos().y()
                 ax, ay = abs_location(node)
                 if abs(px - ax) > 0.01 or abs(py - ay) > 0.01:
@@ -893,6 +906,8 @@ class NodeEditor(QtWidgets.QWidget):
             return
         sel = [it for it in self.scene.selectedItems() if isinstance(it, NodeItem)]
         for it in sel:
+            if it.node is None:
+                continue
             try:
                 self.tree.nodes.remove(it.node)
             except Exception as ex:
@@ -904,8 +919,11 @@ class NodeEditor(QtWidgets.QWidget):
     def toggle(self, attr):
         sel = [it for it in self.scene.selectedItems() if isinstance(it, NodeItem)]
         for it in sel:
+            node = it.node
+            if node is None:
+                continue
             try:
-                setattr(it.node, attr, not getattr(it.node, attr))
+                setattr(node, attr, not getattr(node, attr))
             except Exception:
                 pass
         if sel:

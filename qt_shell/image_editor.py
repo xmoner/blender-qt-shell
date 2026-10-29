@@ -400,17 +400,59 @@ def raw_dir(scene=None):
     return os.path.join(tempfile.gettempdir(), "qtshell_comp_cache", safe)
 
 
-def raw_frames(scene=None):
-    """{frame: OpenEXR file} of the raw frames rendered for the scene's range."""
+_SEQ_RE = None
+
+
+def scan_sequence(folder):
+    """{frame: file} of the image sequence in a folder (name + frame number + .exr / .png / .jpg / .tif); with
+    several sequences the one with the most frames (OpenEXR first)."""
+    global _SEQ_RE
+    import re
+    if _SEQ_RE is None:
+        _SEQ_RE = re.compile(r"^(.*?)(\d+)\.(exr|png|jpe?g|tiff?)$", re.IGNORECASE)
+    seqs = {}
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return {}
+    for n in names:
+        m = _SEQ_RE.match(n)
+        if m:
+            key = (m.group(1), m.group(3).lower())
+            seqs.setdefault(key, {})[int(m.group(2))] = os.path.join(folder, n)
+    if not seqs:
+        return {}
+    best = max(seqs, key=lambda k: (k[1] == "exr", len(seqs[k])))
+    return seqs[best]
+
+
+def raw_frames(scene=None, lo=None, hi=None, folder=None):
+    """{frame: file} of the raw frames (rendered without compositing) between lo and hi – from this file's cache
+    folder or another folder (frames used before)."""
     from .anim_player import scene_range
     sc = scene or bpy.context.scene
-    d = raw_dir(sc)
-    lo, hi = scene_range(sc)
-    out = {}
-    for f in range(lo, hi + 1):
-        p = os.path.join(d, f"{RAW_PREFIX}{f:04d}.exr")
-        if os.path.isfile(p):
-            out[f] = p
+    s_lo, s_hi = scene_range(sc)
+    lo = s_lo if lo is None else lo
+    hi = s_hi if hi is None else hi
+    seq = scan_sequence(folder or raw_dir(sc))
+    return {f: p for f, p in seq.items() if lo <= f <= hi}
+
+
+def cache_folders():
+    """Raw frame folders of all files (newest first): [(folder, {frame: file}, modified time)]."""
+    base = os.path.join(tempfile.gettempdir(), "qtshell_comp_cache")
+    out = []
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return out
+    for n in names:
+        d = os.path.join(base, n)
+        if os.path.isdir(d):
+            seq = scan_sequence(d)
+            if seq:
+                out.append((d, seq, max(os.path.getmtime(p) for p in seq.values())))
+    out.sort(key=lambda x: -x[2])
     return out
 
 
@@ -818,6 +860,8 @@ class ImageEditor(QtWidgets.QWidget):
         self._comp_sig = None
         self._pending = None           # (frame, start time, saw the job, scene frame)
         self._raw_keep = None          # output settings to put back after rendering the raw frames
+        self._raw_folder = None        # None: this file's cache folder, else frames used before (another folder)
+        self._range = None             # (from, to) of the cache – None: the scene's frame range
         register_handlers()
         self._build()
         self._watch = QtCore.QTimer(self)
@@ -908,6 +952,30 @@ class ImageEditor(QtWidgets.QWidget):
         self.follow_btn.toggled.connect(lambda on: on and self._on_frame_changed(bpy.context.scene.frame_current))
         al.addWidget(self.follow_btn)
         al.addWidget(self.raw_btn)
+        self.range_box = QtWidgets.QWidget(self.anim_box)
+        rl = QtWidgets.QHBoxLayout(self.range_box)
+        rl.setContentsMargins(4, 0, 0, 0)
+        rl.setSpacing(2)
+        rl.addWidget(QtWidgets.QLabel("From", self.range_box))
+        self.from_spin = QtWidgets.QSpinBox(self.range_box)
+        self.to_spin = QtWidgets.QSpinBox(self.range_box)
+        for sp in (self.from_spin, self.to_spin):
+            sp.setRange(-100000, 100000)
+            sp.setKeyboardTracking(False)
+            sp.setToolTip("Frames rendered for the compositor and composited (Live) – From / To")
+        rl.addWidget(self.from_spin)
+        rl.addWidget(QtWidgets.QLabel("To", self.range_box))
+        rl.addWidget(self.to_spin)
+        self.from_spin.valueChanged.connect(lambda _v: self._range_changed())
+        self.to_spin.valueChanged.connect(lambda _v: self._range_changed())
+        al.addWidget(self.range_box)
+        self.earlier_btn = self._tool("Earlier Frames", "Use frames rendered for the compositor before – of this "
+                                                         "file, another file or any folder with an image sequence")
+        self.earlier_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.earlier_menu = QtWidgets.QMenu(self.earlier_btn)
+        self.earlier_menu.aboutToShow.connect(self._fill_earlier_menu)
+        self.earlier_btn.setMenu(self.earlier_menu)
+        al.addWidget(self.earlier_btn)
         bl.addWidget(self.anim_box, 1)
         self.spacer = QtWidgets.QWidget(bar)
         self.spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
@@ -994,7 +1062,8 @@ class ImageEditor(QtWidgets.QWidget):
         src = self.source
         self.live_btn.setVisible(src in COMP_SOURCES or src == SRC_ANIM)
         self.frame_bar.setVisible(src == SRC_ANIM)
-        self.raw_btn.setVisible(src == SRC_ANIM and self.live)
+        for w in (self.raw_btn, self.range_box, self.earlier_btn):
+            w.setVisible(src == SRC_ANIM and self.live)
         self.render_btn.setVisible(src in COMP_SOURCES or src == SRC_RENDER)
         self.anim_box.setVisible(src == SRC_ANIM)
         self.spacer.setVisible(src != SRC_ANIM)
@@ -1100,7 +1169,8 @@ class ImageEditor(QtWidgets.QWidget):
             self.live_btn.blockSignals(False)
         if not self.live:
             self._stop_cache()
-        self.raw_btn.setVisible(self.source == SRC_ANIM and self.live)
+        for w in (self.raw_btn, self.range_box, self.earlier_btn):
+            w.setVisible(self.source == SRC_ANIM and self.live)
         self._update_link()
         if self.source == SRC_ANIM:
             self.reload()               # the composited frames cached before are shown again at once
@@ -1254,7 +1324,7 @@ class ImageEditor(QtWidgets.QWidget):
 
     def _load_animation(self, keep_view):
         info = output_info()
-        if info.get("movie") and not raw_frames():
+        if info.get("movie") and not self._raw_frames():
             self._anim = None
             self._set_picture(None)
             self._set_hint("The animation was rendered to a movie file – Render → View Animation plays it.",
@@ -1262,7 +1332,8 @@ class ImageEditor(QtWidgets.QWidget):
             self._sync_frame_controls()
             return
         files = self._anim_frames(info)
-        self._raw = raw_frames()        # kept with Live off too – turning it on again shows the cache at once
+        self._raw = self._raw_frames()  # kept with Live off too – turning it on again shows the cache at once
+        self._sync_range()
         sig = (_files_sig(files), _files_sig(self._raw))
         if sig != self._files_sig:               # new / re-rendered frames → read and composite them again
             self._frames.clear()
@@ -1327,8 +1398,7 @@ class ImageEditor(QtWidgets.QWidget):
         if not avail:
             self.frame_bar.set_state(0, 0, (), (), None)
             return
-        from .anim_player import scene_range
-        lo, hi = scene_range()
+        lo, hi = self.cache_range() if self.live else (min(avail), max(avail))
         self.frame_bar.set_state(min(lo, min(avail)), max(hi, max(avail)), avail,
                                  self._comp_frames.keys() if (self.live and self._raw) else (), self._frame)
 
@@ -1448,9 +1518,13 @@ class ImageEditor(QtWidgets.QWidget):
         s = r.image_settings
         keep = {"filepath": r.filepath, "use_compositing": r.use_compositing,
                 "use_file_extension": getattr(r, "use_file_extension", True)}
+        lo, hi = self.cache_range()
+        scene_keep = {"frame_start": sc.frame_start, "frame_end": sc.frame_end}
+        self._raw_folder = None                 # the new frames go to this file's own cache folder
         _s, img_keep = _save_settings()
-        self._raw_keep = (keep, img_keep)
+        self._raw_keep = (keep, img_keep, scene_keep)
         try:
+            sc.frame_start, sc.frame_end = min(lo, hi), max(lo, hi)     # From / To
             os.makedirs(raw_dir(sc), exist_ok=True)
             r.filepath = os.path.join(raw_dir(sc), RAW_PREFIX)
             r.use_compositing = False
@@ -1476,15 +1550,98 @@ class ImageEditor(QtWidgets.QWidget):
     def _restore_raw_settings(self):
         if self._raw_keep is None:
             return
-        keep, img_keep = self._raw_keep
+        keep, img_keep, scene_keep = self._raw_keep
         self._raw_keep = None
-        r = bpy.context.scene.render
+        sc = bpy.context.scene
+        r = sc.render
         for k, v in keep.items():
             try:
                 setattr(r, k, v)
             except Exception:
                 pass
         _restore_settings(r.image_settings, img_keep)
+        for k, v in scene_keep.items():
+            try:
+                setattr(sc, k, v)
+            except Exception:
+                pass
+
+    def cache_range(self):
+        """(from, to) of the frames for the compositor (default: the scene's frame range)."""
+        if self._range is not None:
+            return self._range
+        from .anim_player import scene_range
+        return tuple(scene_range())
+
+    def set_cache_range(self, start=None, end=None):
+        """From / To of the compositor cache; None, None = the scene's frame range again."""
+        self._range = None if start is None and end is None else (int(start), int(end))
+        self._sync_range()
+        if self.source == SRC_ANIM:
+            self.reload()
+
+    def _sync_range(self):
+        lo, hi = self.cache_range()
+        for sp, v in ((self.from_spin, lo), (self.to_spin, hi)):
+            if sp.value() != v:
+                sp.blockSignals(True)
+                sp.setValue(v)
+                sp.blockSignals(False)
+
+    def _range_changed(self):
+        lo, hi = self.from_spin.value(), self.to_spin.value()
+        self._range = (min(lo, hi), max(lo, hi))
+        if self.source == SRC_ANIM:
+            self.reload()
+
+    def _raw_frames(self):
+        lo, hi = self.cache_range()
+        return raw_frames(None, lo, hi, self._raw_folder)
+
+    def use_frames(self, folder=None):
+        """The compositor works on the frames in folder (rendered before – any image sequence); None = this file's
+        own frames."""
+        self._stop_cache()
+        self._raw_folder = folder or None
+        if folder:
+            seq = scan_sequence(folder)
+            if seq:
+                self._range = (min(seq), max(seq))
+                self._sync_range()
+        self._clear_anim()
+        self.reload()
+        if folder:
+            self._status(f"Image Editor: compositing the frames in {folder}", 5000)
+
+    def _fill_earlier_menu(self):
+        m = self.earlier_menu
+        m.clear()
+        own = raw_dir()
+        a = m.addAction("This file's frames" + ("  ✓" if self._raw_folder is None else ""))
+        a.triggered.connect(lambda _c=False: self.use_frames(None))
+        m.addSeparator()
+        for folder, seq, mt in cache_folders()[:15]:
+            name = os.path.basename(folder)
+            label = f"{name}  –  frames {min(seq)}–{max(seq)} ({len(seq)}), {time.strftime('%d.%m. %H:%M', time.localtime(mt))}"
+            if os.path.normcase(folder) == os.path.normcase(self._raw_folder or own):
+                label += "  ✓"
+            act = m.addAction(label)
+            act.triggered.connect(lambda _c=False, d=folder: self.use_frames(d))
+        m.addSeparator()
+        b = m.addAction("Browse Folder…")
+        b.setToolTip("Any folder with an image sequence – best OpenEXR rendered without compositing "
+                     "(frames that already went through the compositor would get it twice)")
+        b.triggered.connect(lambda _c=False: self._browse_frames())
+
+    def _browse_frames(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Frames for the Compositor",
+                                                       self._raw_folder or raw_dir())
+        if d:
+            if not scan_sequence(d):
+                QtWidgets.QMessageBox.information(self, "Frames for the Compositor",
+                                                  "No image sequence (name + frame number) in this folder.")
+                return
+            self.use_frames(d)
 
     def _start_cache(self):
         if self.live and self._raw and self.source == SRC_ANIM and self.isVisible() \

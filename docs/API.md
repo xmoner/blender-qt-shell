@@ -883,7 +883,9 @@ ie.reload(); ie.fit(); ie.zoom(1)     # 1 = 1:1
 ie.set_channel("ALPHA")               # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
 ie.export_image("C:/renders/comp.exr")              # .png .jpg .exr .tif .webp .bmp
 ie.set_source("ANIMATION"); ie.set_frame(12); ie.play(); ie.pause()
+ie.set_cache_range(10, 40)            # From / To (None, None = the scene range)
 ie.render_raw()                       # frames without compositing → Live composites the animation (cached)
+ie.use_frames(r"C:/frames")           # frames rendered before (any image sequence); None = this file's own
 ie.export_animation("C:/renders/anim.mp4", "MP4", 1, 120)   # MP4, PNG, JPEG, TIFF, COPY
 
 from qt_shell import image_editor
