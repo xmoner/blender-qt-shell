@@ -298,6 +298,13 @@ def current_frame():
     return int(f) if f is not None else int(bpy.context.scene.frame_current)
 
 
+def _frame_arg(f):
+    """Frame argument of the frame functions: None (or a stray bool from a Qt signal) = the current frame."""
+    if f is None or isinstance(f, bool):
+        return current_frame()
+    return int(f)
+
+
 def target_key(layer, f):
     """Frame a new stroke goes to (creates it when needed) – None when the layer is locked."""
     st = layer.get("state", "ANIMATION")
@@ -611,7 +618,7 @@ def insert_frame(f=None):
     lay = active_layer()
     if not _editable(lay):
         return False
-    f = current_frame() if f is None else f
+    f = _frame_arg(f)
     if str(f) in lay["frames"]:
         _status(f"Blue Pencil: frame {f} exists already")
         return False
@@ -625,7 +632,7 @@ def duplicate_frame(f=None):
     lay = active_layer()
     if not _editable(lay):
         return False
-    f = current_frame() if f is None else f
+    f = _frame_arg(f)
     if str(f) in lay["frames"]:
         _status(f"Blue Pencil: frame {f} exists already")
         return False
@@ -639,7 +646,7 @@ def delete_frame(f=None):
     lay = active_layer()
     if not _editable(lay):
         return False
-    k = held_key(lay, current_frame() if f is None else f)
+    k = held_key(lay, _frame_arg(f))
     if k is None:
         return False
     del lay["frames"][str(k)]
@@ -652,7 +659,7 @@ def copy_frame(f=None, cut=False):
     lay = active_layer()
     if lay is None:
         return False
-    k = held_key(lay, current_frame() if f is None else f)
+    k = held_key(lay, _frame_arg(f))
     if k is None:
         _status("Blue Pencil: nothing to copy here")
         return False
@@ -673,7 +680,7 @@ def paste_frame(f=None):
         return False
     if not _editable(lay):
         return False
-    f = current_frame() if f is None else f
+    f = _frame_arg(f)
     lay["frames"][str(f)] = json.loads(json.dumps(_frame_clip))
     commit("Paste Frame")
     return True
@@ -1801,7 +1808,11 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             b.setAutoRaise(True)
             b.setCheckable(checkable)
             if fn is not None:
-                (b.toggled if checkable else b.clicked).connect(fn)
+                if checkable:
+                    b.toggled.connect(fn)
+                else:
+                    # clicked(bool) would land in an optional argument (insert_frame(f=False) → frame "False")
+                    b.clicked.connect(lambda _c=False, fn=fn: fn())
             return b
 
         # top row: draw (activate the tool), show
@@ -1826,7 +1837,8 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         self.tool_btns = {}
         for n, (tid, name, icon, tip) in enumerate(TOOLS):
             b = tbtn(icon, f"{name} – {tip}", checkable=True)
-            b.clicked.connect(lambda _c=False, t=tid: set_tool(t))
+            # sync: a click on the tool already active would otherwise leave its button unchecked
+            b.clicked.connect(lambda _c=False, t=tid: (set_tool(t), self.sync()))
             pytips.tag(b, f'qt_shell.api.set_tool("BLUE_PENCIL", "{tid}")')
             grid.addWidget(b, n // 9, n % 9)
             self.tool_btns[tid] = b
