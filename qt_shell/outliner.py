@@ -2453,27 +2453,140 @@ class Outliner(QtWidgets.QWidget):
         self.refresh(force=True)
 
     def _duplicate_collection(self, c):
+        """Like Blender's Outliner → Duplicate Collection: the collection tree with copies of its objects.
+        The objects are copied by Blender's object.duplicate, which points everything inside the copy at the
+        copies (Armature modifiers, constraints, drivers, custom shapes, parents …) and follows the
+        Preferences → Editing → Duplicate Data settings; hidden / unselectable objects and collections are
+        made available only for that moment."""
+        self._ensure_object_mode()
+        vl = bpy.context.view_layer
+        colls = [c] + list(c.children_recursive)
+        objs = list(c.all_objects)
+        lcs = {}
+
+        def walk(lc):
+            lcs[lc.collection.name] = lc
+            for ch in lc.children:
+                walk(ch)
+        walk(vl.layer_collection)
+        coll_state = {cc.name: (cc.hide_select, cc.hide_viewport) for cc in colls}
+        lc_state = {cc.name: (lcs[cc.name].exclude, lcs[cc.name].hide_viewport) for cc in colls if cc.name in lcs}
+        ob_state = {}
+        for o in objs:
+            try:
+                ob_state[o.name] = (o.hide_get(), o.hide_viewport, o.hide_select)
+            except RuntimeError:            # not in this view layer (yet)
+                ob_state[o.name] = (False, o.hide_viewport, o.hide_select)
+        selected = [o.name for o in vl.objects if o.select_get()]
+        active = vl.objects.active.name if vl.objects.active else None
         mapping = {}
+        muted = []          # drivers of hide_* (e.g. a rig switching parts on / off) would hide them again
+        for o in objs:
+            ad = o.animation_data
+            for fc in (ad.drivers if ad else ()):
+                if fc.data_path.startswith("hide_") and not fc.mute:
+                    fc.mute = True
+                    muted.append((o.name, fc.data_path, fc.array_index))
+        try:
+            for cc in colls:                                    # everything selectable and visible for a moment
+                lc = lcs.get(cc.name)
+                if lc is not None:
+                    lc.exclude = False
+                    lc.hide_viewport = False
+                cc.hide_select = False
+                cc.hide_viewport = False
+            for o in objs:
+                o.hide_viewport = False
+                o.hide_select = False
+                try:
+                    o.hide_set(False)
+                except RuntimeError:
+                    pass
+            vl.update()                                         # visibility / selectability of the bases
+            for o in vl.objects:
+                o.select_set(False)
+            for o in objs:
+                o["_qs_dup_src"] = o.name
+                if o.name in vl.objects:
+                    o.select_set(True)
+            if objs and objs[0].name in vl.objects:
+                vl.objects.active = objs[0]
+            with bridge.blender_context():
+                bpy.ops.object.duplicate(linked=False)
+            for o in bpy.context.selected_objects:
+                src = o.get("_qs_dup_src")
+                if src and src != o.name:
+                    mapping[src] = o
+        finally:
+            for o in objs + list(mapping.values()):
+                try:
+                    if "_qs_dup_src" in o:
+                        del o["_qs_dup_src"]
+                except (ReferenceError, KeyError):
+                    pass
+            copies = {src: nob.name for src, nob in mapping.items()}
+            for name, path, index in muted:                     # the drivers on again (also in the copies)
+                for oname in (name, copies.get(name)):
+                    ob = bpy.data.objects.get(oname) if oname else None
+                    ad = ob.animation_data if ob else None
+                    fc = ad.drivers.find(path, index=index) if ad else None
+                    if fc is not None:
+                        fc.mute = False
+            for cc in reversed(colls):                          # put the original back as it was
+                lc = lcs.get(cc.name)
+                if lc is not None and cc.name in lc_state:
+                    lc.hide_viewport = lc_state[cc.name][1]
+                    lc.exclude = lc_state[cc.name][0]
+                cc.hide_select, cc.hide_viewport = coll_state[cc.name]
+            for o in objs:
+                hide, hvp, hsel = ob_state[o.name]
+                o.hide_viewport, o.hide_select = hvp, hsel
+                try:
+                    o.hide_set(hide)
+                except RuntimeError:
+                    pass
+        # the collection tree of the copy (its settings too)
+        cmap = {}
 
         def dup(src, parent):
             n = bpy.data.collections.new(src.name)
             n.color_tag = src.color_tag
+            n.hide_select, n.hide_viewport, n.hide_render = src.hide_select, src.hide_viewport, src.hide_render
             parent.children.link(n)
-            for ob in src.objects:
-                nob = mapping.get(ob.name)
-                if nob is None:
-                    nob = ob.copy()
-                    if ob.data is not None:
-                        nob.data = ob.data.copy()
-                    mapping[ob.name] = nob
-                n.objects.link(nob)
+            cmap[src.name] = n
             for ch in src.children:
                 dup(ch, n)
         dup(c, self._coll_parents(c)[0])
-        for old, new in mapping.items():
-            p = bpy.data.objects[old].parent
-            if p is not None and p.name in mapping:
-                new.parent = mapping[p.name]
+        for src, nob in mapping.items():
+            orig = bpy.data.objects[src]
+            for uc in list(nob.users_collection):
+                uc.objects.unlink(nob)
+            for uc in orig.users_collection:
+                if uc.name in cmap:
+                    cmap[uc.name].objects.link(nob)
+            hide, hvp, hsel = ob_state[src]
+            nob.hide_viewport, nob.hide_select = hvp, hsel
+        walk(vl.layer_collection)                               # the new layer collections
+        for src, n in cmap.items():
+            lc = lcs.get(n.name)
+            if lc is not None and src in lc_state:
+                lc.hide_viewport = lc_state[src][1]
+                lc.exclude = lc_state[src][0]
+        for src, nob in mapping.items():
+            try:
+                nob.hide_set(ob_state[src][0])
+            except RuntimeError:
+                pass
+        for o in vl.objects:                                    # the selection as before
+            try:
+                o.select_set(o.name in selected)
+            except RuntimeError:
+                pass
+        if active and active in vl.objects:
+            vl.objects.active = vl.objects[active]
+        if len(mapping) < len(objs):
+            bridge.log(f"Duplicate Collection: {len(objs) - len(mapping)} of {len(objs)} objects were not copied.",
+                       "WARNING")
         bridge.undo_push("Duplicate Collection")
         self.refresh(force=True)
 
