@@ -129,6 +129,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self.editor = editor
         self.node = node
         self.name = node.name
+        self._ptr = node.as_pointer()
         self.kind = "reroute" if node.bl_idname == "NodeReroute" else (
             "frame" if node.bl_idname == "NodeFrame" else "node")
         self.setFlags(QtWidgets.QGraphicsItem.ItemIsMovable | QtWidgets.QGraphicsItem.ItemIsSelectable
@@ -184,11 +185,21 @@ class NodeItem(QtWidgets.QGraphicsItem):
     def boundingRect(self):
         return QtCore.QRectF(-SOCK_R - 2, -2, self.w + 2 * SOCK_R + 4, self.h + 4)
 
+    def alive(self):
+        """False when the node was removed meanwhile (a script, undo, the Image editor's animation cache): node
+        structs are no IDs, so the Python object of a removed node is not invalidated – reading it reads freed
+        memory and crashes Blender. The tree (an ID) is asked by name and the pointer compared instead."""
+        tree = self.editor.tree
+        try:
+            cur = tree.nodes.get(self.name) if tree is not None else None
+            return cur is not None and cur.as_pointer() == self._ptr
+        except ReferenceError:
+            return False
+
     def paint(self, p, _opt, _w):
         node = self.node
-        try:
-            node.name
-        except ReferenceError:
+        if not self.alive():
+            self.editor._timer.start()          # rebuild from the tree as it is now
             return
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         sel = self.isSelected()

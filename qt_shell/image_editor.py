@@ -1438,6 +1438,11 @@ class ImageEditor(QtWidgets.QWidget):
         """Renders the animation once without compositing into a temporary folder (OpenEXR) – the input that
         Live composites with the current nodes."""
         mw = self.mw
+        if mw is not None and mw.is_rendering():
+            self._status("A render is running – Re-render when it has finished.", 4000)
+            return False
+        # the temporary node goes first: its image holds the old frames (Blender caches image sequences)
+        self._stop_cache()
         sc = bpy.context.scene
         r = sc.render
         s = r.image_settings
@@ -1487,11 +1492,22 @@ class ImageEditor(QtWidgets.QWidget):
             self._update_link()
             self._cache_timer.start()
 
+    def _nodes_changed(self):
+        """Nodes were added / removed behind the Node editor's back – it must drop its items of removed nodes now,
+        before its next paint (their Python objects point to freed memory)."""
+        ne = getattr(self.mw, "node_editor", None) if self.mw is not None else None
+        if ne is not None:
+            try:
+                ne.refresh()
+            except Exception:
+                bridge.log(traceback.format_exc(), "WARNING")
+
     def _stop_cache(self):
         self._cache_timer.stop()
         self._pending = None
         try:
-            ANIM_COMP.uninstall()
+            if ANIM_COMP.uninstall():
+                self._nodes_changed()
         except Exception:
             bridge.log(traceback.format_exc(), "WARNING")
 
@@ -1568,9 +1584,12 @@ class ImageEditor(QtWidgets.QWidget):
             self._update_footer()
             return
         try:
+            fresh = ANIM_COMP.node(tree) is None
             if ANIM_COMP.install(tree, self._raw) is None:
                 self._stop_cache()
                 return
+            if fresh:
+                self._nodes_changed()
             ANIM_COMP.set_frame(tree, todo)
         except Exception:
             bridge.log("Image Editor: " + traceback.format_exc(), "WARNING")
