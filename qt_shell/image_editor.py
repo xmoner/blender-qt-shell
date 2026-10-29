@@ -438,6 +438,41 @@ def raw_frames(scene=None, lo=None, hi=None, folder=None):
     return {f: p for f, p in seq.items() if lo <= f <= hi}
 
 
+_SIZE_CACHE = {}
+
+
+def image_size(path):
+    """(width, height) of an image file from its header (Qt formats, else OpenImageIO – OpenEXR), or None."""
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return None
+    if key in _SIZE_CACHE:
+        return _SIZE_CACHE[key]
+    size = None
+    rd = QtGui.QImageReader(path)
+    sz = rd.size()
+    if sz.isValid() and sz.width() > 0:
+        size = (sz.width(), sz.height())
+    else:
+        try:
+            import OpenImageIO as oiio
+            inp = oiio.ImageInput.open(path)
+            if inp is not None:
+                spec = inp.spec()
+                size = (spec.width, spec.height)
+                inp.close()
+        except Exception:
+            size = None
+    _SIZE_CACHE[key] = size
+    return size
+
+
+def render_size(scene=None):
+    r = (scene or bpy.context.scene).render
+    return (int(r.resolution_x * r.resolution_percentage / 100), int(r.resolution_y * r.resolution_percentage / 100))
+
+
 def cache_folders():
     """Raw frame folders of all files (newest first): [(folder, {frame: file}, modified time)]."""
     base = os.path.join(tempfile.gettempdir(), "qtshell_comp_cache")
@@ -629,7 +664,8 @@ class ImageCanvas(QtWidgets.QWidget):
         m = theme.px(16)
         z = min((self.width() - m) * dpr / max(self.image.width(), 1),
                 (self.height() - m) * dpr / max(self.image.height(), 1))
-        self.set_zoom(min(z, 1.0) if z > 0 else 1.0, reset_offset=True)
+        # small pictures are enlarged to the view too (Blender's View Fit) – the footer shows the real size
+        self.set_zoom(z if z > 0 else 1.0, reset_offset=True)
 
     def set_zoom(self, z, anchor=None, reset_offset=False):
         z = max(0.02, min(64.0, z))
@@ -1608,6 +1644,14 @@ class ImageEditor(QtWidgets.QWidget):
             if seq:
                 self._range = (min(seq), max(seq))
                 self._sync_range()
+                size = image_size(seq[min(seq)])
+                rw, rh = render_size()
+                if size and (size[0] < rw or size[1] < rh):
+                    self._status(f"These frames are {size[0]} × {size[1]} – smaller than the render ({rw} × {rh}). "
+                                 "Re-render for the full resolution.", 8000)
+                    self._clear_anim()
+                    self.reload(keep_view=False)
+                    return
         self._clear_anim()
         self.reload()
         if folder:
@@ -1620,18 +1664,54 @@ class ImageEditor(QtWidgets.QWidget):
         a = m.addAction("This file's frames" + ("  ✓" if self._raw_folder is None else ""))
         a.triggered.connect(lambda _c=False: self.use_frames(None))
         m.addSeparator()
-        for folder, seq, mt in cache_folders()[:15]:
+        rw, rh = render_size()
+        folders = cache_folders()[:15]
+        for folder, seq, mt in folders:
             name = os.path.basename(folder)
-            label = f"{name}  –  frames {min(seq)}–{max(seq)} ({len(seq)}), {time.strftime('%d.%m. %H:%M', time.localtime(mt))}"
+            size = image_size(seq[min(seq)])
+            res = f"{size[0]} × {size[1]}" if size else "?"
+            label = (f"{name}  –  {res}  –  frames {min(seq)}–{max(seq)} ({len(seq)}), "
+                     f"{time.strftime('%d.%m. %H:%M', time.localtime(mt))}")
+            if size and (size[0] < rw or size[1] < rh):
+                label += f"   ⚠ smaller than the render ({rw} × {rh})"
             if os.path.normcase(folder) == os.path.normcase(self._raw_folder or own):
                 label += "  ✓"
             act = m.addAction(label)
             act.triggered.connect(lambda _c=False, d=folder: self.use_frames(d))
+        if folders:
+            dm = m.addMenu("Delete Frames")
+            dm.setToolTip("Deletes a folder of frames rendered for the compositor (temporary files)")
+            for folder, seq, _mt in folders:
+                size = image_size(seq[min(seq)])
+                res = f"{size[0]} × {size[1]}" if size else "?"
+                da = dm.addAction(f"{os.path.basename(folder)}  –  {res}, {len(seq)} frames")
+                da.triggered.connect(lambda _c=False, d=folder: self._delete_frames(d))
         m.addSeparator()
         b = m.addAction("Browse Folder…")
         b.setToolTip("Any folder with an image sequence – best OpenEXR rendered without compositing "
                      "(frames that already went through the compositor would get it twice)")
         b.triggered.connect(lambda _c=False: self._browse_frames())
+
+    def _delete_frames(self, folder):
+        if QtWidgets.QMessageBox.question(self, "Delete Frames", f"Delete the frames in\n{folder}?") \
+                != QtWidgets.QMessageBox.Yes:
+            return
+        base = os.path.normcase(os.path.join(tempfile.gettempdir(), "qtshell_comp_cache"))
+        if not os.path.normcase(os.path.abspath(folder)).startswith(base):
+            return                               # only Qt Shell's own cache folders
+        using = os.path.normcase(folder) == os.path.normcase(self._raw_folder or raw_dir())
+        if using:
+            self._stop_cache()
+        try:
+            shutil.rmtree(folder)
+        except Exception as ex:
+            QtWidgets.QMessageBox.warning(self, "Delete Frames", str(ex))
+            return
+        if using:
+            self._raw_folder = None
+            self._clear_anim()
+            self.reload()
+        self._status(f"Deleted {folder}", 4000)
 
     def _browse_frames(self):
         d = QtWidgets.QFileDialog.getExistingDirectory(self, "Frames for the Compositor",
@@ -1776,7 +1856,12 @@ class ImageEditor(QtWidgets.QWidget):
     def _update_footer(self):
         parts = []
         if self.base is not None:
-            parts.append(f"{self.base.width()} × {self.base.height()}")
+            size = f"{self.base.width()} × {self.base.height()}"
+            if self.source == SRC_ANIM:
+                rw, rh = render_size()
+                if (self.base.width(), self.base.height()) != (rw, rh):
+                    size += f" (render {rw} × {rh})"
+            parts.append(size)
         label = SOURCE_LABELS.get(self.source) or self.source[6:]
         if self.source == SRC_ANIM and self._frame is not None:
             label += f" · frame {self._frame}"
