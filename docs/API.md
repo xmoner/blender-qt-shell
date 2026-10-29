@@ -687,6 +687,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
 | 1.5 | 0.34.0 | `set_tool()`, `active_tool()`, `TOOLS` – the 3D viewport's toolbar tools (incl. Annotate, Measure, Add); Render View: `set_tool()`, annotations (`add_annotation`, `annotations`, `clear_annotations`, `undo_annotation`, `set_annotation_style`), `set_overlays`, `set_gizmos`, `set_toolbar`. |
+| 1.9 | 0.64.0 | `image_editor()` – the Image editor: sources (compositor Viewer, render result, rendered animation, images), live compositor updates, channels, zoom, frames / playback, export image / animation (MP4, image sequences). |
 | 1.8 | 0.58.0 | `run_op(idname, invoke=False, **props)` – a Blender operator run like Qt Shell's menus (3D view context, Qt-handled operators, undo). |
 | 1.7 | 0.53.1 | `uv_editor()` – the UV editor: component mode, Blender UV operators in a UV editor context, projections, unwrap / layout, move / rotate / flip / align / normalize, texel density, display toggles, image. |
 | 1.6 | 0.36.0 | `timeline()` – the Timeline: view range / zoom, play / stop / step, loop mode, preview range, frame rate, seconds, key selection / moving, markers. |
@@ -864,4 +865,25 @@ from qt_shell import shelf
 shelf.export_shelves(r"C:/shelves/modeling.json", ["Modeling"])   # None = all shelves
 shelf.import_shelves(r"C:/shelves/modeling.json")                 # added as new tabs of the open Shelf
 shelf.shelf_folder()                                              # default folder: config/qt_shell/shelves
+```
+
+## Image editor from a script
+
+`qt_shell.api.image_editor()` (API 1.9) returns the Image editor dock (None when Qt Shell is closed). With the
+source **COMPOSITOR** it shows the compositor's Viewer node and follows every change of the compositor nodes
+(the compositor works on the last render).
+
+```python
+import qt_shell
+ie = qt_shell.api.image_editor()
+ie.set_source("COMPOSITOR")           # COMPOSITOR, RENDER, ANIMATION or the name of an image
+ie.set_live(True)                     # re-read the Viewer whenever the compositor ran
+ie.reload(); ie.fit(); ie.zoom(1)     # 1 = 1:1
+ie.set_channel("ALPHA")               # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
+ie.export_image("C:/renders/comp.exr")              # .png .jpg .exr .tif .webp .bmp
+ie.set_source("ANIMATION"); ie.set_frame(12); ie.play(); ie.pause()
+ie.export_animation("C:/renders/anim.mp4", "MP4", 1, 120)   # MP4, PNG, JPEG, TIFF, COPY
+
+from qt_shell import image_editor
+image_editor.ensure_compositor()      # compositor nodes (Render Layers → Group Output) + a Viewer node
 ```

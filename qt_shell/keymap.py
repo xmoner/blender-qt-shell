@@ -30,6 +30,7 @@ W, V, VM, VP, TL, GE, NE, UV, TE = ("Window", "3D View", "3D View · Edit Mesh",
                                     "Timeline", "Graph Editor", "Node Editor", "UV Editor", "Text Editor")
 OL = "Outliner"
 RV = "Render View"
+IE = "Image Editor"
 # window (work everywhere in the Qt Shell window)
 _a("window.new", W, "New File", "Ctrl+N")
 _a("window.open", W, "Open…", "Ctrl+O")
@@ -257,6 +258,16 @@ _a("render.close", RV, "Close Render View", "Esc")
 _a("render.toolbar", RV, "Toolbar", "T")
 _a("render.tool_sample", RV, "Sample Tool")
 _a("render.tool_annotate", RV, "Annotate Tool (again: next variant)")
+# image editor (compositor / render result / rendered animation)
+_a("image.fit", IE, "Frame All", "Home")
+_a("image.zoom_in", IE, "Zoom In", "Num++", "Ctrl+=")
+_a("image.zoom_out", IE, "Zoom Out", "Num+-", "Ctrl+-")
+_a("image.zoom_1_1", IE, "Zoom 1:1", "Num+1")
+_a("image.reload", IE, "Reload", "Alt+R")
+_a("image.export", IE, "Export Image", "Shift+Alt+S")
+_a("image.play", IE, "Play / Pause the Rendered Animation", "Alt+A")
+_a("image.frame_prev", IE, "Previous Rendered Frame", "Left")
+_a("image.frame_next", IE, "Next Rendered Frame", "Right")
 # graph editor
 _a("graph.frame_selected", GE, "Frame Selected Keys", "F")
 _a("graph.frame_all", GE, "Frame All Curves", "A", "Home")

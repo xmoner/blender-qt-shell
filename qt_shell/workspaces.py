@@ -5,7 +5,7 @@ windows, the 3D view layout (single / quad …) and the viewport shading. Switch
 workspace first, so changes made in a workspace stay there.
 
 - Tabs on the right side of the menu bar; + adds a workspace (copy of the current one or a template
-  like Blender's General: Layout, Modeling, Shading, Animation, Scripting, UV Editing).
+  like Blender's General: Layout, Modeling, Shading, Animation, Scripting, UV Editing, Compositing).
 - Right click a tab: Rename…, Duplicate, Move Left / Right, Delete; double-click renames.
 - Stored in Blender's config folder: config/qt_shell/workspaces.json.
 
@@ -28,7 +28,7 @@ LEFT = QtCore.Qt.LeftDockWidgetArea
 RIGHT = QtCore.Qt.RightDockWidgetArea
 
 # template → (shading, viewport layout)
-TEMPLATES = ["Layout", "Modeling", "Shading", "Animation", "Scripting", "UV Editing"]
+TEMPLATES = ["Layout", "Modeling", "Shading", "Animation", "Scripting", "UV Editing", "Compositing"]
 DEFAULT_NAMES = ["Layout", "Modeling", "Shading", "Animation", "Scripting"]
 
 
@@ -81,16 +81,16 @@ def apply_template(win, name):
         d["timeline"].raise_()
         win.resizeDocks([d["timeline"]], [theme.px(190)], QtCore.Qt.Vertical)
     elif name == "Modeling":
-        hide("sidebar", "timeline", "console", "node_editor", "uv_editor", "text_editor")
+        hide("sidebar", "timeline", "console", "node_editor", "uv_editor", "text_editor", "image_editor")
         show("last_op")                               # Adjust Last Operation – handy while modeling
     elif name == "Shading":
         shading = "MATERIAL"
-        hide("sidebar", "timeline", "console", "uv_editor", "text_editor", "last_op")
+        hide("sidebar", "timeline", "console", "uv_editor", "text_editor", "last_op", "image_editor")
         show("node_editor")
         d["node_editor"].raise_()
         win.resizeDocks([d["node_editor"]], [theme.px(330)], QtCore.Qt.Vertical)
     elif name == "Animation":
-        hide("sidebar", "console", "node_editor", "uv_editor", "text_editor", "last_op")
+        hide("sidebar", "console", "node_editor", "uv_editor", "text_editor", "last_op", "image_editor")
         # like Maya: the Graph Editor above the Timeline
         ge, tl = d["graph_editor"], d["timeline"]
         win.addDockWidget(BOTTOM, ge)
@@ -99,7 +99,7 @@ def apply_template(win, name):
         tl.show()
         win.resizeDocks([ge, tl], [theme.px(330), theme.px(120)], QtCore.Qt.Vertical)
     elif name == "Scripting":
-        hide("sidebar", "timeline", "node_editor", "uv_editor", "last_op")
+        hide("sidebar", "timeline", "node_editor", "uv_editor", "last_op", "image_editor")
         # Text editor on the left, Console at the bottom (like Blender's Scripting workspace)
         te = d["text_editor"]
         win.addDockWidget(LEFT, te)
@@ -109,11 +109,26 @@ def apply_template(win, name):
         win.resizeDocks([te], [theme.px(520)], QtCore.Qt.Horizontal)
         win.resizeDocks([d["console"]], [theme.px(200)], QtCore.Qt.Vertical)
     elif name == "UV Editing":
-        hide("sidebar", "timeline", "console", "node_editor", "text_editor", "last_op")
+        hide("sidebar", "timeline", "console", "node_editor", "text_editor", "last_op", "image_editor")
         uv = d["uv_editor"]
         win.addDockWidget(LEFT, uv)
         uv.show()
         win.resizeDocks([uv], [theme.px(560)], QtCore.Qt.Horizontal)
+    elif name == "Compositing":
+        # like Blender's Compositing workspace: the compositor's picture above its nodes
+        hide("sidebar", "timeline", "console", "uv_editor", "text_editor", "last_op")
+        ie, ne = d["image_editor"], d["node_editor"]
+        win.addDockWidget(LEFT, ie)
+        ie.show()
+        show("node_editor")
+        ne.raise_()
+        win.resizeDocks([ie], [theme.px(620)], QtCore.Qt.Horizontal)
+        win.resizeDocks([ne], [theme.px(330)], QtCore.Qt.Vertical)
+        try:
+            win.node_editor.set_source("COMPOSITOR")
+            win.image_editor.set_source("COMPOSITOR")
+        except Exception:
+            bridge.log(traceback.format_exc(), "WARNING")
     left = [d[k] for k in ("sidebar", "last_op") if k in d and d[k].isVisible() and not d[k].isFloating()]
     if left and name != "Scripting":
         win.resizeDocks(left, [theme.px(270)] * len(left), QtCore.Qt.Horizontal)

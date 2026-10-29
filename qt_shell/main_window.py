@@ -550,6 +550,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sidebar = Sidebar(hub)
         self.text_editor = TextEditor(hub)
         self.graph_editor = GraphEditor(hub, self)
+        from .image_editor import ImageEditor
+        self.image_editor = ImageEditor(hub, self)
         self.uv_editor.canvas.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self.docks = {}
         self._dock("outliner", "Outliner", self.outliner, QtCore.Qt.RightDockWidgetArea)
@@ -561,6 +563,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dock("uv_editor", "UV editor", self.uv_editor, QtCore.Qt.BottomDockWidgetArea)
         self._dock("text_editor", "Text editor", self.text_editor, QtCore.Qt.BottomDockWidgetArea)
         self._dock("graph_editor", "Graph editor", self.graph_editor, QtCore.Qt.BottomDockWidgetArea)
+        self._dock("image_editor", "Image editor", self.image_editor, QtCore.Qt.BottomDockWidgetArea)
         # 3D viewport sidebar (N panel): next to the viewport, hidden by default like in Blender
         self._dock("sidebar", "Sidebar", self.sidebar, QtCore.Qt.RightDockWidgetArea)
         self.addDockWidget(QtCore.Qt.RightDockWidgetArea, self.docks["sidebar"], QtCore.Qt.Horizontal)
@@ -570,6 +573,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(self.docks["timeline"], self.docks["uv_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["text_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["graph_editor"])
+        self.tabifyDockWidget(self.docks["timeline"], self.docks["image_editor"])
         self.docks["timeline"].raise_()
         self.resizeDocks([self.docks["outliner"], self.docks["properties"]], [260, 560], QtCore.Qt.Vertical)
         self.resizeDocks([self.docks["properties"]], [400], QtCore.Qt.Horizontal)
@@ -2107,6 +2111,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           ("uv_editor", QtCore.Qt.BottomDockWidgetArea),
                           ("text_editor", QtCore.Qt.BottomDockWidgetArea),
                           ("graph_editor", QtCore.Qt.BottomDockWidgetArea),
+                          ("image_editor", QtCore.Qt.BottomDockWidgetArea),
                           ("shelf", QtCore.Qt.TopDockWidgetArea)):
             d = self.docks[key]
             d.setFloating(False)
@@ -2117,6 +2122,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabifyDockWidget(self.docks["timeline"], self.docks["uv_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["text_editor"])
         self.tabifyDockWidget(self.docks["timeline"], self.docks["graph_editor"])
+        self.tabifyDockWidget(self.docks["timeline"], self.docks["image_editor"])
 
     def _on_log(self, msg, level):
         if level in ("ERROR", "WARNING"):
@@ -2214,6 +2220,10 @@ class MainWindow(QtWidgets.QMainWindow):
         ev.ignore()
 
     def shutdown(self):
+        try:
+            self.image_editor.shutdown()          # gives Blender's borrowed area its old type back
+        except Exception:
+            pass
         # A saved layout with a floating dock crashes Qt on Windows on the next start (access
         # violation in show(), even when the dock is docked again before that). Floating works at
         # run time, so floating docks are docked before the layout is saved.

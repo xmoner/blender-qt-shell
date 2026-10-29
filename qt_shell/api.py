@@ -37,10 +37,10 @@ __all__ = [
     "viewport_layout", "set_viewport_layout", "viewports", "status_history",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
     "owner", "current_owner", "cleanup", "owned", "outliner", "graph_editor", "render_view",
-    "active_tool", "set_tool", "TOOLS", "timeline",
+    "active_tool", "set_tool", "TOOLS", "timeline", "image_editor",
 ]
 
-API_VERSION = (1, 8)
+API_VERSION = (1, 9)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -264,6 +264,23 @@ def render_view():
         rv.set_overlays(False); rv.set_gizmos(True); rv.set_toolbar(True)"""
     w = main_window()
     return getattr(w, "render_window", None) if w is not None else None
+
+
+def image_editor():
+    """The Image Editor of the Qt Shell window (compositor / render result / rendered animation), None when
+    Qt Shell is not open.
+
+        import qt_shell
+        ie = qt_shell.api.image_editor()
+        ie.set_source("COMPOSITOR")       # COMPOSITOR (the Viewer node), RENDER, ANIMATION or an image name
+        ie.set_live(True)                 # follow every change of the compositor nodes
+        ie.reload(); ie.fit(); ie.zoom(1)
+        ie.set_channel("ALPHA")           # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
+        ie.set_frame(12); ie.play(); ie.pause()   # rendered animation
+        ie.export_image("C:/renders/comp.exr")    # the format follows the extension
+        ie.export_animation("C:/renders/anim.mp4", "MP4", 1, 120)   # MP4, PNG, JPEG, TIFF, COPY"""
+    w = main_window()
+    return getattr(w, "image_editor", None) if w is not None else None
 
 
 # 3D viewport tools: tool → its variants (None = no variants)

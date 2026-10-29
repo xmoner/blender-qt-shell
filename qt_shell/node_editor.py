@@ -745,6 +745,13 @@ class NodeEditor(QtWidgets.QWidget):
                 self.group_stack.pop()
         return self.base_tree()
 
+    def set_source(self, mode):
+        """SHADER, WORLD, GEOMETRY or COMPOSITOR."""
+        i = self.source.findData(mode)
+        if i >= 0:
+            self.source.setCurrentIndex(i)
+            self._reset()
+
     def _reset(self):
         self.group_stack.clear()
         self._sig = None
@@ -990,17 +997,9 @@ class NodeEditor(QtWidgets.QWidget):
                 mod = ob.modifiers.new("GeometryNodes", "NODES")
                 mod.node_group = ng
             elif mode == "COMPOSITOR":
-                if hasattr(scene, "compositing_node_group"):
-                    ng = bpy.data.node_groups.new("Compositor", "CompositorNodeTree")
-                    scene.compositing_node_group = ng
-                    ng.nodes.new("CompositorNodeRLayers").location = (-300, 0)
-                    try:
-                        ng.interface.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
-                        ng.nodes.new("NodeGroupOutput").location = (200, 0)
-                    except Exception:
-                        pass
-                else:
-                    scene.use_nodes = True
+                # Render Layers → Group Output, and a Viewer (the Image Editor shows the Viewer's picture)
+                from .image_editor import ensure_compositor
+                ensure_compositor(viewer=True)
         except Exception as ex:
             bridge.log(str(ex), "ERROR")
         bridge.undo_push("New Node Tree")
