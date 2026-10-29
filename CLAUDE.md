@@ -32,7 +32,9 @@ Don't dig through old chat history.
    the old version after a restart (the test only deployed the changed modules).
 5. Docs:
    - `README.md` **and** `qt_shell/README.md` – same feature rows, keep them in sync;
-   - `docs/DEVELOPMENT.md` – new row in §5 version history (+ lessons learned, file list in §3 for new modules);
+   - `docs/DEVELOPMENT.md` – new row **at the end** of §5 version history (ascending order; column "GitHub release" =
+     `not released yet` – the owner publishes; dates come from `gh api repos/xmoner/blender-qt-shell/releases`)
+     (+ lessons learned, file list in §3 for new modules);
    - push `docs/DEVELOPMENT.md` (and this file if changed) to the claude.ai project with
      `Projects project_write` (`path: docs/DEVELOPMENT.md`, `local_path: …`).
 6. Commit + `git push origin main`. Commit message ends with the two attribution lines the session gives
