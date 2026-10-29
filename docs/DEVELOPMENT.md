@@ -190,6 +190,10 @@ docs/API.md          Python API reference (also saved in the claude.ai project)
 docs/DEVELOPMENT.md  this file
 examples/api_demo.py, examples/viewport_button.py
 README.md            features table, install, troubleshooting (also qt_shell/README.md – keep both in sync)
+site/                project web page (index.html + img/), published to the gh-pages branch:
+                     git subtree split --prefix site -b gh-pages && git push -f origin gh-pages
+                     (Pages: Settings → Pages → Deploy from a branch → gh-pages / root;
+                     the Pages API is blocked through the session proxy)
 ```
 
 ---
