@@ -1159,10 +1159,29 @@ class Viewport(QtWidgets.QWidget):
         self.update()
         return True
 
+    def _pose_switch_rig(self, x, y):
+        """Pose mode, click on a control of an armature that isn't in Pose mode (e.g. a duplicated rig):
+        like clicking it in Object mode – Pose mode on that rig with the clicked bone selected."""
+        ctx = bpy.context
+        try:
+            selectable = {o.name for o in ctx.selectable_objects}
+        except Exception:
+            selectable = {o.name for o in ctx.visible_objects if not o.hide_select}
+        others = [o for o in ctx.visible_objects
+                  if o.type == "ARMATURE" and o.mode != "POSE" and o.name in selectable]
+        hit = wirepick.pick_bone(self, x, y, others) if others else None
+        if hit is None:
+            return False
+        if "FINISHED" not in bridge.run_op("object.mode_set", {"mode": "OBJECT"}):
+            return False
+        return self._enter_pose_on(*hit)
+
     def _pose_select_click(self, x, y, extend):
         ctx = bpy.context
         arms = wirepick.pose_armatures(ctx)
         hit = wirepick.pick_bone(self, x, y, arms)
+        if hit is None and self._pose_switch_rig(x, y):
+            return                               # a control of another rig: Pose mode moved to that rig
         if not extend:
             for ob in arms:
                 for pb in ob.pose.bones:
