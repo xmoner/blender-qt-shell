@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qt Shell – Blender UI in PySide6</title>
+<meta name="description" content="Qt Shell is a Blender add-on that replaces Blender's interface with a PySide6 (Qt) window – viewport, outliner, properties, timeline, node, UV, graph and image editors, shelves and Maya-style shortcuts.">
+<meta property="og:title" content="Qt Shell – Blender UI in PySide6">
+<meta property="og:description" content="A Blender add-on that replaces Blender's interface with a Qt window.">
+<meta property="og:image" content="img/og.jpg">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<style>
+  :root {
+    --bg: #17181b;
+    --panel: #212226;
+    --panel-2: #2a2c31;
+    --line: #34363c;
+    --text: #e4e5e8;
+    --muted: #9a9ca3;
+    --accent: #4772b3;
+    --accent-2: #5d8ad6;
+    --orange: #e87d0d;
+    --radius: 10px;
+    --max: 1120px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: .92em; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(23, 24, 27, .92); backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--line);
+  }
+  header.top .wrap { display: flex; align-items: center; gap: 12px; height: 56px; }
+  header.top img { width: 28px; height: 28px; }
+  header.top .name { font-weight: 600; letter-spacing: .2px; }
+  header.top nav { margin-left: auto; display: flex; gap: 20px; font-size: 15px; }
+  header.top nav a { color: var(--muted); }
+  header.top nav a:hover { color: var(--text); text-decoration: none; }
+
+  .hero { padding: 64px 0 40px; text-align: center; }
+  .hero img.logo { width: 112px; height: 112px; }
+  .hero h1 { font-size: clamp(32px, 5vw, 48px); margin: 16px 0 8px; line-height: 1.15; }
+  .hero p.lead { color: var(--muted); font-size: 19px; max-width: 720px; margin: 0 auto 28px; }
+  .buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 12px 22px; border-radius: 8px; font-weight: 600;
+    border: 1px solid var(--line); color: var(--text); background: var(--panel);
+  }
+  .btn:hover { text-decoration: none; background: var(--panel-2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: var(--accent-2); }
+  .hero .meta { margin-top: 14px; color: var(--muted); font-size: 14px; }
+
+  figure { margin: 0; }
+  .shot {
+    border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
+    background: var(--panel); box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  figcaption { color: var(--muted); font-size: 14px; padding: 10px 14px; border-top: 1px solid var(--line); }
+
+  section { padding: 56px 0; }
+  section h2 { font-size: 28px; margin: 0 0 8px; }
+  section p.sub { color: var(--muted); margin: 0 0 28px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px 18px 16px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .card .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); margin-right: 8px; vertical-align: middle; }
+
+  .split { display: grid; grid-template-columns: 1.6fr 1fr; gap: 28px; align-items: center; }
+  .split.rev { grid-template-columns: 1fr 1.6fr; }
+  .split h3 { font-size: 22px; margin: 0 0 8px; }
+  .split p { color: var(--muted); margin: 0 0 10px; }
+  .split ul { color: var(--muted); padding-left: 20px; margin: 0; }
+  .split + .split { margin-top: 48px; }
+
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  ol.steps li {
+    counter-increment: s; position: relative; padding: 14px 16px 14px 56px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  }
+  ol.steps li::before {
+    content: counter(s); position: absolute; left: 16px; top: 13px; width: 26px; height: 26px;
+    border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .note { color: var(--muted); font-size: 14px; margin-top: 14px; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; gap: 20px; flex-wrap: wrap; justify-content: space-between; }
+
+  @media (max-width: 820px) {
+    .split, .split.rev { grid-template-columns: 1fr; }
+    .split.rev figure { order: -1; }
+    header.top nav { gap: 14px; font-size: 14px; }
+    header.top nav a.hide-sm { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <img src="img/logo.png" alt="">
+    <span class="name">Qt Shell</span>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#screens" class="hide-sm">Screenshots</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/xmoner/blender-qt-shell">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="hero wrap">
+    <img class="logo" src="img/logo.png" alt="Qt Shell logo">
+    <h1>Blender, with a Qt interface</h1>
+    <p class="lead">Qt Shell is a Blender add-on that replaces Blender's UI with a PySide6 window –
+      viewport, outliner, properties, timeline and editors, with shelves and Maya-style shortcuts.
+      Your scenes, operators and add-ons stay pure Blender.</p>
+    <div class="buttons">
+      <a class="btn primary" href="https://github.com/xmoner/blender-qt-shell/releases/latest/download/qt_shell.zip">Download qt_shell.zip</a>
+      <a class="btn" href="https://github.com/xmoner/blender-qt-shell/releases">All releases</a>
+      <a class="btn" href="https://github.com/xmoner/blender-qt-shell">Source on GitHub</a>
+    </div>
+    <div class="meta">Blender 4.2+ · developed and tested on Blender 5.2 LTS · Windows, Linux, macOS</div>
+  </div>
+
+  <div class="wrap">
+    <figure class="shot">
+      <img src="img/main.jpg" width="1600" height="900" alt="Qt Shell main window with the 3D viewport, shelf, outliner, properties and timeline">
+      <figcaption>The main window: 3D viewport with Material Preview, Shelf, Outliner, Properties and the Timeline with cached playback.</figcaption>
+    </figure>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>What runs in Qt</h2>
+      <p class="sub">Blender keeps doing the work – Qt Shell draws the interface around it.</p>
+      <div class="grid">
+        <div class="card"><h3><span class="dot"></span>3D viewport</h3><p>Blender renders the scene off-screen and Qt shows it. Orbit, pan, zoom, numpad views, selection, G / R / S with axes and numeric input, transform gizmos and snapping.</p></div>
+        <div class="card"><h3><span class="dot"></span>Blender's own menus</h3><p>File, Edit, Add, Object, Select and Render are built from Blender's original menus – including entries added by other add-ons.</p></div>
+        <div class="card"><h3><span class="dot"></span>Maya &amp; Blender keys</h3><p>Switch between Maya and Blender key sets and navigation, edit every shortcut in the Keyboard Shortcuts window.</p></div>
+        <div class="card"><h3><span class="dot"></span>Outliner &amp; Properties</h3><p>Collections, restriction columns, drag &amp; drop; all property tabs, modifiers and constraints as native Qt widgets.</p></div>
+        <div class="card"><h3><span class="dot"></span>Timeline &amp; playback</h3><p>Keys, markers, preview range, loop modes and cached playback that plays heavy scenes in real time.</p></div>
+        <div class="card"><h3><span class="dot"></span>Graph &amp; Node editors</h3><p>F-curve editing, shader, geometry and compositor node trees with node search and a property panel.</p></div>
+        <div class="card"><h3><span class="dot"></span>UV editor</h3><p>Maya- and Blender-style UV editing with a UV Toolkit: select, pin, align, unwrap, cut and sew, texel density, checker map.</p></div>
+        <div class="card"><h3><span class="dot"></span>Image editor</h3><p>Live compositor result, Render Result and rendered animations with a cached timeline; export images and MP4.</p></div>
+        <div class="card"><h3><span class="dot"></span>Render View</h3><p>Render slots, channels, sampling and annotations, F12 / F11, plus an Animation Player for rendered frames.</p></div>
+        <div class="card"><h3><span class="dot"></span>Shelf</h3><p>Maya-style shelves with built-in sets for modeling, UV, rigging, animation and rendering – or your own buttons and scripts.</p></div>
+        <div class="card"><h3><span class="dot"></span>Blue Pencil</h3><p>2D drawings keyed on frames over the viewport, retiming on the Timeline, burnt into renders and playblasts.</p></div>
+        <div class="card"><h3><span class="dot"></span>Text editor &amp; Console</h3><p>Python editor with tabs, live checks, outline and find / replace; console tracebacks link to the source line.</p></div>
+        <div class="card"><h3><span class="dot"></span>Workspaces</h3><p>Layout, Modeling, Shading, Animation, Scripting, UV Editing and Compositing – dockable panels you can rearrange.</p></div>
+        <div class="card"><h3><span class="dot"></span>Help → Search</h3><p>Find any menu item, tab, button or operator in the whole window, like Maya's search.</p></div>
+        <div class="card"><h3><span class="dot"></span>Python API</h3><p>A small public API for scripts and other add-ons – see <a href="https://github.com/xmoner/blender-qt-shell/blob/main/docs/API.md">API.md</a>.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="screens">
+    <div class="wrap">
+      <h2>Screenshots</h2>
+      <p class="sub">Taken from Qt Shell running in Blender 5.2 with the TOAnimate Robot rig.</p>
+
+      <div class="split">
+        <figure class="shot">
+          <img src="img/uv.jpg" width="1600" height="900" loading="lazy" alt="UV Editing workspace with the UV editor and UV Toolkit next to the 3D viewport">
+        </figure>
+        <div>
+          <h3>UV Editing</h3>
+          <p>The UV editor works on all selected meshes at once and stays fast on dense UV layouts.</p>
+          <ul>
+            <li>Maya or Blender style selection and tools</li>
+            <li>UV Toolkit: pin, align, rotate, flip, unwrap</li>
+            <li>Cut and sew, unfold, layout, texel density</li>
+            <li>Checker map drawn on the mesh in the 3D view</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="split rev">
+        <div>
+          <h3>Compositing</h3>
+          <p>The Image editor follows the compositor: add or change a node and the result updates live.</p>
+          <ul>
+            <li>Compositor result, Viewer node, Render Result</li>
+            <li>Rendered animation with a cached timeline</li>
+            <li>Live compositing of already rendered frames</li>
+            <li>Export images, image sequences and MP4</li>
+          </ul>
+        </div>
+        <figure class="shot">
+          <img src="img/compositor-result.jpg" width="623" height="600" loading="lazy" alt="Image editor showing the compositor result with a Glare node">
+          <figcaption>A Glare node on the render, shown live in the Image editor.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Install</h2>
+      <p class="sub">About a minute. No admin rights needed.</p>
+      <ol class="steps">
+        <li>Download <a href="https://github.com/xmoner/blender-qt-shell/releases/latest/download/qt_shell.zip"><code>qt_shell.zip</code></a> from the latest release.</li>
+        <li>In Blender: <b>Edit → Preferences → Add-ons → ▾ → Install from Disk…</b> and pick <code>qt_shell.zip</code>.</li>
+        <li>Enable the <b>Qt Shell</b> add-on and click <b>Install PySide6</b> in its preferences (Blender pauses while it downloads).</li>
+        <li>Start it with <b>Window → Open Qt Shell</b> – or tick <i>Start Qt Shell when Blender starts</i>.</li>
+      </ol>
+      <p class="note">Use the <code>qt_shell.zip</code> from Releases – the “Code → Download ZIP” archive contains the whole repository and Blender cannot install it.
+        After updating, restart Blender; the status bar shows the running version.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Qt Shell · a Blender add-on by xmoner</span>
+    <span>
+      <a href="https://github.com/xmoner/blender-qt-shell">GitHub</a> ·
+      <a href="https://github.com/xmoner/blender-qt-shell/releases">Releases</a> ·
+      <a href="https://github.com/xmoner/blender-qt-shell/blob/main/docs/API.md">Python API</a> ·
+      <a href="https://github.com/xmoner/blender-qt-shell/issues">Issues</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
