@@ -592,7 +592,10 @@ class ImageEditor(QtWidgets.QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         bar = QtWidgets.QWidget(self)
-        bar.setStyleSheet("QWidget { background: #303030; }\n" + theme.hover_qss() + theme.field_hover_qss())
+        # (the background rule for every QWidget would also hide the blue of checked buttons – Live, Follow)
+        bar.setStyleSheet("QWidget { background: #303030; }\n"
+                          f"QToolButton:checked {{ background: {theme.C['highlight']}; }}\n"
+                          + theme.hover_qss() + theme.field_hover_qss())
         bl = QtWidgets.QHBoxLayout(bar)
         bl.setContentsMargins(4, 2, 4, 2)
         bl.setSpacing(3)
@@ -603,8 +606,10 @@ class ImageEditor(QtWidgets.QWidget):
         self.source_combo.activated.connect(lambda i: self.set_source(self.source_combo.itemData(i)))
         pytips.tag(self.source_combo, _api('set_source("COMPOSITOR")'))
         bl.addWidget(self.source_combo)
-        self.live_btn = self._tool("Live", "Update the picture whenever the compositor nodes change (the compositor "
-                                           "runs on the last render)", checkable=True)
+        self.live_btn = self._tool("Live", "Live (blue = on): the picture follows every change of the compositor "
+                                           "nodes (the compositor works on the last render).\nOff: the picture stays "
+                                           "as it is until Reload ({image.reload}) – compare before / after",
+                                   checkable=True)
         self.live_btn.setChecked(True)
         self.live_btn.toggled.connect(self.set_live)
         pytips.tag(self.live_btn, _api("set_live(True)"))
@@ -614,8 +619,8 @@ class ImageEditor(QtWidgets.QWidget):
         self.render_btn.clicked.connect(self._render)
         bl.addWidget(self.render_btn)
         self.reload_btn = self._tool("⟳", "Reload ({image.reload})")
-        self.reload_btn.clicked.connect(lambda _c=False: self.reload())
-        pytips.tag(self.reload_btn, _api("reload()"))
+        self.reload_btn.clicked.connect(lambda _c=False: self.refresh())
+        pytips.tag(self.reload_btn, _api("refresh()"))
         bl.addWidget(self.reload_btn)
         # animation controls
         self.anim_box = QtWidgets.QWidget(bar)
@@ -777,7 +782,8 @@ class ImageEditor(QtWidgets.QWidget):
             self.reload()
 
     def _update_link(self):
-        want = self.isVisible() and self.source in COMP_SOURCES and self.live
+        # also with Live off: the compositor keeps running in Blender, Reload then shows its current picture
+        want = self.isVisible() and self.source in COMP_SOURCES
         try:
             if want:
                 LINK.acquire()
@@ -813,11 +819,32 @@ class ImageEditor(QtWidgets.QWidget):
         self.reload(keep_view=False)
 
     def set_live(self, on):
+        """Live on: the picture follows every change of the compositor nodes. Off: the picture stays as it is
+        (compare before / after) until Reload or a new render."""
         self.live = bool(on)
         if self.live_btn.isChecked() != self.live:
+            self.live_btn.blockSignals(True)
             self.live_btn.setChecked(self.live)
+            self.live_btn.blockSignals(False)
         self._update_link()
         if self.live:
+            self.refresh()
+        self._status("Image Editor: Live on – the picture follows the compositor nodes" if self.live else
+                     "Image Editor: Live off – the picture stays until Reload", 3000)
+
+    def refresh(self):
+        """Reload button: the compositor's current result (the Viewer re-linked to the output first)."""
+        if self.source in COMP_SOURCES:
+            if self.source == SRC_COMP:
+                tree = comp_tree()
+                if tree is not None:
+                    try:
+                        follow_output(tree)
+                    except Exception as ex:
+                        bridge.log(f"Image Editor: {ex}", "WARNING")
+            self.reload()
+            self._comp_changed()        # and once more when a compositor run it started has finished
+        else:
             self.reload()
 
     def set_channel(self, ch):
@@ -871,7 +898,7 @@ class ImageEditor(QtWidgets.QWidget):
             self._set_hint("The compositor has no Viewer node – the Image Editor shows the Viewer's picture.",
                            "Add Viewer Node", self._add_viewer)
             return
-        if self.live and self.isVisible() and not LINK.active():
+        if self.isVisible() and not LINK.active():
             LINK.acquire()
         img = bpy.data.images.get(VIEWER)
         q = read_blender_image(img, "qtshell_image_viewer.png") if img is not None and img.size[0] > 0 else None
@@ -881,7 +908,7 @@ class ImageEditor(QtWidgets.QWidget):
                 self._set_hint("Nothing rendered yet – the compositor works on the rendered image.",
                                "Render (F12)", self._render)
             else:
-                self._set_hint("Compositing…" if self.live else "Live is off – Reload shows the Viewer.")
+                self._set_hint("Compositing…")
             return
         self._set_hint("")
         self._set_picture(q, keep_view)
@@ -1325,7 +1352,7 @@ class ImageEditor(QtWidgets.QWidget):
         elif H("image.zoom_out"):
             self.canvas.set_zoom(self.canvas.zoom * 0.8)
         elif H("image.reload"):
-            self.reload()
+            self.refresh()
         elif H("image.export"):
             self.export_image()
         elif H("image.play") and self.source == SRC_ANIM:
