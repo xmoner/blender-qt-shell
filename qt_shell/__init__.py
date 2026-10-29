@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Qt Shell – Blender UI in PySide6",
     "author": "Lukas Bilek",
-    "version": (0, 63, 6),
+    "version": (0, 63, 7),
     "blender": (4, 2, 0),
     "location": "F3 → Open Qt Shell / Preferences → Add-ons → Qt Shell",
     "description": "Replaces the Blender UI with a Qt (PySide6) window: viewport, outliner, "
@@ -29,8 +29,38 @@ def _pyside_available():
 
 
 # ---------------------------------------------------------------- preferences
+_save_pending = False
+
+
+def _prefs_changed(self=None, context=None):
+    """A Qt Shell preference changed. Values set from Python (Qt Shell's dialogs, Qt Preferences) don't mark
+    Blender's preferences as changed, so Blender's auto-save on quit skipped them and the old size came back
+    on the next start. Mark them changed; with auto-save off save them at once (Blender's own window, where
+    the user would press Save Preferences, is hidden by Qt Shell)."""
+    global _save_pending
+    try:
+        prefs = bpy.context.preferences
+        prefs.is_dirty = True
+        if prefs.use_preferences_save or _save_pending:
+            return
+    except Exception:
+        return
+    _save_pending = True
+
+    def save():
+        global _save_pending
+        _save_pending = False
+        try:
+            bpy.ops.wm.save_userpref()
+        except Exception:
+            traceback.print_exc()
+        return None
+    bpy.app.timers.register(save, first_interval=0.2)
+
+
 def _size_changed(self, context):
     """Applies a new interface size to a running Qt Shell."""
+    _prefs_changed()
     try:
         import sys
         app = sys.modules.get(__package__ + ".app")
@@ -44,16 +74,17 @@ class QTSHELL_Preferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     auto_start: bpy.props.BoolProperty(
-        name="Start Qt Shell when Blender starts", default=False)
+        name="Start Qt Shell when Blender starts", default=False, update=_prefs_changed)
     hide_blender: bpy.props.BoolProperty(
-        name="Hide the Blender window while Qt Shell is running", default=True)
+        name="Hide the Blender window while Qt Shell is running", default=True, update=_prefs_changed)
     viewport_scale: bpy.props.FloatProperty(
         name="Viewport resolution", default=1.0, min=0.25, max=2.0,
-        description="Viewport render resolution multiplier (lower = faster)")
+        description="Viewport render resolution multiplier (lower = faster)", update=_prefs_changed)
     nav_scale: bpy.props.FloatProperty(
         name="Navigation resolution", default=1.0, min=0.1, max=1.0,
         description="Resolution multiplier while orbiting / panning / zooming in Material Preview and "
-                    "Rendered shading (lower = faster on slow GPUs; a sharp frame follows when the view stops)")
+                    "Rendered shading (lower = faster on slow GPUs; a sharp frame follows when the view stops)",
+        update=_prefs_changed)
     ui_scale: bpy.props.FloatProperty(
         name="Interface scale", default=1.0, min=0.5, max=3.0, step=5, subtype="FACTOR",
         description="Size of buttons, fields, icons, spacing and text in Qt Shell",

@@ -457,13 +457,8 @@ class InterfaceSizeDialog(QtWidgets.QDialog):
         if abs(p.ui_scale - ui) < 1e-4 and abs(p.font_scale - font) < 1e-4:
             shell_app.apply_interface_size()   # values unchanged in prefs – still rebuild after preview
         else:
-            p.ui_scale = ui          # the update callback rebuilds the window
-            p.font_scale = font
-        try:
-            if not bpy.context.preferences.use_preferences_save:
-                bpy.ops.wm.save_userpref()
-        except Exception:
-            pass
+            p.ui_scale = ui          # the update callback rebuilds the window and marks the preferences
+            p.font_scale = font      # as changed (saved on quit / at once without auto-save)
 
 
 # ---------------------------------------------------------------- main window
