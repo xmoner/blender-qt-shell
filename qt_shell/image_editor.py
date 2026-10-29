@@ -335,6 +335,10 @@ LINK = CompositorLink()
 
 @bpy.app.handlers.persistent
 def _on_save_pre(*_args):
+    try:
+        ANIM_COMP.uninstall()                 # the temporary animation-cache node is never saved
+    except Exception:
+        pass
     if LINK.active():
         LINK.release(keep_wanted=True)        # the .blend keeps the user's own layout
 
@@ -375,6 +379,161 @@ def unregister_handlers():
         for old in [f for f in lst if getattr(f, "__name__", "") == fn.__name__
                     and getattr(f, "__module__", "") == fn.__module__]:
             lst.remove(old)
+
+
+# ---------------------------------------------------------------- compositor over the rendered animation
+RAW_PREFIX = "raw_"
+TEMP_NODE = "QtShell Animation Cache"
+_SIG_SKIP_PROPS = {"location", "location_absolute", "width", "height", "select", "show_options", "show_preview",
+                   "hide", "name", "label", "color", "use_custom_color", "parent", "warning_propagation",
+                   "show_texture", "dimensions", "bl_idname", "bl_label", "bl_description", "bl_icon",
+                   "bl_width_default", "bl_width_min", "bl_width_max", "bl_height_default", "bl_height_min",
+                   "bl_height_max"}
+
+
+def raw_dir(scene=None):
+    """Folder of the frames rendered without compositing (input of the compositor over the animation)."""
+    sc = scene or bpy.context.scene
+    # an unsaved file: per Blender session (another session's frames would belong to another scene)
+    name = os.path.splitext(os.path.basename(bpy.data.filepath))[0] if bpy.data.filepath else f"unsaved_{os.getpid()}"
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in f"{name}_{sc.name}")
+    return os.path.join(tempfile.gettempdir(), "qtshell_comp_cache", safe)
+
+
+def raw_frames(scene=None):
+    """{frame: OpenEXR file} of the raw frames rendered for the scene's range."""
+    from .anim_player import scene_range
+    sc = scene or bpy.context.scene
+    d = raw_dir(sc)
+    lo, hi = scene_range(sc)
+    out = {}
+    for f in range(lo, hi + 1):
+        p = os.path.join(d, f"{RAW_PREFIX}{f:04d}.exr")
+        if os.path.isfile(p):
+            out[f] = p
+    return out
+
+
+def _files_sig(frames):
+    sig = []
+    for f, p in sorted(frames.items()):
+        try:
+            sig.append((f, p, os.path.getmtime(p)))
+        except OSError:
+            sig.append((f, p, 0))
+    return tuple(sig)
+
+
+def _value(v):
+    try:
+        if hasattr(v, "name") and not isinstance(v, str):
+            return v.name
+        if hasattr(v, "__len__") and not isinstance(v, str):
+            return tuple(round(x, 6) if isinstance(x, float) else x for x in v)
+        return round(v, 6) if isinstance(v, float) else v
+    except Exception:
+        return repr(v)
+
+
+def tree_signature(tree, skip=TEMP_NODE):
+    """What the compositor's picture depends on (nodes, their settings and inputs, links) – without the temporary
+    animation-cache node, whose links count as the Render Layers links they replace."""
+    rl = next((n.name for n in tree.nodes if n.bl_idname == "CompositorNodeRLayers"), None)
+    parts = []
+    for n in tree.nodes:
+        if n.name == skip:
+            continue
+        props = []
+        for prop in n.bl_rna.properties:
+            k = prop.identifier
+            if k in _SIG_SKIP_PROPS or prop.type == "COLLECTION" or k == "rna_type":
+                continue
+            try:
+                props.append((k, _value(getattr(n, k))))
+            except Exception:
+                pass
+        ins = tuple((i.identifier, _value(getattr(i, "default_value", None))) for i in n.inputs)
+        parts.append((n.name, n.bl_idname, n.mute, tuple(props), ins))
+    links = []
+    for link in tree.links:
+        fn, fs = link.from_node.name, link.from_socket.name
+        if fn == skip:
+            fn = rl
+        links.append((fn, fs, link.to_node.name, link.to_socket.identifier, link.is_muted))
+    return hash((tuple(parts), tuple(sorted(links, key=repr))))
+
+
+class AnimComp:
+    """Composites the raw frames of the animation with the current compositor nodes: a temporary Image node
+    (the raw OpenEXR sequence) takes over the Render Layers' Image / Alpha links, its frame offset picks the
+    frame. The links go back to Render Layers and the node is removed when caching ends, before saving and
+    when Qt Shell closes."""
+
+    def __init__(self):
+        self.moved = []          # [(output name, to node name, to socket identifier)]
+
+    @staticmethod
+    def node(tree=None):
+        tree = tree or comp_tree()
+        return tree.nodes.get(TEMP_NODE) if tree is not None else None
+
+    def install(self, tree, frames):
+        n = self.node(tree)
+        if n is not None:
+            return n
+        rl = next((x for x in tree.nodes if x.bl_idname == "CompositorNodeRLayers"), None)
+        if rl is None or not frames:
+            return None
+        first = frames[min(frames)]
+        img = bpy.data.images.load(first, check_existing=False)
+        img.name = TEMP_NODE
+        img.source = "SEQUENCE"
+        n = tree.nodes.new("CompositorNodeImage")
+        n.name = n.label = TEMP_NODE
+        n.image = img
+        n.location = (rl.location.x, rl.location.y - 420)
+        n.frame_duration = max(frames)
+        self.moved = []
+        for link in list(tree.links):
+            if link.from_node == rl and link.from_socket.name in ("Image", "Alpha"):
+                self.moved.append((link.from_socket.name, link.to_node.name, link.to_socket.identifier))
+        for name, to_node, to_id in self.moved:
+            to = next((i for i in tree.nodes[to_node].inputs if i.identifier == to_id), None)
+            if to is not None and name in n.outputs:
+                tree.links.new(n.outputs[name], to)
+        return n
+
+    def set_frame(self, tree, f):
+        n = self.node(tree)
+        if n is None:
+            return False
+        sc = bpy.context.scene
+        n.frame_start = sc.frame_current          # image frame = scene frame - start + offset + 1 = f
+        n.frame_offset = int(f) - 1
+        return True
+
+    def uninstall(self):
+        tree = comp_tree()
+        n = self.node(tree) if tree is not None else None
+        if n is None:
+            self.moved = []
+            return False
+        rl = next((x for x in tree.nodes if x.bl_idname == "CompositorNodeRLayers"), None)
+        img = n.image
+        if rl is not None:
+            for name, to_node, to_id in self.moved:
+                tn = tree.nodes.get(to_node)
+                to = next((i for i in tn.inputs if i.identifier == to_id), None) if tn is not None else None
+                if to is not None and name in rl.outputs:
+                    tree.links.new(rl.outputs[name], to)
+        tree.nodes.remove(n)
+        if img is not None and img.users == 0:
+            bpy.data.images.remove(img)
+        self.moved = []
+        return True
+
+
+ANIM_COMP = AnimComp()
 
 
 # ---------------------------------------------------------------- canvas
@@ -520,6 +679,99 @@ class ImageCanvas(QtWidgets.QWidget):
             self.fit()
 
 
+class FrameBar(QtWidgets.QWidget):
+    """Timeline of the rendered animation: frame numbers, which frames exist (grey), which are composited and
+    cached (green), the frame shown (blue). Click / drag scrubs, the wheel steps."""
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self.lo, self.hi = 1, 1
+        self.available = set()
+        self.cached = set()
+        self.current = None
+        self._drag = False
+        self.setMinimumHeight(theme.px(30))
+        self.setMouseTracking(True)
+        self.setToolTip("Rendered animation – grey: rendered frames, green: composited with the current nodes and "
+                        "cached (Live), blue: the frame shown. Click / drag scrubs, the wheel steps.")
+
+    def set_state(self, lo, hi, available, cached, current):
+        self.lo, self.hi = int(lo), max(int(hi), int(lo))
+        self.available, self.cached, self.current = set(available), set(cached), current
+        self.update()
+
+    def _x(self, f):
+        m = theme.px(8)
+        n = max(1, self.hi - self.lo + 1)
+        return m + (f - self.lo) / n * (self.width() - 2 * m)
+
+    def _frame_at(self, x):
+        m = theme.px(8)
+        n = max(1, self.hi - self.lo + 1)
+        f = self.lo + int((x - m) / max(1.0, self.width() - 2 * m) * n)
+        return min(max(f, self.lo), self.hi)
+
+    def paintEvent(self, _ev):
+        p = QtGui.QPainter(self)
+        try:
+            p.fillRect(self.rect(), QtGui.QColor("#262626"))
+            h = self.height()
+            n = max(1, self.hi - self.lo + 1)
+            w = (self.width() - 2 * theme.px(8)) / n
+            band = QtCore.QRectF(0, h - theme.px(6), 0, theme.px(5))
+            for f in range(self.lo, self.hi + 1):
+                x = self._x(f)
+                if f in self.cached:
+                    col = QtGui.QColor(70, 180, 90)
+                elif f in self.available:
+                    col = QtGui.QColor(95, 95, 95)
+                else:
+                    continue
+                p.fillRect(QtCore.QRectF(x, band.y(), max(1.0, w - (1 if w > 4 else 0)), band.height()), col)
+            # frame numbers
+            f_ = p.font()
+            f_.setPixelSize(theme.fs(10))
+            p.setFont(f_)
+            step = 1
+            while n / step * theme.px(34) > self.width() and step < 100000:
+                step *= 5 if str(step).startswith("2") else 2
+            p.setPen(QtGui.QColor("#9a9a9a"))
+            first = self.lo + (-self.lo) % step
+            for f in range(first, self.hi + 1, step):
+                x = self._x(f) + w / 2
+                p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, theme.px(4)))
+                p.drawText(QtCore.QPointF(x + 2, theme.px(14)), str(f))
+            if self.current is not None:
+                x = self._x(self.current)
+                r = QtCore.QRectF(x, 0, max(2.0, w), h)
+                p.fillRect(r, QtGui.QColor(71, 114, 179, 170))
+                p.setPen(QtGui.QColor("#ffffff"))
+                p.drawText(QtCore.QPointF(x + max(2.0, w) + 3, h - theme.px(9)), str(self.current))
+        finally:
+            p.end()
+
+    def mousePressEvent(self, ev):
+        if ev.button() == QtCore.Qt.LeftButton:
+            self._drag = True
+            self.editor.set_frame(self._frame_at(ev.position().x()), from_ui=True)
+
+    def mouseMoveEvent(self, ev):
+        if self._drag:
+            f = self._frame_at(ev.position().x())
+            if f != self.current:
+                self.editor.set_frame(f, from_ui=True)
+
+    def mouseReleaseEvent(self, _ev):
+        self._drag = False
+
+    def wheelEvent(self, ev):
+        d = ev.angleDelta().y() or ev.angleDelta().x()
+        if d:
+            self.editor.step(-1 if d > 0 else 1)
+        ev.accept()
+
+
 class _SourceCombo(QtWidgets.QComboBox):
     """Sources + the images of the file – the list is rebuilt when it opens."""
 
@@ -558,6 +810,14 @@ class ImageEditor(QtWidgets.QWidget):
         self._frames = {}              # frame → QImage (rendered animation)
         self._frames_bytes = 0
         self._sample = None
+        # compositor over the rendered animation (Live): frame → composited QImage
+        self._raw = {}
+        self._files_sig = None
+        self._comp_frames = {}
+        self._comp_bytes = 0
+        self._comp_sig = None
+        self._pending = None           # (frame, start time, saw the job, scene frame)
+        self._raw_keep = None          # output settings to put back after rendering the raw frames
         register_handlers()
         self._build()
         self._watch = QtCore.QTimer(self)
@@ -565,6 +825,9 @@ class ImageEditor(QtWidgets.QWidget):
         self._watch.timeout.connect(self._watch_tick)
         self._play = QtCore.QTimer(self)
         self._play.timeout.connect(self._play_tick)
+        self._cache_timer = QtCore.QTimer(self)
+        self._cache_timer.setInterval(30)
+        self._cache_timer.timeout.connect(self._cache_tick)
         hub.data_changed.connect(self._on_data_changed)
         hub.render_done.connect(self._on_render_done)
         hub.file_loaded.connect(self._on_file_loaded)
@@ -630,10 +893,6 @@ class ImageEditor(QtWidgets.QWidget):
         self.play_btn = self._tool("", "Play / Pause the rendered frames ({image.play})", icon="play")
         self.play_btn.clicked.connect(lambda _c=False: self.toggle_play())
         al.addWidget(self.play_btn)
-        self.frame_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, self.anim_box)
-        self.frame_slider.setMinimumWidth(theme.px(50))
-        self.frame_slider.valueChanged.connect(lambda v: self.set_frame(v, from_ui=True))
-        al.addWidget(self.frame_slider, 1)
         self.frame_spin = QtWidgets.QSpinBox(self.anim_box)
         self.frame_spin.setRange(-100000, 100000)
         self.frame_spin.setKeyboardTracking(False)
@@ -642,8 +901,13 @@ class ImageEditor(QtWidgets.QWidget):
         self.follow_btn = self._tool("Follow", "Follow Timeline – show the frame of the Timeline (scrubbing / playing the "
                                                         "scene shows the same rendered frame here)", checkable=True)
         self.follow_btn.setChecked(True)
+        self.raw_btn = self._tool("Re-render", "Render the frames for the compositor again (after the scene changed) – "
+                                               "Live composites them with the current nodes", icon="camera")
+        self.raw_btn.clicked.connect(lambda _c=False: self.render_raw())
+        pytips.tag(self.raw_btn, _api("render_raw()"))
         self.follow_btn.toggled.connect(lambda on: on and self._on_frame_changed(bpy.context.scene.frame_current))
         al.addWidget(self.follow_btn)
+        al.addWidget(self.raw_btn)
         bl.addWidget(self.anim_box, 1)
         self.spacer = QtWidgets.QWidget(bar)
         self.spacer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
@@ -700,6 +964,8 @@ class ImageEditor(QtWidgets.QWidget):
         self.canvas.sampled.connect(self._on_sample)
         self.canvas.zoom_changed.connect(lambda _z: self._update_footer())
         lay.addWidget(self.canvas, 1)
+        self.frame_bar = FrameBar(self)          # timeline of the rendered animation
+        lay.addWidget(self.frame_bar)
         self.footer = QtWidgets.QLabel(self)
         self.footer.setContentsMargins(6, 2, 6, 2)
         self.footer.setProperty("dim", True)
@@ -726,7 +992,9 @@ class ImageEditor(QtWidgets.QWidget):
 
     def _update_controls(self):
         src = self.source
-        self.live_btn.setVisible(src in COMP_SOURCES)
+        self.live_btn.setVisible(src in COMP_SOURCES or src == SRC_ANIM)
+        self.frame_bar.setVisible(src == SRC_ANIM)
+        self.raw_btn.setVisible(src == SRC_ANIM and self.live)
         self.render_btn.setVisible(src in COMP_SOURCES or src == SRC_RENDER)
         self.anim_box.setVisible(src == SRC_ANIM)
         self.spacer.setVisible(src != SRC_ANIM)
@@ -740,7 +1008,7 @@ class ImageEditor(QtWidgets.QWidget):
         has = self.base is not None
         self.export_image_act.setEnabled(has)
         self.copy_act.setEnabled(has)
-        self.export_anim_act.setEnabled(bool(self._anim_frames()) if self.source == SRC_ANIM else
+        self.export_anim_act.setEnabled(bool(self._available()) if self.source == SRC_ANIM else
                                         bool(self._anim_frames(output_info())))
 
     def _set_hint(self, text, button=None, fn=None):
@@ -774,6 +1042,7 @@ class ImageEditor(QtWidgets.QWidget):
         if not self.isVisible():
             self._shown = False
             self.pause()
+            self._stop_cache()
             self._update_link()
 
     def _activate(self):
@@ -783,7 +1052,7 @@ class ImageEditor(QtWidgets.QWidget):
 
     def _update_link(self):
         # also with Live off: the compositor keeps running in Blender, Reload then shows its current picture
-        want = self.isVisible() and self.source in COMP_SOURCES
+        want = self.isVisible() and (self.source in COMP_SOURCES or (self.source == SRC_ANIM and self.live))
         try:
             if want:
                 LINK.acquire()
@@ -795,6 +1064,7 @@ class ImageEditor(QtWidgets.QWidget):
     def shutdown(self):
         try:
             self.pause()
+            self._stop_cache()
             LINK.release()
             unregister_handlers()
         except Exception:
@@ -811,6 +1081,8 @@ class ImageEditor(QtWidgets.QWidget):
             bridge.log(f"Image Editor: no image '{src[6:]}'", "WARNING")
             return
         self.pause()
+        if src != SRC_ANIM:
+            self._stop_cache()
         self.source = src
         if self.source_combo.findData(src) < 0:
             self.fill_sources()
@@ -826,8 +1098,13 @@ class ImageEditor(QtWidgets.QWidget):
             self.live_btn.blockSignals(True)
             self.live_btn.setChecked(self.live)
             self.live_btn.blockSignals(False)
+        if not self.live:
+            self._stop_cache()
+        self.raw_btn.setVisible(self.source == SRC_ANIM and self.live)
         self._update_link()
-        if self.live:
+        if self.source == SRC_ANIM:
+            self.reload()               # the composited frames cached before are shown again at once
+        elif self.live:
             self.refresh()
         self._status("Image Editor: Live on – the picture follows the compositor nodes" if self.live else
                      "Image Editor: Live off – the picture stays until Reload", 3000)
@@ -844,6 +1121,9 @@ class ImageEditor(QtWidgets.QWidget):
                         bridge.log(f"Image Editor: {ex}", "WARNING")
             self.reload()
             self._comp_changed()        # and once more when a compositor run it started has finished
+        elif self.source == SRC_ANIM:
+            self._clear_anim()          # read the frames again and composite them again
+            self.reload()
         else:
             self.reload()
 
@@ -962,36 +1242,64 @@ class ImageEditor(QtWidgets.QWidget):
         info = info or {}
         return {f: p for f, p in info.get("frames", {}).items() if os.path.isfile(p)}
 
+    def _clear_anim(self):
+        self._anim = None
+        self._frames.clear()
+        self._frames_bytes = 0
+        self._comp_frames.clear()
+        self._comp_bytes = 0
+        self._comp_sig = None
+        self._files_sig = None
+        self._pending = None
+
     def _load_animation(self, keep_view):
         info = output_info()
-        if info.get("movie"):
+        if info.get("movie") and not raw_frames():
             self._anim = None
             self._set_picture(None)
             self._set_hint("The animation was rendered to a movie file – Render → View Animation plays it.",
                            "View Animation", self._view_animation)
+            self._sync_frame_controls()
             return
-        frames = self._anim_frames(info)
-        old = self._anim
-        self._anim = dict(info, frames=frames)
-        if old is None or old.get("frames") != frames:
+        files = self._anim_frames(info)
+        self._raw = raw_frames()        # kept with Live off too – turning it on again shows the cache at once
+        sig = (_files_sig(files), _files_sig(self._raw))
+        if sig != self._files_sig:               # new / re-rendered frames → read and composite them again
             self._frames.clear()
             self._frames_bytes = 0
-        if not frames:
+            self._comp_frames.clear()
+            self._comp_bytes = 0
+            self._comp_sig = None
+            self._files_sig = sig
+        self._anim = dict(info, frames=files)
+        if not files and not self._raw:
             self._set_picture(None)
             self._set_hint("No rendered frames in the output folder "
                            f"({bpy.context.scene.render.filepath or '//'}).", "Render Animation (Ctrl+F12)",
                            self._render_animation)
             self._sync_frame_controls()
             return
-        self._set_hint("")
-        self._sync_frame_controls()
+        if self.live and not self._raw:
+            self._set_hint("Live applies the compositor nodes to the animation: Qt Shell renders its frames once "
+                           "without compositing (OpenEXR in a temporary folder), then composites and caches them "
+                           "in the background.", "Render Frames for the Compositor", self.render_raw)
+        else:
+            self._set_hint("")
         f = self._frame
         if self.follow_btn.isChecked():
             f = bpy.context.scene.frame_current
-        if f is None or f not in frames:
-            f = f if f is not None else min(frames)
-            f = min(frames, key=lambda k: abs(k - f))
+        avail = self._available()
+        if f is None or f not in avail:
+            f = f if f is not None else min(avail)
+            f = min(avail, key=lambda k: abs(k - f))
+        self._frame = f
+        self._sync_frame_controls()
         self.set_frame(f, keep_view=keep_view)
+        if self.live and self._raw and self.isVisible():
+            self._start_cache()
+
+    def _available(self):
+        return set((self._anim or {}).get("frames") or {}) | set(self._raw)
 
     def _view_animation(self):
         mw = self.mw
@@ -1004,20 +1312,31 @@ class ImageEditor(QtWidgets.QWidget):
             mw.render_image(animation=True)
 
     def _sync_frame_controls(self):
-        frames = (self._anim or {}).get("frames") or {}
-        lo, hi = (min(frames), max(frames)) if frames else (0, 0)
-        for w in (self.frame_slider, self.frame_spin):
-            w.blockSignals(True)
-            w.setRange(lo, hi)
-            if self._frame is not None:
-                w.setValue(self._frame)
-            w.blockSignals(False)
+        avail = self._available() if self.source == SRC_ANIM else set()
+        lo, hi = (min(avail), max(avail)) if avail else (0, 0)
+        w = self.frame_spin
+        w.blockSignals(True)
+        w.setRange(lo, hi)
+        if self._frame is not None:
+            w.setValue(self._frame)
+        w.blockSignals(False)
+        self._update_bar()
+
+    def _update_bar(self):
+        avail = self._available() if self.source == SRC_ANIM else set()
+        if not avail:
+            self.frame_bar.set_state(0, 0, (), (), None)
+            return
+        from .anim_player import scene_range
+        lo, hi = scene_range()
+        self.frame_bar.set_state(min(lo, min(avail)), max(hi, max(avail)), avail,
+                                 self._comp_frames.keys() if (self.live and self._raw) else (), self._frame)
 
     def _frame_image(self, f):
         q = self._frames.get(f)
         if q is not None:
             return q
-        path = (self._anim or {}).get("frames", {}).get(f)
+        path = (self._anim or {}).get("frames", {}).get(f) or self._raw.get(f)
         if not path:
             return None
         q = load_image(path)
@@ -1036,7 +1355,7 @@ class ImageEditor(QtWidgets.QWidget):
         """Rendered Animation: shows frame f (the nearest rendered one)."""
         if self.source != SRC_ANIM or self._anim is None:
             return False
-        frames = self._anim.get("frames") or {}
+        frames = self._available()
         if not frames:
             return False
         f = int(f)
@@ -1050,23 +1369,31 @@ class ImageEditor(QtWidgets.QWidget):
             except Exception:
                 pass
         self._frame = f
-        for w in (self.frame_slider, self.frame_spin):
-            if w.value() != f:
-                w.blockSignals(True)
-                w.setValue(f)
-                w.blockSignals(False)
-        q = self._frame_image(f)
+        w = self.frame_spin
+        if w.value() != f:
+            w.blockSignals(True)
+            w.setValue(f)
+            w.blockSignals(False)
+        comp = self.live and bool(self._raw)
+        q = self._comp_frames.get(f) if comp else None
+        if q is None:
+            q = self._frame_image(f)         # the rendered file until the composited frame is cached
+            if comp:
+                self._start_cache()           # the frame shown comes first
+        self._update_bar()
         if q is None:
             self._set_picture(None)
-            self._set_hint(f"Frame {f} can't be read.")
+            self.canvas.hint = f"Frame {f} can't be read."
+            self.canvas.update()
             return False
-        self._set_hint("")
+        if self.canvas.hint:
+            self.canvas.hint = ""
         self._set_picture(q, keep_view)
         return True
 
     def step(self, n):
         if self._frame is not None:
-            frames = sorted((self._anim or {}).get("frames") or {})
+            frames = sorted(self._available())
             if frames:
                 i = frames.index(self._frame) if self._frame in frames else 0
                 self.set_frame(frames[(i + n) % len(frames)], from_ui=True)
@@ -1081,7 +1408,7 @@ class ImageEditor(QtWidgets.QWidget):
             self.play()
 
     def play(self):
-        if self.source != SRC_ANIM or not (self._anim or {}).get("frames"):
+        if self.source != SRC_ANIM or not self._available():
             return False
         fps = (self._anim or {}).get("fps") or 24.0
         self._play.start(max(1, int(round(1000.0 / fps))))
@@ -1094,7 +1421,7 @@ class ImageEditor(QtWidgets.QWidget):
         icons.set_icon(self.play_btn, "play")
 
     def _play_tick(self):
-        frames = sorted((self._anim or {}).get("frames") or {})
+        frames = sorted(self._available())
         if not frames:
             self.pause()
             return
@@ -1105,6 +1432,156 @@ class ImageEditor(QtWidgets.QWidget):
         if self.source == SRC_ANIM and self.follow_btn.isChecked() and not self._play.isActive() \
                 and self.isVisible() and self._anim is not None and f != self._frame:
             self.set_frame(f)
+
+    # --- compositor over the rendered animation
+    def render_raw(self):
+        """Renders the animation once without compositing into a temporary folder (OpenEXR) – the input that
+        Live composites with the current nodes."""
+        mw = self.mw
+        sc = bpy.context.scene
+        r = sc.render
+        s = r.image_settings
+        keep = {"filepath": r.filepath, "use_compositing": r.use_compositing,
+                "use_file_extension": getattr(r, "use_file_extension", True)}
+        _s, img_keep = _save_settings()
+        self._raw_keep = (keep, img_keep)
+        try:
+            os.makedirs(raw_dir(sc), exist_ok=True)
+            r.filepath = os.path.join(raw_dir(sc), RAW_PREFIX)
+            r.use_compositing = False
+            r.use_file_extension = True
+            if hasattr(s, "media_type"):
+                s.media_type = "IMAGE"
+            s.file_format = "OPEN_EXR"
+            s.color_mode = "RGBA"
+            s.color_depth = "16"
+        except Exception:
+            self._restore_raw_settings()
+            raise
+        self._status("Rendering the frames for the compositor…", 4000)
+        if mw is not None and hasattr(mw, "render_image"):
+            mw.render_image(animation=True)
+            if not mw.is_rendering():               # blocking fallback: already done
+                self._on_render_done()
+        else:
+            with bridge.blender_context():
+                bpy.ops.render.render(animation=True)
+            self._on_render_done()
+
+    def _restore_raw_settings(self):
+        if self._raw_keep is None:
+            return
+        keep, img_keep = self._raw_keep
+        self._raw_keep = None
+        r = bpy.context.scene.render
+        for k, v in keep.items():
+            try:
+                setattr(r, k, v)
+            except Exception:
+                pass
+        _restore_settings(r.image_settings, img_keep)
+
+    def _start_cache(self):
+        if self.live and self._raw and self.source == SRC_ANIM and self.isVisible() \
+                and not self._cache_timer.isActive():
+            self._update_link()
+            self._cache_timer.start()
+
+    def _stop_cache(self):
+        self._cache_timer.stop()
+        self._pending = None
+        try:
+            ANIM_COMP.uninstall()
+        except Exception:
+            bridge.log(traceback.format_exc(), "WARNING")
+
+    def _store_comp(self, f, q):
+        old = self._comp_frames.pop(f, None)
+        if old is not None:
+            self._comp_bytes -= old.sizeInBytes()
+        self._comp_frames[f] = q
+        self._comp_bytes += q.sizeInBytes()
+        while self._comp_bytes > FRAME_CACHE and len(self._comp_frames) > 1:
+            k = max(self._comp_frames, key=lambda x: abs(x - (self._frame or f)))
+            self._comp_bytes -= self._comp_frames.pop(k).sizeInBytes()
+
+    def _cache_tick(self):
+        """One step of compositing the raw frames: the temporary Image node shows frame f, Blender's compositor
+        runs (COMPOSITE job), the Viewer is read and cached. A change of the nodes starts over."""
+        if not (self.live and self._raw and self.source == SRC_ANIM and self.isVisible()):
+            self._stop_cache()
+            return
+        if bridge.is_rendering():
+            return
+        tree = comp_tree()
+        if tree is None or not any(n.bl_idname == "CompositorNodeRLayers" for n in tree.nodes):
+            self._stop_cache()
+            return
+        try:
+            sig = tree_signature(tree)
+        except Exception:
+            sig = None
+        if sig != self._comp_sig:
+            self._comp_sig = sig
+            self._comp_frames.clear()
+            self._comp_bytes = 0
+            self._pending = None
+            try:
+                follow_output(tree)
+            except Exception:
+                pass
+            self._update_bar()
+        now = time.monotonic()
+        try:
+            running = bpy.app.is_job_running("COMPOSITE")
+        except Exception:
+            running = False
+        if self._pending is not None:
+            f, t0, saw, cfra = self._pending
+            if running:
+                self._pending = (f, t0, True, cfra)
+                return
+            dt = now - t0
+            if dt < 0.04 or (not saw and dt < 0.4):
+                return
+            self._pending = None
+            if bpy.context.scene.frame_current != cfra:
+                return                          # the scene frame moved meanwhile – that picture is not frame f
+            img = bpy.data.images.get(VIEWER)
+            q = read_blender_image(img, "qtshell_image_anim.png") if img is not None and img.size[0] > 0 else None
+            if q is not None:
+                self._store_comp(f, q)
+                if f == self._frame and self.source == SRC_ANIM:
+                    self._set_picture(q, True)
+                self._update_bar()
+                self._update_footer()
+            return
+        if running:
+            return
+        # next frame: the one shown, then onwards from it
+        order = sorted(self._raw)
+        cur = self._frame if self._frame in self._raw else order[0]
+        i = order.index(cur)
+        todo = next((x for x in order[i:] + order[:i] if x not in self._comp_frames), None)
+        if todo is None:
+            self._stop_cache()                  # all cached – the node tree gets its links back
+            self._update_footer()
+            return
+        try:
+            if ANIM_COMP.install(tree, self._raw) is None:
+                self._stop_cache()
+                return
+            ANIM_COMP.set_frame(tree, todo)
+        except Exception:
+            bridge.log("Image Editor: " + traceback.format_exc(), "WARNING")
+            self._stop_cache()
+            return
+        self._pending = (todo, now, False, bpy.context.scene.frame_current)
+
+    def _on_anim_nodes_changed(self):
+        """Live over the animation: a change of the compositor nodes composites the frames again."""
+        if self.source == SRC_ANIM and self.live and self._raw and self.isVisible():
+            self._start_cache()
 
     # --- picture
     def _set_picture(self, q, keep_view=True):
@@ -1127,6 +1604,10 @@ class ImageEditor(QtWidgets.QWidget):
         label = SOURCE_LABELS.get(self.source) or self.source[6:]
         if self.source == SRC_ANIM and self._frame is not None:
             label += f" · frame {self._frame}"
+            if self.live and self._raw:
+                n, total = len(self._comp_frames), len(self._raw)
+                label += " · composited" if self._frame in self._comp_frames else " · compositing…"
+                label += f" ({n} / {total} cached)"
         parts.append(label)
         parts.append(f"{self.canvas.zoom * 100:.0f} %")
         if self._sample is not None:
@@ -1142,6 +1623,9 @@ class ImageEditor(QtWidgets.QWidget):
 
     # --- compositor updates
     def _on_data_changed(self):
+        if self.source == SRC_ANIM:
+            self._on_anim_nodes_changed()
+            return
         if self.source in COMP_SOURCES and self.live and self.isVisible():
             if self.source == SRC_COMP:
                 tree = comp_tree()
@@ -1185,6 +1669,9 @@ class ImageEditor(QtWidgets.QWidget):
                 self.reload()
 
     def _on_render_done(self):
+        self._restore_raw_settings()
+        if self.source == SRC_ANIM or not self.isVisible():
+            self._clear_anim()                 # new frames on disk – read them again when shown
         if not self.isVisible():
             return
         if self.source in COMP_SOURCES or self.source == SRC_RENDER:
@@ -1197,9 +1684,9 @@ class ImageEditor(QtWidgets.QWidget):
 
     def _on_file_loaded(self):
         self.pause()
-        self._anim = None
-        self._frames.clear()
-        self._frames_bytes = 0
+        self._stop_cache()
+        ANIM_COMP.moved = []
+        self._clear_anim()
         if self.source.startswith("IMAGE:"):
             self.source = SRC_COMP
         self.fill_sources()
@@ -1302,6 +1789,21 @@ class ImageEditor(QtWidgets.QWidget):
         Without a path a dialog asks for the format, frame range and file."""
         info = output_info()
         frames = self._anim_frames(info)
+        if self.source == SRC_ANIM and self.live and self._raw:
+            # Live: the frames composited with the current nodes (all of them must be cached)
+            missing = [f for f in self._raw if f not in self._comp_frames]
+            if missing:
+                QtWidgets.QMessageBox.information(
+                    self, "Export Animation", f"{len(missing)} frames are still being composited – export when the "
+                    "timeline is all green (or turn Live off to export the rendered files).")
+                return False
+            folder = os.path.join(raw_dir(), "composited")
+            os.makedirs(folder, exist_ok=True)
+            frames = {}
+            for f, q in sorted(self._comp_frames.items()):
+                fp = os.path.join(folder, f"comp_{f:04d}.png")
+                q.save(fp)
+                frames[f] = fp
         if not frames:
             QtWidgets.QMessageBox.information(self, "Export Animation",
                                               "No rendered frames – Render Animation first (Output Properties → "
