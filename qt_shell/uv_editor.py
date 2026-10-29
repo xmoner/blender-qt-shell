@@ -19,6 +19,7 @@ Blender-like:
 In Object mode the view shows all UVs read-only (any tool switches to Edit mode first).
 """
 import math
+import traceback
 from contextlib import contextmanager
 
 import bmesh
@@ -587,6 +588,18 @@ class UVCanvas(QtWidgets.QWidget):
     # --- drawing
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
+        try:
+            self._paint(p)
+        except Exception:
+            err = traceback.format_exc()
+            if err != getattr(self, "_paint_err", None):         # once, not on every repaint
+                self._paint_err = err
+                bridge.log("UV editor: " + err, "WARNING")
+        finally:
+            if p.isActive():
+                p.end()             # an exception must not leave the painter active (Qt crashes later)
+
+    def _paint(self, p):
         p.fillRect(self.rect(), QtGui.QColor("#262626"))
         if not self._fitted and self.width() > 50:
             self._fitted = True
@@ -599,22 +612,18 @@ class UVCanvas(QtWidgets.QWidget):
         self._paint_background(p, s)
         if s is None or s.ob is None:
             self._hint(p, "Select a mesh object.")
-            p.end()
             return
         if s.uvl is None:
             self._hint(p, "The mesh has no UV map – Create → Unwrap / Smart UV Project, or add a UV map above.")
-            p.end()
             return
         p.setRenderHint(QtGui.QPainter.Antialiasing)
-        self._paint_faces(p, s)
-        self._paint_edges(p, s)
-        self._paint_verts(p, s)
+        self._paint_layer(p, s)
+        self._paint_hover(p, s)
         if self._box:
             p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
             p.drawRect(QtCore.QRectF(self._box[0], self._box[1]).normalized())
         self._paint_info(p, s)
-        p.end()
 
     def _paint_background(self, p, s):
         sc = self.scale
@@ -681,101 +690,209 @@ class UVCanvas(QtWidgets.QWidget):
     def _pts(self, uvs):
         return [self.to_screen(uv.x, uv.y) for uv in uvs]
 
-    def _paint_faces(self, p, s):
-        shaded = self.flag("shaded", False)
-        dist = self.flag("distortion", False)
+    # The faces, edges and points are built once per Snap (and display mode) in UV coordinates and drawn
+    # through a QTransform – panning / zooming then costs no Python work per face (a mesh with thousands of
+    # faces stuttered when every repaint converted every corner).
+    def _uv_transform(self):
+        return QtGui.QTransform(self.scale, 0.0, 0.0, -self.scale, self.offset.x(), self.offset.y())
+
+    def _geo(self, s):
+        key = (self.mode, self.flag("shaded", False), self.flag("distortion", False), self.flag("borders", True))
+        g = getattr(self, "_geo_cache", None)
+        if g is not None and g[0] is s and g[1] == key:
+            return g[2]
+        shaded, dist, borders = key[1], key[2], key[3]
         tot3 = sum(s.area3d) or 1.0
         totuv = sum(s.areauv) or 1.0
-        hover_face = self._hover[1] if self._hover and self._hover[0] in ("FACE", "ISLAND") else None
-        hover_island = s.island[hover_face] if hover_face is not None and self._hover[0] == "ISLAND" else None
-        p.setPen(QtCore.Qt.NoPen)
+        fills = {}                    # colour (rgba tuple) → path
+        sel_fill = QtGui.QPainterPath()
+        sel_fill.setFillRule(QtCore.Qt.WindingFill)
+        edges = {k: QtGui.QPainterPath() for k in ("normal", "border", "seam", "sel")}
+        polys = []
         for fi, (_f, uvs) in enumerate(s.faces):
-            poly = QtGui.QPolygonF(self._pts(uvs))
+            poly = QtGui.QPolygonF([QtCore.QPointF(uv.x, uv.y) for uv in uvs])
+            polys.append(poly)
+            col = None
             if dist:
                 r = (s.areauv[fi] / totuv) / max(s.area3d[fi] / tot3, 1e-12)
-                t = min(abs(math.log2(max(r, 1e-6))) / 1.5, 1.0)
-                col = QtGui.QColor.fromHsvF((0.66 * (1 - t)), 0.85, 0.9, 0.55)
-                p.setBrush(col)
-                p.drawPolygon(poly)
+                t = round(min(abs(math.log2(max(r, 1e-6))) / 1.5, 1.0) * 20) / 20      # 21 colour steps
+                c = QtGui.QColor.fromHsvF((0.66 * (1 - t)), 0.85, 0.9, 0.55)
+                col = (c.red(), c.green(), c.blue(), c.alpha())
             elif shaded:
-                p.setBrush(QtGui.QColor(230, 60, 60, 90) if s.flipped[fi] else QtGui.QColor(70, 120, 230, 70))
-                p.drawPolygon(poly)
+                col = (230, 60, 60, 90) if s.flipped[fi] else (70, 120, 230, 70)
+            if col is not None:
+                path = fills.get(col)
+                if path is None:
+                    path = fills[col] = QtGui.QPainterPath()
+                    path.setFillRule(QtCore.Qt.WindingFill)
+                path.addPolygon(poly)
+                path.closeSubpath()
             if s.editable and s.face_sel[fi] and (self.mode in ("FACE", "ISLAND") or all(s.vert_sel[fi])):
-                p.setBrush(QtGui.QColor(255, 150, 40, 70))
-                p.drawPolygon(poly)
-            elif hover_face is not None and (fi == hover_face or (hover_island is not None
-                                                                  and s.island[fi] == hover_island)):
-                p.setBrush(QtGui.QColor(127, 212, 255, 45))
-                p.drawPolygon(poly)
-
-    def _paint_edges(self, p, s):
-        normal = QtGui.QPainterPath()
-        border = QtGui.QPainterPath()
-        seam = QtGui.QPainterPath()
-        sel = QtGui.QPainterPath()
-        borders = self.flag("borders", True)
-        for fi, (_f, uvs) in enumerate(s.faces):
-            pts = self._pts(uvs)
-            k = len(pts)
+                sel_fill.addPolygon(poly)
+                sel_fill.closeSubpath()
+            k = len(uvs)
             for i in range(k):
-                a, b = pts[i], pts[(i + 1) % k]
                 if s.editable and s.edge_sel[fi][i] and self.mode != "FACE":
-                    path = sel
+                    path = edges["sel"]
                 elif s.seam[fi][i]:
-                    path = seam
+                    path = edges["seam"]
                 elif borders and s.border[fi][i]:
-                    path = border
+                    path = edges["border"]
                 else:
-                    path = normal
-                path.moveTo(a)
-                path.lineTo(b)
-        p.setBrush(QtCore.Qt.NoBrush)
-        p.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 120), 3))
-        for path in (normal, border, seam, sel):
+                    path = edges["normal"]
+                path.moveTo(poly[i])
+                path.lineTo(poly[(i + 1) % k])
+        pts = {"normal": [], "selected": [], "pinned": []}
+        if s.editable:
+            show_all = self.mode == "VERT"
+            for fi, (_f, uvs) in enumerate(s.faces):
+                for ci, uv in enumerate(uvs):
+                    if s.pins[fi][ci]:
+                        pts["pinned"].append((uv.x, uv.y))
+                    if s.vert_sel[fi][ci] and self.mode in ("VERT", "EDGE"):
+                        pts["selected"].append((uv.x, uv.y))
+                    elif show_all:
+                        pts["normal"].append((uv.x, uv.y))
+        verts = {}
+        for k, lst in pts.items():
+            # one point per UV position – the corners of neighbouring faces share it (round caps are costly)
+            if lst:
+                lst = np.unique(np.round(np.array(lst, dtype=np.float64), 7), axis=0).tolist()
+            verts[k] = QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in lst])
+        geo = {"fills": [(QtGui.QColor(*c), path) for c, path in fills.items()], "sel_fill": sel_fill,
+               "edges": edges, "verts": verts, "polys": polys, "islands": {},
+               "shells": len(set(s.island)),
+               "n_sel": len(s.selected_corners(self.mode)) if s.editable else 0}
+        self._geo_cache = (s, key, geo)
+        return geo
+
+    @staticmethod
+    def _cpen(color, width, cap=QtCore.Qt.SquareCap):
+        """A cosmetic pen: its width stays in screen pixels under the UV transform."""
+        pen = QtGui.QPen(QtGui.QColor(color), width, QtCore.Qt.SolidLine, cap)
+        pen.setCosmetic(True)
+        return pen
+
+    def _paint_layer(self, p, s):
+        """Faces, edges and points come from a pixmap: panning only moves it (a margin around the view is
+        rendered once), zooming / a new selection renders it again."""
+        geo = self._geo(s)
+        w, h = self.width(), self.height()
+        dpr = self.devicePixelRatioF()
+        lay = getattr(self, "_layer", None)
+        if lay is not None and lay["geo"] is geo and lay["key"] == (self.scale, w, h, dpr):
+            d = self.offset - lay["offset"]
+            m = lay["margin"]
+            if abs(d.x()) <= m and abs(d.y()) <= m:
+                p.drawPixmap(QtCore.QPointF(d.x() - m, d.y() - m), lay["pm"])
+                return
+        # zooming: just the view (a margin would only cost time); panning at the same zoom: a margin
+        zooming = lay is None or lay["key"][0] != self.scale
+        m = 0 if zooming else max(150, min(w, h) // 2)
+        pm = QtGui.QPixmap(max(1, int((w + 2 * m) * dpr)), max(1, int((h + 2 * m) * dpr)))
+        pm.setDevicePixelRatio(dpr)
+        pm.fill(QtGui.QColor(0, 0, 0, 0))
+        q = QtGui.QPainter(pm)
+        try:
+            q.setRenderHint(QtGui.QPainter.Antialiasing)
+            q.translate(m, m)
+            self._paint_faces(q, s)
+            self._paint_edges(q, s)
+            self._paint_verts(q, s)
+        finally:
+            q.end()                     # a painter left active on a pixmap crashes Qt later
+        self._layer = {"geo": geo, "key": (self.scale, w, h, dpr), "offset": QtCore.QPointF(self.offset),
+                       "margin": m, "pm": pm}
+        p.drawPixmap(QtCore.QPointF(-m, -m), pm)
+
+    def _paint_faces(self, p, s):
+        geo = self._geo(s)
+        p.save()
+        p.setTransform(self._uv_transform(), True)
+        p.setPen(QtCore.Qt.NoPen)
+        for col, path in geo["fills"]:
+            p.setBrush(col)
             p.drawPath(path)
-        p.setPen(QtGui.QPen(QtGui.QColor("#cfcfcf") if s.editable else QtGui.QColor("#9a9a9a"), 1))
-        p.drawPath(normal)
-        p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 2.2))
-        p.drawPath(border)
-        p.setPen(QtGui.QPen(C_SEAM, 2.2))
-        p.drawPath(seam)
-        p.setPen(QtGui.QPen(C_SEL, 2.4))
-        p.drawPath(sel)
+        if not geo["sel_fill"].isEmpty():
+            p.setBrush(QtGui.QColor(255, 150, 40, 70))
+            p.drawPath(geo["sel_fill"])
+        p.restore()
+
+    def _paint_hover(self, p, s):
         h = self._hover
-        if h and h[0] == "EDGE":
+        if not h:
+            return
+        geo = self._geo(s)
+        if h[0] == "EDGE":
             fi, ci = h[1]
             uvs = s.faces[fi][1]
             p.setPen(QtGui.QPen(C_HOVER, 3))
             p.drawLine(self.to_screen(*uvs[ci]), self.to_screen(*uvs[(ci + 1) % len(uvs)]))
-
-    def _paint_verts(self, p, s):
-        if not s.editable:
             return
-        show_all = self.mode == "VERT"
-        normal, selected, pinned = [], [], []
-        for fi, (_f, uvs) in enumerate(s.faces):
-            for ci, uv in enumerate(uvs):
-                pt = self.to_screen(uv.x, uv.y)
-                if s.pins[fi][ci]:
-                    pinned.append(pt)
-                if s.vert_sel[fi][ci] and self.mode in ("VERT", "EDGE"):
-                    selected.append(pt)
-                elif show_all:
-                    normal.append(pt)
-        p.setPen(QtGui.QPen(QtGui.QColor("#101010"), 4.5, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
-        p.drawPoints(normal)
-        p.setPen(QtGui.QPen(QtGui.QColor("#e0e0e0"), 2.5, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
-        p.drawPoints(normal)
-        p.setPen(QtGui.QPen(C_PIN, 7, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
-        p.drawPoints(pinned)
-        p.setPen(QtGui.QPen(C_SEL, 5.5, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
-        p.drawPoints(selected)
-        h = self._hover
-        if h and h[0] == "VERT":
+        if h[0] == "VERT":
             fi, ci = h[1]
             uv = s.faces[fi][1][ci]
             p.setPen(QtGui.QPen(C_HOVER, 7, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
             p.drawPoint(self.to_screen(uv.x, uv.y))
+            return
+        hover_face = h[1]
+        if hover_face >= len(geo["polys"]):
+            return
+        p.save()
+        p.setTransform(self._uv_transform(), True)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor(127, 212, 255, 45))
+        if self._hover[0] == "ISLAND":
+            isl = s.island[hover_face]
+            path = geo["islands"].get(isl)
+            if path is None:
+                path = QtGui.QPainterPath()
+                path.setFillRule(QtCore.Qt.WindingFill)
+                for fi, poly in enumerate(geo["polys"]):
+                    if s.island[fi] == isl:
+                        path.addPolygon(poly)
+                        path.closeSubpath()
+                geo["islands"][isl] = path
+            p.drawPath(path)
+        else:
+            p.drawPolygon(geo["polys"][hover_face])
+        p.restore()
+
+    def _paint_edges(self, p, s):
+        geo = self._geo(s)
+        e = geo["edges"]
+        p.save()
+        p.setTransform(self._uv_transform(), True)
+        p.setBrush(QtCore.Qt.NoBrush)
+        p.setPen(self._cpen(QtGui.QColor(0, 0, 0, 120), 3))
+        for k in ("normal", "border", "seam", "sel"):
+            p.drawPath(e[k])
+        p.setPen(self._cpen(QtGui.QColor("#cfcfcf") if s.editable else QtGui.QColor("#9a9a9a"), 1))
+        p.drawPath(e["normal"])
+        p.setPen(self._cpen(QtGui.QColor("#ffffff"), 2.2))
+        p.drawPath(e["border"])
+        p.setPen(self._cpen(C_SEAM, 2.2))
+        p.drawPath(e["seam"])
+        p.setPen(self._cpen(C_SEL, 2.4))
+        p.drawPath(e["sel"])
+        p.restore()
+
+    def _paint_verts(self, p, s):
+        if not s.editable:
+            return
+        v = self._geo(s)["verts"]
+        rc = QtCore.Qt.RoundCap
+        p.save()
+        p.setTransform(self._uv_transform(), True)
+        p.setPen(self._cpen("#101010", 4.5, rc))
+        p.drawPoints(v["normal"])
+        p.setPen(self._cpen("#e0e0e0", 2.5, rc))
+        p.drawPoints(v["normal"])
+        p.setPen(self._cpen(C_PIN, 7, rc))
+        p.drawPoints(v["pinned"])
+        p.setPen(self._cpen(C_SEL, 5.5, rc))
+        p.drawPoints(v["selected"])
+        p.restore()
 
     def _paint_info(self, p, s):
         f = p.font()
@@ -789,10 +906,11 @@ class UVCanvas(QtWidgets.QWidget):
             img = self.editor.current_image(s.ob)
             parts.append(img.name if img is not None else "no texture")
             parts.append(s.uvl.name if hasattr(s.uvl, "name") else "")
-            n_sel = len(s.selected_corners(self.mode)) if s.editable else 0
+            geo = self._geo(s)
+            n_sel = geo["n_sel"]
             if len(s.obs) > 1:
                 parts.append(f"{len(s.obs)} objects")
-            parts.append(f"{len(s.faces)} faces · {len(set(s.island))} shells")
+            parts.append(f"{len(s.faces)} faces · {geo['shells']} shells")
             if s.editable:
                 parts.append(f"{n_sel} UVs selected")
             if not s.editable:
@@ -814,31 +932,53 @@ class UVCanvas(QtWidgets.QWidget):
         if s is None or not s.faces:
             return None
         mode = mode or self.mode
-        x, y = pos.x(), pos.y()
+        a = self._pick_arrays(s)
+        # pick in UV space: one numpy pass instead of a Python loop over every corner on each mouse move
+        u = (pos.x() - self.offset.x()) / self.scale
+        v = (self.offset.y() - pos.y()) / self.scale
+        tol = PICK * theme.ui_scale / self.scale
         if mode == "VERT":
-            best, bd = None, PICK * theme.ui_scale
-            for fi, (_f, uvs) in enumerate(s.faces):
-                for ci, uv in enumerate(uvs):
-                    q = self.to_screen(uv.x, uv.y)
-                    d = math.hypot(q.x() - x, q.y() - y)
-                    if d < bd:
-                        best, bd = (fi, ci), d
-            return ("VERT", best) if best else None
+            d = np.hypot(a["uv"][:, 0] - u, a["uv"][:, 1] - v)
+            i = int(np.argmin(d))
+            return ("VERT", (int(a["fi"][i]), int(a["ci"][i]))) if d[i] < tol else None
         if mode == "EDGE":
-            best, bd = None, PICK * theme.ui_scale
-            for fi, (_f, uvs) in enumerate(s.faces):
-                pts = self._pts(uvs)
-                k = len(pts)
-                for ci in range(k):
-                    d = _seg_dist(x, y, pts[ci], pts[(ci + 1) % k])
-                    if d < bd:
-                        best, bd = (fi, ci), d
-            return ("EDGE", best) if best else None
-        pt = QtCore.QPointF(x, y)
-        for fi in range(len(s.faces) - 1, -1, -1):           # the last drawn wins
-            if QtGui.QPolygonF(self._pts(s.faces[fi][1])).containsPoint(pt, QtCore.Qt.OddEvenFill):
-                return (mode, fi)
+            p0, p1 = a["uv"], a["nxt"]
+            seg = p1 - p0
+            ll = (seg * seg).sum(1)
+            t = np.clip(((u - p0[:, 0]) * seg[:, 0] + (v - p0[:, 1]) * seg[:, 1]) / np.maximum(ll, 1e-30), 0.0, 1.0)
+            d = np.hypot(p0[:, 0] + t * seg[:, 0] - u, p0[:, 1] + t * seg[:, 1] - v)
+            i = int(np.argmin(d))
+            return ("EDGE", (int(a["fi"][i]), int(a["ci"][i]))) if d[i] < tol else None
+        bb = a["bbox"]
+        cand = np.nonzero((bb[:, 0] <= u) & (bb[:, 2] >= u) & (bb[:, 1] <= v) & (bb[:, 3] >= v))[0]
+        pt = QtCore.QPointF(u, v)
+        polys = self._geo(s)["polys"]
+        for fi in cand[::-1]:                                  # the last drawn wins
+            if polys[fi].containsPoint(pt, QtCore.Qt.OddEvenFill):
+                return (mode, int(fi))
         return None
+
+    def _pick_arrays(self, s):
+        c = getattr(self, "_pick_cache", None)
+        if c is not None and c[0] is s:
+            return c[1]
+        uv, nxt, fis, cis, bbox = [], [], [], [], []
+        for fi, (_f, uvs) in enumerate(s.faces):
+            k = len(uvs)
+            for ci in range(k):
+                uv.append((uvs[ci].x, uvs[ci].y))
+                n = uvs[(ci + 1) % k]
+                nxt.append((n.x, n.y))
+                fis.append(fi)
+                cis.append(ci)
+            xs = [q.x for q in uvs]
+            ys = [q.y for q in uvs]
+            bbox.append((min(xs), min(ys), max(xs), max(ys)))
+        a = {"uv": np.array(uv, dtype=np.float64).reshape(-1, 2), "nxt": np.array(nxt, dtype=np.float64).reshape(-1, 2),
+             "fi": np.array(fis, dtype=np.int64), "ci": np.array(cis, dtype=np.int64),
+             "bbox": np.array(bbox, dtype=np.float64).reshape(-1, 4)}
+        self._pick_cache = (s, a)
+        return a
 
     def _items(self, kind, item):
         """Selection items for a picked element (an island expands to its faces)."""
@@ -1214,11 +1354,11 @@ class UVCanvas(QtWidgets.QWidget):
             self.update()
         else:
             s = self._snap
-            if s is not None and s.editable and sum(len(u) for _f, u in s.faces) < 30000:
+            if s is not None and s.editable:
                 h = self.pick(pos)
-                if h != self._hover:
+                if h != self._hover:             # repaint only when the highlight changes
                     self._hover = h
-            self.update()
+                    self.update()
 
     def mouseReleaseEvent(self, ev):
         if self._modal and self._modal.get("drag"):
