@@ -147,6 +147,7 @@ class Viewport(QtWidgets.QWidget):
         self._cursor_drag = False   # Cursor tool: placing the 3D cursor
         self._mouse_pos = None      # last mouse position (Select Circle outline)
         self._modal = None
+        self._vmodal = None            # valuemodal.ValueModal – Shear, Bevel, Adjust Light Power … following the mouse
         self._numeric = ""
         self.area = None            # ViewportArea when the viewport is one of several views
         # transform tools (toolbar + gizmo)
@@ -972,6 +973,9 @@ class Viewport(QtWidgets.QWidget):
         if self._modal:
             p.setPen(QtGui.QColor("#ffffff"))
             p.drawText(12, self.height() - 14, self._modal_text())
+        elif self._vmodal:
+            p.setPen(QtGui.QColor("#ffffff"))
+            p.drawText(12, self.height() - 14, self._vmodal.text())
         if self._failed:
             p.setPen(QtGui.QColor("#ff7070"))
             p.drawText(QtCore.QRectF(self.rect()).adjusted(20, 50, -20, -20),
@@ -1670,6 +1674,9 @@ class Viewport(QtWidgets.QWidget):
         b = ev.button()
         mods = ev.modifiers()
         self.setFocus()
+        if self._vmodal:
+            self._vmodal.finish(b == QtCore.Qt.LeftButton)
+            return
         if self._modal:
             self._modal_end(b == QtCore.Qt.LeftButton)
             return
@@ -1757,6 +1764,9 @@ class Viewport(QtWidgets.QWidget):
 
     def mouseMoveEvent(self, ev):
         pos = ev.position()
+        if self._vmodal:
+            self._vmodal.mouse_move(pos, bool(ev.modifiers() & QtCore.Qt.ShiftModifier))
+            return
         if self._modal:
             self._modal_update(pos)
             return
@@ -1910,7 +1920,7 @@ class Viewport(QtWidgets.QWidget):
         if ev.type() == QtCore.QEvent.ShortcutOverride:
             # a key that is a 3D View shortcut belongs to the view, not to a window shortcut
             # (e.g. Shift+Space = tool menu here, not the window's Space = play)
-            if self._modal or keymap.view_owns(ev, bpy.context.mode) or self.bp_tools.owns_key(ev):
+            if self._modal or self._vmodal or keymap.view_owns(ev, bpy.context.mode) or self.bp_tools.owns_key(ev):
                 ev.accept()
                 return True
         if ev.type() == QtCore.QEvent.NativeGesture:
@@ -1931,6 +1941,9 @@ class Viewport(QtWidgets.QWidget):
         key = ev.key()
         mods = ev.modifiers()
         text = ev.text()
+        if self._vmodal:
+            self._vmodal.key(ev)
+            return
         if self._modal:
             if key in (QtCore.Qt.Key_Escape,):
                 self._modal_end(False)
@@ -2177,10 +2190,19 @@ class Viewport(QtWidgets.QWidget):
 
     # ------------------------------------------------------------ context menus
     def _context_menu(self, gpos):
-        from .qt_ui import LazyMenu
-        mid = {"OBJECT": "VIEW3D_MT_object_context_menu", "POSE": "VIEW3D_MT_pose_context_menu"}.get(
-            bpy.context.mode, "VIEW3D_MT_edit_mesh_context_menu")
-        LazyMenu(mid, self).exec(gpos)
+        m = self.build_context_menu()
+        if m is not None:
+            m.exec(gpos)
+
+    def build_context_menu(self):
+        """The right-click menu of the current mode (a Blender menu, or a panel for sculpt / paint modes)."""
+        from .qt_ui import LazyMenu, PopoverMenu
+        kind, ident = context_menu_id(bpy.context.mode)
+        if not ident:
+            return None
+        if kind == "panel":
+            return PopoverMenu(ident, self)
+        return LazyMenu(ident, self)
 
     def _add_menu(self):
         from .qt_ui import LazyMenu
@@ -2205,6 +2227,60 @@ class Viewport(QtWidgets.QWidget):
                 except Exception:
                     pass
                 setattr(self, attr, None)
+
+
+# ---------------------------------------------------------------- right-click menus
+# context.mode → Blender keymap with the right-click menu of that mode
+CONTEXT_KEYMAPS = {
+    "OBJECT": "Object Mode", "EDIT_MESH": "Mesh", "POSE": "Pose", "EDIT_ARMATURE": "Armature",
+    "EDIT_CURVE": "Curve", "EDIT_SURFACE": "Curve", "EDIT_CURVES": "Curves", "EDIT_TEXT": "Font",
+    "EDIT_METABALL": "Metaball", "EDIT_LATTICE": "Lattice", "PARTICLE": "Particle",
+    "SCULPT": "Sculpt", "PAINT_VERTEX": "Vertex Paint", "PAINT_WEIGHT": "Weight Paint",
+    "PAINT_TEXTURE": "Image Paint", "EDIT_GREASE_PENCIL": "Grease Pencil Edit Mode",
+    "PAINT_GREASE_PENCIL": "Grease Pencil Draw Mode", "SCULPT_GREASE_PENCIL": "Grease Pencil Sculpt Mode",
+    "WEIGHT_GREASE_PENCIL": "Grease Pencil Weight Paint", "VERTEX_GREASE_PENCIL": "Grease Pencil Vertex Paint",
+}
+# used when the keymap has no right-click entry (e.g. a custom key configuration)
+CONTEXT_FALLBACK = {
+    "OBJECT": ("menu", "VIEW3D_MT_object_context_menu"), "EDIT_MESH": ("menu", "VIEW3D_MT_edit_mesh_context_menu"),
+    "POSE": ("menu", "VIEW3D_MT_pose_context_menu"), "EDIT_ARMATURE": ("menu", "VIEW3D_MT_armature_context_menu"),
+    "EDIT_CURVE": ("menu", "VIEW3D_MT_edit_curve_context_menu"),
+    "EDIT_SURFACE": ("menu", "VIEW3D_MT_edit_curve_context_menu"),
+    "EDIT_CURVES": ("menu", "VIEW3D_MT_edit_curves_context_menu"),
+    "EDIT_TEXT": ("menu", "VIEW3D_MT_edit_font_context_menu"),
+    "EDIT_METABALL": ("menu", "VIEW3D_MT_edit_metaball_context_menu"),
+    "EDIT_LATTICE": ("menu", "VIEW3D_MT_edit_lattice_context_menu"),
+    "PARTICLE": ("menu", "VIEW3D_MT_particle_context_menu"),
+    "SCULPT": ("panel", "VIEW3D_PT_sculpt_context_menu"),
+    "PAINT_VERTEX": ("panel", "VIEW3D_PT_paint_vertex_context_menu"),
+    "PAINT_WEIGHT": ("panel", "VIEW3D_PT_paint_weight_context_menu"),
+    "PAINT_TEXTURE": ("panel", "VIEW3D_PT_paint_texture_context_menu"),
+    "EDIT_GREASE_PENCIL": ("menu", "VIEW3D_MT_greasepencil_edit_context_menu"),
+    "PAINT_GREASE_PENCIL": ("panel", "VIEW3D_PT_greasepencil_draw_context_menu"),
+    "SCULPT_GREASE_PENCIL": ("panel", "VIEW3D_PT_greasepencil_sculpt_context_menu"),
+    "WEIGHT_GREASE_PENCIL": ("panel", "VIEW3D_PT_greasepencil_weight_context_menu"),
+    "VERTEX_GREASE_PENCIL": ("panel", "VIEW3D_PT_greasepencil_vertex_paint_context_menu"),
+}
+
+
+def context_menu_id(mode):
+    """('menu' | 'panel', id) that a right click opens in this mode – read from Blender's key
+    configuration like Blender does (W / right click → wm.call_menu / wm.call_panel)."""
+    km_name = CONTEXT_KEYMAPS.get(mode)
+    if km_name:
+        wm = bpy.context.window_manager
+        for kc in (wm.keyconfigs.user, wm.keyconfigs.default):
+            km = kc.keymaps.get(km_name) if kc else None
+            if km is None:
+                continue
+            for it in km.keymap_items:
+                if (it.active and it.type == "RIGHTMOUSE" and it.value == "PRESS"
+                        and it.idname in ("wm.call_menu", "wm.call_panel")
+                        and not (it.shift or it.ctrl or it.alt or it.oskey)):
+                    name = getattr(it.properties, "name", "")
+                    if name:
+                        return ("panel" if it.idname == "wm.call_panel" else "menu"), name
+    return CONTEXT_FALLBACK.get(mode, ("menu", "VIEW3D_MT_object_context_menu"))
 
 
 # ---------------------------------------------------------------- several views

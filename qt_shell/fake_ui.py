@@ -52,16 +52,52 @@ class Node:
 
 
 class OpProps:
-    """Return value of layout.operator(): records the operator properties that get set."""
+    """Return value of layout.operator(): records the operator properties that get set.
+    Array properties are filled in place by Blender's menus (`props.constraint_axis[0] = True` in
+    VIEW3D_MT_mirror) – reading one returns a list with the operator's defaults that is stored and
+    can be changed; a macro's sub-operator (`props.TRANSFORM_OT_edge_slide`) returns a nested
+    OpProps whose values end up as a dict under that key."""
 
-    def __init__(self, store):
+    def __init__(self, store, idname=None):
         object.__setattr__(self, "_store", store)
+        object.__setattr__(self, "_idname", idname)
 
     def __setattr__(self, k, v):
         self._store[k] = v
 
     def __getattr__(self, k):
-        return self._store.get(k)
+        if k.startswith("__"):
+            raise AttributeError(k)
+        if k in self._store:
+            return self._store[k]
+        rp = _op_rna_prop(self._idname, k)
+        if rp is not None:
+            if getattr(rp, "is_array", False) or getattr(rp, "array_length", 0) > 0:
+                val = list(rp.default_array)
+                self._store[k] = val
+                return val
+            if rp.type == "POINTER" and "_OT_" in k:
+                # a macro's sub-operator (props.TRANSFORM_OT_edge_slide.release_confirm = False)
+                mod, _sep, name = k.partition("_OT_")
+                sub = {}
+                self._store[k] = sub
+                return OpProps(sub, f"{mod.lower()}.{name}")
+            if rp.type == "ENUM" and getattr(rp, "is_enum_flag", False):
+                val = set(rp.default_flag)
+                self._store[k] = val
+                return val
+        return None
+
+
+def _op_rna_prop(idname, name):
+    """RNA definition of an operator property, or None."""
+    if not idname or "." not in idname:
+        return None
+    try:
+        mod, op = idname.split(".", 1)
+        return getattr(getattr(bpy.ops, mod), op).get_rna_type().properties.get(name)
+    except Exception:
+        return None
 
 
 class FakeLayout:
@@ -194,7 +230,7 @@ class FakeLayout:
                    text=(tr(text) if translate else text) if text is not None else None,
                    icon=icon, props=props, depress=depress,
                    op_ctx=self.node.flags.get("operator_context"))
-        return OpProps(props)
+        return OpProps(props, operator)
 
     operator_menu_hold = operator
 
@@ -205,7 +241,7 @@ class FakeLayout:
         props = {}
         self._item("operator_menu_enum", idname=operator, prop=property, props=props, icon=icon,
                    text=(tr(text) if translate else text) if text is not None else None)
-        return OpProps(props)
+        return OpProps(props, operator)
 
     def menu(self, menu, text=None, text_ctxt="", translate=True, icon="NONE", icon_value=0):
         self._item("menu", menu=menu, icon=icon,

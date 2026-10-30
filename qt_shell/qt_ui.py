@@ -604,13 +604,35 @@ def _dim(w):
 
 
 # ---------------------------------------------------------------- menu
+def _merge_items(items):
+    """mesh.merge 'type': Blender lists At First / At Last only when the selection history starts / ends
+    with a vertex (the enum is dynamic – Python only sees all items)."""
+    try:
+        import bmesh
+        ob = bpy.context.edit_object
+        hist = list(bmesh.from_edit_mesh(ob.data).select_history) if ob and ob.type == "MESH" else []
+    except Exception:
+        hist = []
+    first = bool(hist) and isinstance(hist[0], bmesh.types.BMVert)
+    last = bool(hist) and isinstance(hist[-1], bmesh.types.BMVert)
+    return [e for e in items if (e.identifier != "FIRST" or first) and (e.identifier != "LAST" or last)]
+
+
+# dynamic enums of operators (Python's RNA only knows the static item list)
+DYNAMIC_ENUMS = {("mesh.merge", "type"): _merge_items}
+
+
 def fill_operator_enum_menu(menu, idname, prop, base_props=None, ctx=None):
     rp = op_rna_props(idname).get(prop)
     items = list(rp.enum_items) if rp else []
+    dyn = DYNAMIC_ENUMS.get((idname, prop))
+    if dyn is not None:
+        items = dyn(items)
     if not items:
         act = menu.addAction("—")
         act.setEnabled(False)
         return
+    enabled = idname in QT_HANDLED_OPS or op_poll(idname, ctx)    # e.g. Set Spline Type on a surface
     for e in items:
         act = menu.addAction(tr(e.name))
         if blicons.has(getattr(e, "icon", None)):
@@ -620,6 +642,8 @@ def fill_operator_enum_menu(menu, idname, prop, base_props=None, ctx=None):
         props[prop] = e.identifier
         pytips.tag_op(act, idname, props)
         act.triggered.connect(lambda _=False, p=props: run_op(idname, p, ctx))
+        if not enabled:
+            act.setEnabled(False)
 
 
 # operators Qt Shell runs itself (main_window.special_op) – Blender's poll would test its hidden 3D view

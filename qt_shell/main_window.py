@@ -129,6 +129,11 @@ class LastOperatorPanel(QtWidgets.QWidget):
 
     def clear(self):
         if self.form is not None:
+            # out of the layout now – deleteLater alone left old forms stacked when operators ran
+            # quickly one after another (Blender timer, no Qt event loop pass in between)
+            self.form.hide()
+            self.lay.removeWidget(self.form)
+            self.form.setParent(None)
             self.form.deleteLater()
             self.form = None
         self.title.setText("No operation")
@@ -228,6 +233,8 @@ class LastOperatorPanel(QtWidgets.QWidget):
                 s.valueChanged.connect(changed)
             return box
         if p.type == "ENUM" and not p.is_enum_flag:
+            if not len(p.enum_items):        # dynamic enum (e.g. Orientation) – Python sees no items
+                return None
             w = rw.NoWheelCombo()
             for e in p.enum_items:
                 w.addItem(tr(e.name), e.identifier)
@@ -1192,6 +1199,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if idname in ("transform.translate", "transform.rotate", "transform.resize"):
             vp.start_modal({"transform.translate": "G", "transform.rotate": "R", "transform.resize": "S"}[idname])
             return True
+        from . import valuemodal                   # Shear, Bevel, Adjust Light Power … following the mouse
+        if valuemodal.start(vp, idname, props, ctx):
+            return True
+        if idname == "transform.mirror" and not any(props.get("constraint_axis") or ()):
+            # Interactive Mirror: Blender's modal transform can't run in the hidden 3D view –
+            # choose the axis from a menu instead (the same items as Mirror ▸ X Global …)
+            self._mirror_menu(props, ctx)
+            return True
         if idname in ("object.duplicate_move", "object.duplicate_move_linked"):
             res = run_op("object.duplicate", {"linked": idname.endswith("linked")})
             if "FINISHED" in res:
@@ -1274,6 +1289,18 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self._confirm_discard():
                 return True
         return False
+
+    def _mirror_menu(self, props, ctx=None):
+        m = QtWidgets.QMenu(self)
+        for space, orient in (("Global", "GLOBAL"), ("Local", "LOCAL")):
+            for i, axis in enumerate("XYZ"):
+                act = m.addAction(f"{axis} {space}")
+                p = dict(props)
+                p["constraint_axis"] = [j == i for j in range(3)]
+                p["orient_type"] = orient
+                act.triggered.connect(lambda _=False, p=p: run_op("transform.mirror", p, ctx))
+            m.addSeparator()
+        m.exec(QtGui.QCursor.pos())
 
     def _confirm_discard(self):
         r = QtWidgets.QMessageBox.question(
