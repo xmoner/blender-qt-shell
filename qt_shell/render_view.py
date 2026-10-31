@@ -1302,6 +1302,43 @@ class RenderView(QtWidgets.QWidget, Dockable):
             return base
         return self._exr.image(self.layer, self.pas) or self._combined
 
+    @staticmethod
+    def note_width_px(width, img_h):
+        """Stroke width in image pixels for a saved picture (screen thickness scaled to the render size)."""
+        return max(1.0, float(width) * max(1.0, img_h / 720.0))
+
+    def picture(self):
+        """The picture as shown – the render (with burnt-in Blue Pencil / scene annotations when Burn In is
+        on) plus the Render View's own annotations of the active slot – as a QImage; None when empty."""
+        base = self._base_image()
+        if base is None:
+            return None
+        notes = [st for st in self.annotations() if st.get("pts")]
+        if not notes or not self.show_overlays:
+            return base
+        q = base.convertToFormat(QtGui.QImage.Format_RGBA8888)
+        p = QtGui.QPainter(q)
+        try:
+            p.setRenderHint(QtGui.QPainter.Antialiasing)
+            p.setBrush(QtCore.Qt.NoBrush)
+            for st in notes:
+                pen = QtGui.QPen(QtGui.QColor(st["color"]), self.note_width_px(st.get("width", 3), q.height()))
+                pen.setCapStyle(QtCore.Qt.RoundCap)
+                pen.setJoinStyle(QtCore.Qt.RoundJoin)
+                p.setPen(pen)
+                pts = [QtCore.QPointF(x, y) for x, y in st["pts"]]
+                if len(pts) == 1:
+                    p.drawPoint(pts[0])
+                else:
+                    p.drawPolyline(QtGui.QPolygonF(pts))
+        finally:
+            p.end()
+        return q
+
+    def has_drawings(self):
+        """True when Save writes the picture with drawings (burnt-in or Render View annotations)."""
+        return self.burnt_in() or (self.show_overlays and any(st.get("pts") for st in self.annotations()))
+
     def burnt_in(self):
         """True when the picture shown has the drawings burnt in (Save then saves that picture)."""
         from . import burnin
@@ -1435,8 +1472,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
             if fmt is not None and not os.path.splitext(path)[1]:
                 path += fmt[3]
         fmt = self._format_for(path, fmt)
-        if (self._external is not None or self.burnt_in()) and fmt[2] in ("PNG", "JPEG", "TIFF", "WEBP", "BMP"):
-            q = self._base_image()
+        if (self._external is not None or self.has_drawings()) and fmt[2] in ("PNG", "JPEG", "TIFF", "WEBP", "BMP"):
+            q = self.picture()
             if q is not None:
                 if fmt[2] in ("JPEG", "BMP"):
                     q = q.convertToFormat(QtGui.QImage.Format_RGB32)
@@ -1447,12 +1484,12 @@ class RenderView(QtWidgets.QWidget, Dockable):
                     return False
                 if not copy:
                     self._save_path = path
-                self.mw.statusBar().showMessage(f"Saved {path} (with Blue Pencil / annotations)"
-                                                if self._external is None else f"Saved {path}", 5000)
+                self.mw.statusBar().showMessage(f"Saved {path} (with the drawings)"
+                                                if self.has_drawings() else f"Saved {path}", 5000)
                 return True
         if img is None:
             return False
-        if self.burnt_in() or self._external is not None:
+        if self.has_drawings() or self._external is not None:
             self.mw.statusBar().showMessage("OpenEXR keeps the clean render (drawings only in PNG / JPEG / TIFF / "
                                             "WebP / BMP)", 6000)
         sc = bpy.context.scene
@@ -1484,12 +1521,18 @@ class RenderView(QtWidgets.QWidget, Dockable):
         return self.save_as(self._save_path or None)
 
     def copy_to_clipboard(self):
-        if self.canvas.image is not None:
-            QtWidgets.QApplication.clipboard().setImage(self.canvas.image)
+        q = self.picture()
+        if q is not None:
+            QtWidgets.QApplication.clipboard().setImage(q)
             self.mw.statusBar().showMessage("Render copied to the clipboard", 3000)
 
     def edit_externally(self):
         path = _tmp("qtshell_render_external.png")
+        if self.has_drawings() or self._external is not None:      # the picture as shown, with the drawings
+            q = self.picture()
+            if q is not None and q.save(path):
+                QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
+            return
         img = _render_result()
         if img is None:
             return
