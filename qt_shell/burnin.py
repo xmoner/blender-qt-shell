@@ -80,7 +80,8 @@ def _project(co, mats, w, h):
 def _bp_layers(scene, cam_name):
     from . import bluepencil
     d = bluepencil.data(scene)
-    return [lay for lay in d["layers"] if lay.get("visible", True) and lay.get("camera", "") == cam_name]
+    # the 3D view's layers of the camera (the Render View / Animation Player have their own layers)
+    return [lay for lay in d["layers"] if lay.get("visible", True) and bluepencil.in_space(lay, cam_name, "VIEWPORT")]
 
 
 def _ann_layers(scene):

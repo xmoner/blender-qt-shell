@@ -51,6 +51,8 @@ TOOLS = [
      "Enter applies, Backspace resets"),
 ]
 TOOL_IDS = [t[0] for t in TOOLS]
+# where a layer is drawn: the 3D view, the Render View (over the render) or the Animation Player (over its frames)
+SPACES = {"VIEWPORT": "Viewport", "RENDER": "Render View", "ANIM": "Animation Player"}
 PALETTE = ("#2f7bff", "#ff3b30", "#ffd60a", "#34c759", "#ff9500", "#bf5af2", "#ffffff", "#111111")
 DEFAULT_SIZES = {"PENCIL": 3, "BRUSH": 8, "ERASER": 20, "TEXT": 24, "LINE": 3, "ARROW": 3, "ELLIPSE": 3,
                  "RECT": 3, "TRANSFORM": 3}
@@ -198,6 +200,8 @@ def data(scene=None):
     for lay in d["layers"]:
         lay.setdefault("name", "Layer")
         lay.setdefault("camera", "")
+        if lay.get("space") not in SPACES:
+            lay["space"] = "VIEWPORT"
         lay.setdefault("state", "ANIMATION")
         lay.setdefault("visible", True)
         lay.setdefault("opacity", 1.0)
@@ -250,13 +254,14 @@ def unique_name(d, base="Layer"):
     return f"{base} {n}"
 
 
-def new_layer(name=None, camera=None, state="ANIMATION", do_commit=True):
-    """A new layer on top of the list (active). camera: camera object name or "" = the View."""
+def new_layer(name=None, camera=None, state="ANIMATION", do_commit=True, space="VIEWPORT"):
+    """A new layer on top of the list (active). camera: camera object name or "" = the View; space: where it
+    is drawn – VIEWPORT (3D view), RENDER (Render View) or ANIM (Animation Player)."""
     d = data()
     if camera is None:
         camera = view_camera_name()
-    lay = {"name": name or unique_name(d), "camera": camera, "state": state, "visible": True, "opacity": 1.0,
-           "frames": {}}
+    lay = {"name": name or unique_name(d), "camera": camera, "space": space if space in SPACES else "VIEWPORT",
+           "state": state, "visible": True, "opacity": 1.0, "frames": {}}
     d["layers"].insert(0, lay)
     d["active"] = 0
     if do_commit:
@@ -502,8 +507,17 @@ def ghost_frames(layer, f, st=None):
     return out
 
 
-def paint_layers(p, cam, rect, f, hide=(), ghosts=True):
-    """Blue Pencil layers of a camera ("" = the View) at frame f, drawn into rect (the camera frame)."""
+def layer_space(lay):
+    return lay.get("space", "VIEWPORT")
+
+
+def in_space(lay, cam, space="VIEWPORT"):
+    """The layer belongs to this camera ("" = the View) and this window (SPACES)."""
+    return lay.get("camera", "") == cam and layer_space(lay) == space
+
+
+def paint_layers(p, cam, rect, f, hide=(), ghosts=True, space="VIEWPORT"):
+    """Blue Pencil layers of a camera ("" = the View) and a window (space) at frame f, drawn into rect."""
     st = settings()
     d = data()
     if not st.show or not d["layers"]:
@@ -514,7 +528,7 @@ def paint_layers(p, cam, rect, f, hide=(), ghosts=True):
     p.setRenderHint(QtGui.QPainter.Antialiasing)
     for i in reversed(range(len(d["layers"]))):
         lay = d["layers"][i]
-        if not lay.get("visible", True) or lay.get("camera", "") != cam:
+        if not lay.get("visible", True) or not in_space(lay, cam, space):
             continue
         op = float(lay.get("opacity", 1.0))
         if ghosts and i == act and (not playing or st.ghost_playback) and lay.get("state") != "STATIC":
@@ -535,7 +549,8 @@ def paint(vp, p):
     """All Blue Pencil drawings of a 3D view (called from its paintEvent)."""
     tools = getattr(vp, "bp_tools", None)
     cam, rect = view_space(vp)
-    paint_layers(p, cam, rect, current_frame(), tools.hidden_strokes() if tools is not None else set())
+    paint_layers(p, cam, rect, current_frame(), tools.hidden_strokes() if tools is not None else set(),
+                 space="VIEWPORT")
     if tools is not None:
         tools.paint(p)
 
@@ -917,6 +932,8 @@ def selected_frames():
 class BPTools:
     """Mouse / key handling of the Blue Pencil tool in a 3D view."""
 
+    space = "VIEWPORT"          # the layers this tool draws into / shows (SPACES)
+
     @property
     def sel(self):
         return self._sel
@@ -985,7 +1002,7 @@ class BPTools:
         order = ([act] if act >= 0 else []) + [i for i in range(len(d["layers"])) if i != act]
         for i in order:
             lay = d["layers"][i]
-            if lay.get("camera", "") != cam or not lay.get("visible", True):
+            if not in_space(lay, cam, self.space) or not lay.get("visible", True):
                 continue
             k = held_key(lay, f)
             if k is None:
@@ -1027,15 +1044,15 @@ class BPTools:
         cam, _r = self._space()
         d = data()
         act = active_index(d)
-        if act >= 0 and d["layers"][act].get("camera", "") == cam:
+        if act >= 0 and in_space(d["layers"][act], cam, self.space):
             return act, d["layers"][act]
         for i, lay in enumerate(d["layers"]):
-            if lay.get("camera", "") == cam:
+            if in_space(lay, cam, self.space):
                 d["active"] = i
                 return i, lay
         if not create:
             return -1, None
-        new_layer(camera=cam, do_commit=False)
+        new_layer(camera=cam, do_commit=False, space=self.space)
         return 0, d["layers"][0]
 
     def _base_stroke(self, kind):
@@ -1240,7 +1257,7 @@ class BPTools:
         self._erase_last = QtCore.QPointF(pos)
         cam, rect = self._space()
         lay = active_layer()
-        if lay is None or lay.get("camera", "") != cam or not lay.get("visible", True) or \
+        if lay is None or not in_space(lay, cam, self.space) or not lay.get("visible", True) or \
                 lay.get("state") == "LOCKED":
             return
         k = held_key(lay, self.frame())
@@ -1328,7 +1345,7 @@ class BPTools:
         cam, rect = self._space()
         d = data()
         i = active_index(d)
-        if i < 0 or d["layers"][i].get("camera", "") != cam:
+        if i < 0 or not in_space(d["layers"][i], cam, self.space):
             i, _lay = self._layer_for_view(create=False)
         if i < 0:
             self.sel = None
@@ -1663,7 +1680,7 @@ class BPTools:
             i = active_index(d)
             lay = d["layers"][i] if i >= 0 else None
             f = self.frame()
-            if lay is not None and lay.get("camera", "") == cam:
+            if lay is not None and in_space(lay, cam, self.space):
                 k = held_key(lay, f)
                 state = lay.get("state", "ANIMATION")
                 where = ("new frame" if k != f else f"frame {k}") if state == "ANIMATION" else \
@@ -1671,6 +1688,8 @@ class BPTools:
                 info = f"Blue Pencil · {lay['name']} [{STATE_LETTER.get(state, 'A')}] · {where}"
             else:
                 info = "Blue Pencil · " + ("a new layer for this camera" if cam else "a new layer for the view")
+            if self.space != "VIEWPORT":
+                info += f"  ({SPACES[self.space]} layers)"
             f2 = p.font()
             f2.setPixelSize(theme.fs(11))
             p.setFont(f2)
@@ -1698,15 +1717,16 @@ def set_variant(tool):
 
 
 class ImageBPTools(BPTools):
-    """Blue Pencil over a rendered picture (Render View, Animation Player): the strokes go to the layers of
-    the camera the picture was rendered with, at the picture's frame – the same drawings the 3D view shows
-    through that camera and the burn-in puts into renders.
+    """Blue Pencil over a rendered picture (Render View, Animation Player): the strokes go to the window's own
+    layers (space RENDER / ANIM – separate from the 3D view's) of the camera the picture was rendered with, at
+    the picture's frame.
 
     widget: the canvas (update / focus / text field parent); camera_fn() → camera name; rect_fn() → the
     picture in widget coordinates (= the camera frame); frame_fn() → frame; step_fn(direction) optional."""
 
-    def __init__(self, widget, camera_fn, rect_fn, frame_fn, step_fn=None):
+    def __init__(self, widget, camera_fn, rect_fn, frame_fn, step_fn=None, space="RENDER"):
         super().__init__(widget)
+        self.space = space
         _IMAGE_TOOLS.add(self)
         self.enabled = False
         self._camera_fn = camera_fn
@@ -1749,7 +1769,8 @@ class ImageBPTools(BPTools):
         """The drawings of the picture's camera / frame (layers=False: only what the tool draws)."""
         if layers:
             cam, rect = self._space()
-            paint_layers(p, cam, rect, self.frame(), self.hidden_strokes() if self.enabled else set())
+            paint_layers(p, cam, rect, self.frame(), self.hidden_strokes() if self.enabled else set(),
+                         space=self.space)
         if self.enabled:
             self.paint(p)
 
@@ -2078,7 +2099,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         # layers
         head("Layers")
         self.tree = QtWidgets.QTreeWidget(inner)
-        self.tree.setHeaderLabels(["", "", "Layer", "Camera"])
+        self.tree.setHeaderLabels(["", "", "Layer", "Camera · Window"])
         self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(0)
         self.tree.setMinimumHeight(theme.px(110))
@@ -2266,6 +2287,11 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             allm = m.addMenu(f"Move all '{lay['camera']}' layers to")
             for name, label in [("", "View (no camera)")] + [(c, c) for c in cams if c != lay["camera"]]:
                 allm.addAction(label, lambda c=name, src=lay["camera"]: self._move_all(src, c))
+        wm = m.addMenu("Draw in")
+        for sp, label in SPACES.items():
+            a = wm.addAction(label, lambda sp=sp: self._set_space(i, sp))
+            a.setCheckable(True)
+            a.setChecked(layer_space(lay) == sp)
         sm = m.addMenu("State")
         for s in STATES:
             a = sm.addAction(STATE_TIPS[s], lambda s=s: self._set_state(i, s))
@@ -2281,6 +2307,12 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         d["layers"][i]["camera"] = cam
         d["active"] = i
         commit("Layer Camera")
+
+    def _set_space(self, i, sp):
+        d = data()
+        d["layers"][i]["space"] = sp
+        d["active"] = i
+        commit("Layer Window")
 
     def _move_all(self, src, cam):
         d = data()
@@ -2410,7 +2442,9 @@ class BluePencilPanel(QtWidgets.QScrollArea):
                 k = held_key(lay, f)
                 it.setText(2, lay["name"])
                 it.setToolTip(2, f"{len(lay['frames'])} frames" + (f" · showing frame {k}" if k is not None else ""))
-                it.setText(3, lay.get("camera") or "View")
+                sp = layer_space(lay)
+                it.setText(3, (lay.get("camera") or "View") + ("" if sp == "VIEWPORT" else f" · {SPACES[sp]}"))
+                it.setToolTip(3, f"Camera: {lay.get('camera') or 'View (no camera)'} · drawn in the {SPACES[sp]}")
                 it.setFlags(it.flags() | QtCore.Qt.ItemIsEditable)
                 self.tree.addTopLevelItem(it)
                 if i == ai:

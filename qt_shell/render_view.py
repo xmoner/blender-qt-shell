@@ -37,8 +37,8 @@ TOOLS = [("SAMPLE", "Sample", "tool_sample",
           "Sample – hold the left mouse button to read the pixel under it (footer: X / Y, R G B A)"),
          ("ANNOTATE", "Annotate", "tool_annotate", "Annotate – draw notes over the render"),
          ("BLUE_PENCIL", "Blue Pencil", "tool_blue_pencil",
-          "Blue Pencil – draw on the camera the picture was rendered with, at its frame: the same drawings the "
-          "3D view shows through that camera (Blue Pencil panel: colour, size, layers)")]
+          "Blue Pencil – draw over the render, at its frame: the Render View's own layers (separate from the "
+          "3D view's and the Animation Player's; Blue Pencil panel: colour, size, layers)")]
 ANNOTATE_VARIANTS = [
     ("FREEHAND", "Annotate", "tool_annotate", "Draw a free-hand note"),
     ("LINE", "Annotate Line", "tool_annotate_line", "Drag to draw a straight line"),
@@ -642,7 +642,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
         body.addWidget(self.toolbar)
         self.canvas = _Canvas(self)
         from . import bluepencil
-        self.bp = bluepencil.ImageBPTools(self.canvas, self.bp_camera, self.canvas.image_rect, self.bp_frame)
+        self.bp = bluepencil.ImageBPTools(self.canvas, self.bp_camera, self.canvas.image_rect, self.bp_frame,
+                                          space="RENDER")
         bluepencil.signals.changed.connect(self._bp_changed)
         bluepencil.tool_state().changed.connect(self._sync_tools)
         self.canvas.zoom_changed.connect(self._zoom_changed)
@@ -1372,9 +1373,9 @@ class RenderView(QtWidgets.QWidget, Dockable):
         return int(burn["frame"]) if burn else int(bpy.context.scene.frame_current)
 
     def bp_layers_shown(self):
-        """The Blue Pencil layers are painted over the picture (not when they are burnt into it already)."""
-        return (self.show_overlays and self._external is None and self.canvas.image is not None
-                and not self.burnt_in())
+        """The Render View's own Blue Pencil layers are painted over the picture (the 3D view's camera layers
+        come only with Burn In, burnt into the picture)."""
+        return self.show_overlays and self._external is None and self.canvas.image is not None
 
     def _bp_changed(self):
         try:
@@ -1389,8 +1390,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
         if not bluepencil.settings().show:
             return False
         cam, f = self.bp_camera(), self.bp_frame()
-        return any(lay.get("visible", True) and lay.get("camera", "") == cam and bluepencil.strokes_at(lay, f)
-                   for lay in bluepencil.layers())
+        return any(lay.get("visible", True) and bluepencil.in_space(lay, cam, "RENDER") and
+                   bluepencil.strokes_at(lay, f) for lay in bluepencil.layers())
 
     @staticmethod
     def note_width_px(width, img_h):
@@ -1404,7 +1405,7 @@ class RenderView(QtWidgets.QWidget, Dockable):
         if base is None:
             return None
         notes = [st for st in self.annotations() if st.get("pts")]
-        bp = self._external is None and not self.burnt_in() and self.show_overlays and self._bp_has_strokes()
+        bp = self._external is None and self.show_overlays and self._bp_has_strokes()
         if (not notes and not bp) or not self.show_overlays:
             return base
         q = base.convertToFormat(QtGui.QImage.Format_RGBA8888)
@@ -1413,7 +1414,7 @@ class RenderView(QtWidgets.QWidget, Dockable):
             if bp:                               # Blue Pencil of the render's camera, like on the screen
                 from . import bluepencil
                 bluepencil.paint_layers(p, self.bp_camera(), QtCore.QRectF(0, 0, q.width(), q.height()),
-                                        self.bp_frame(), ghosts=False)
+                                        self.bp_frame(), ghosts=False, space="RENDER")
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setBrush(QtCore.Qt.NoBrush)
             for st in notes:

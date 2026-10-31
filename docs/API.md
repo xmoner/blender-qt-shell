@@ -719,7 +719,7 @@ rv.save_as("C:/renders/frame.png")   # the format follows the extension (.png .j
 rv.copy_to_clipboard()
 # API 1.5 – toolbar (T), annotations, header toggles
 rv.set_tool("ANNOTATE", "LINE")      # SAMPLE, or ANNOTATE with FREEHAND / LINE / POLYGON / ERASER
-rv.set_tool("BLUE_PENCIL", "BRUSH")  # API 1.10 – Blue Pencil on the render's camera / frame (tool shared with the 3D view)
+rv.set_tool("BLUE_PENCIL", "BRUSH")  # API 1.10 – Blue Pencil over the render (the Render View's own layers)
 rv.picture()                         # API 1.10 – QImage as shown: render + Blue Pencil + annotations
 rv.add_annotation([(10, 10), (200, 120)], color="#ff4040", width=4)   # image pixels from the top-left
 rv.annotations()                     # strokes of the active render slot: [{"pts", "color", "width"}, …]
@@ -733,8 +733,9 @@ Render View annotations are kept per render slot for the Blender session. Since 
 annotations and the Blue Pencil of the render's camera (OpenEXR keeps the clean render).
 
 **Animation Player** (API 1.10): `qs.main_window().anim_player.set_blue_pencil(True)` draws Blue Pencil on the
-frame shown – the strokes go to the scene camera's layers at that frame (the same drawings the 3D view shows
-through the camera).
+frame shown – the strokes go to the Animation Player's own layers at that frame. Since Qt Shell 0.69.0 every Blue
+Pencil layer has a `"space"`: `VIEWPORT`, `RENDER` or `ANIM` (`bluepencil.SPACES`, `bluepencil.in_space(layer, camera,
+space)`, `bluepencil.new_layer(..., space=…)`); each window draws only its own layers.
 
 ## Timeline from a script
 

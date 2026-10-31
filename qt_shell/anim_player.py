@@ -164,8 +164,8 @@ class _Canvas(QtWidgets.QWidget):
                             (self.fit_zoom() if self.zoom is None else self.zoom) < 1.0)
             p.drawImage(r, self.image)
             bp = self._bp()
-            if bp is not None:     # the camera's Blue Pencil (Render + Drawings / Viewport Render have it burnt in)
-                bp.paint_all(p, layers=self.player.source == "RENDER")
+            if bp is not None:     # the Animation Player's own Blue Pencil layers (not burnt into any frames)
+                bp.paint_all(p)
         if self.message:
             p.setPen(QtGui.QColor(170, 170, 170))
             p.drawText(self.rect().adjusted(20, 20, -20, -20), QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap,
@@ -379,7 +379,7 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         self.canvas.setMouseTracking(True)            # the Blue Pencil eraser circle follows the mouse
         from . import bluepencil
         self.bp = bluepencil.ImageBPTools(self.canvas, self.bp_camera, self.canvas.bp_rect, lambda: self.frame,
-                                          self.step)
+                                          self.step, space="ANIM")
         self.stack.addWidget(self.canvas)
         self.video = None
         lay.addWidget(self.stack, 1)
@@ -489,8 +489,8 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         self.bp_btn.setPopupMode(QtWidgets.QToolButton.DelayedPopup)
         self.bp_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
         keymap.tip(self.bp_btn, "Blue Pencil ({anim.blue_pencil}) – draw on the frames: the drawings go to the "
-                                "scene camera's layers at the frame shown (the same ones the 3D view shows through "
-                                "the camera and Render + Drawings burns in). Hold or right click: the drawing tool. "
+                                "Animation Player's own layers (separate from the 3D view's and the Render View's) "
+                                "at the frame shown. Hold or right click: the drawing tool. "
                                 "Right click on the picture: the Blue Pencil menu")
         pytips.tag(self.bp_btn, _api("set_blue_pencil(True)"))
         self.bp_btn.toggled.connect(self.set_blue_pencil)
