@@ -649,15 +649,44 @@ class PropertiesEditor(QtWidgets.QWidget):
         self._throttle = QtCore.QTimer(self)
         self._throttle.setSingleShot(True)
         self._throttle.setInterval(150)
-        self._throttle.timeout.connect(lambda: self.refresh())
+        self._throttle.timeout.connect(self._throttled)
+        # while an operator is redone again and again (dragging a value in Adjust Last Operation) each
+        # redo is an undo + a new run – a new object, a selection change – and rebuilding every page
+        # (~100 ms) made the drag stutter: wait until the redos settle, then refresh once
+        self._hub = hub
+        self._force_later = False
+        self._settle = QtCore.QTimer(self)
+        self._settle.setSingleShot(True)
+        self._settle.setInterval(100)
+        self._settle.timeout.connect(self._settled)
         hub.data_changed.connect(self._schedule)
         # operators can change what panels show without touching scene data (e.g. a "Custom" preset)
         hub.op_done.connect(lambda *_a: self._schedule())
-        hub.selection_changed.connect(lambda: self.refresh(force=True))
+        hub.selection_changed.connect(self._force_refresh)
         hub.file_loaded.connect(lambda: self.refresh(force=True))
-        hub.undo_done.connect(lambda: self.refresh(force=True))
-        hub.mode_changed.connect(lambda _m: self.refresh(force=True))
+        hub.undo_done.connect(self._force_refresh)
+        hub.mode_changed.connect(lambda _m: self._force_refresh())
         self.refresh(force=True)
+
+    def _force_refresh(self):
+        if self._hub.in_redo():
+            self._force_later = True
+            self._settle.start()
+            return
+        self.refresh(force=True)
+
+    def _throttled(self):
+        if self._hub.in_redo():
+            self._settle.start()
+            return
+        self.refresh()
+
+    def _settled(self):
+        if self._hub.in_redo():
+            self._settle.start()
+            return
+        force, self._force_later = self._force_later, False
+        self.refresh(force=force)
 
     def eventFilter(self, obj, ev):
         if obj is self.search and ev.type() == QtCore.QEvent.KeyPress and ev.key() == QtCore.Qt.Key_Escape:

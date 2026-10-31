@@ -59,7 +59,7 @@ A Blender 4.2+ add-on (Windows, Linux, macOS) that replaces the Blender interfac
 | Status history | Click the status bar or 🕘 at its right end: the last 200 status messages of the session with their time (Copy / Clear). Every message is also written to the Console in grey. From scripts: `qs.status_history()`. |
 | Sidebar (N panel) | N over the viewport (or Window → Sidebar): Blender's and add-ons' VIEW_3D sidebar panels in tabs (Item, Tool, View, …); Item ▸ Transform is a Qt version of Blender's C panel |
 | Help → Search | Like Maya's Help search: a search field at the top of the **Help** menu (and *Search All…*). Type a word and a list shows every **menu item** (all menus and submenus, with their path, e.g. *Object ▸ Animation*), **tab** (workspaces, shelf, Properties tabs), visible **button** and **operator** that matches – Enter or double click runs it. Ignores doubled letters (*modelling* finds *Modeling*). A shortcut can be assigned in Keyboard Shortcuts (*Search Menus and Buttons*) |
-| Other | Python console, "Adjust Last Operation" (redo), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
+| Other | Python console, "Adjust Last Operation" (redo – dragging a number redoes the operator live, ~20× per second), F3 operator search, Qt file dialogs (Open/Save/Import/Export/Append/Link), F12 render with preview |
 
 The Blender window is hidden (Windows: WinAPI, macOS: Cocoa via ctypes, Linux: `xdotool` on X11).
 You can bring it back at any time with **Window → Show Blender Window**.

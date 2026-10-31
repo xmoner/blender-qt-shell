@@ -20,6 +20,14 @@ _INPUT_EVENTS = frozenset((QtCore.QEvent.Wheel, QtCore.QEvent.MouseMove, QtCore.
 
 class Hub(QtCore.QObject):
     """Turns changes in Blender into Qt signals (called from the pump)."""
+
+    def redo_burst(self, seconds=0.4):
+        """An operator is redone repeatedly (Adjust Last Operation drag, interactive menu operators):
+        heavy views (Properties) postpone their full rebuild until it settles."""
+        self.redo_until = time.perf_counter() + seconds
+
+    def in_redo(self):
+        return time.perf_counter() < self.redo_until
     data_changed = QtCore.Signal()
     selection_changed = QtCore.Signal()
     frame_changed = QtCore.Signal(int)
@@ -48,6 +56,7 @@ class Hub(QtCore.QObject):
         self.playing = False     # animation playback in the timeline
         self.display_frame = None  # frame shown from the playback cache (scene frame not changed), else None
         self.main_window = None
+        self.redo_until = 0.0    # an operator is being redone again and again (dragging a value) until then
 
     def tick(self):
         now = time.monotonic()

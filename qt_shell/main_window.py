@@ -119,11 +119,17 @@ class LastOperatorPanel(QtWidgets.QWidget):
         self.form = None
         self.idname = None
         self.values = {}
-        self._redoing = False
+        self._redoing = False         # an undo + run is in flight (the run happens in a later tick)
+        self._pending = False         # values changed while it was in flight → redo again afterwards
+        self._applied = None          # values of the last finished run
+        self._has_step = False        # the last run left an undo step (else the next redo must not undo)
+        # throttle, not debounce: while a number is dragged the operator is redone continuously
+        # (~30 ms apart, one redo at a time) instead of only 250 ms after the last change
         self._timer = QtCore.QTimer(self)
         self._timer.setSingleShot(True)
-        self._timer.setInterval(250)
+        self._timer.setInterval(30)
         self._timer.timeout.connect(self._redo)
+        self.hub = hub
         hub.op_done.connect(self.on_op)
         hub.file_loaded.connect(self.clear)
 
@@ -160,6 +166,9 @@ class LastOperatorPanel(QtWidgets.QWidget):
             return
         self.idname = idname
         self.values = dict(props)
+        self._applied = dict(props)
+        self._pending = False
+        self._has_step = True
         self.title.setText(tr(rna.name))
         self.form = QtWidgets.QWidget()
         fl = QtWidgets.QVBoxLayout(self.form)
@@ -186,7 +195,8 @@ class LastOperatorPanel(QtWidgets.QWidget):
 
     def _set(self, ident, value):
         self.values[ident] = value
-        self._timer.start()
+        if not self._timer.isActive():
+            self._timer.start()
 
     def _widget(self, p):
         ident = p.identifier
@@ -250,18 +260,30 @@ class LastOperatorPanel(QtWidgets.QWidget):
     def _redo(self):
         if not self.idname:
             return
+        if self._redoing:                    # never a second undo before the previous run finished
+            self._pending = True
+            return
+        if self.values == self._applied:
+            return
         # undo and the re-run must happen in different ticks of Blender's loop,
         # otherwise the depsgraph works with data that undo has just freed (crash).
         self._redoing = True
+        self.hub.redo_burst()               # Properties waits with its full rebuild until the drag settles
         idname, values = self.idname, dict(self.values)
-        run_op("ed.undo")
+        if self._has_step:
+            run_op("ed.undo")
 
         def again():
             try:
-                run_op(idname, values)
+                res = run_op(idname, values)
+                self._has_step = "FINISHED" in (res or set())
+                self._applied = values
             finally:
                 self._redoing = False
-        bridge.later(again, 0.05)
+            if self._pending and self.idname == idname:
+                self._pending = False
+                self._timer.start()
+        bridge.later(again, 0.0)
 
 
 # ---------------------------------------------------------------- F3 search

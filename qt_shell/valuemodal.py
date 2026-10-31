@@ -166,6 +166,11 @@ class ValueModal:
         if self.applied == self.value:
             return
         self.busy = True
+        try:
+            from . import app
+            app.hub().redo_burst()          # Properties waits with its full rebuild until the drag settles
+        except Exception:
+            pass
         bridge.run_op("ed.undo")
         value = self.value
 
