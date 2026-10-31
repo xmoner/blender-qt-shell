@@ -888,6 +888,9 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.tool = tool
         st.setValue("render_view/tool", tool)
         self._sync_tools()
+        if tool == "BLUE_PENCIL":
+            from . import bluepencil
+            bluepencil.set_panel_space(self.bp.space)     # the panel lists the Render View's layers
         self.canvas.update()
 
     def set_toolbar(self, on):

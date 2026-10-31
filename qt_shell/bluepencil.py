@@ -141,6 +141,7 @@ def settings():
 class _Signals(QtCore.QObject):
     changed = QtCore.Signal()          # the drawings / layers changed
     selection = QtCore.Signal()        # the Transform tool's selection changed
+    space = QtCore.Signal(str)         # the window whose layers the panel lists (SPACES)
 
 
 signals = _Signals()
@@ -509,6 +510,45 @@ def ghost_frames(layer, f, st=None):
 
 def layer_space(lay):
     return lay.get("space", "VIEWPORT")
+
+
+_panel_space = "VIEWPORT"     # the window whose layers the panel lists and New Layer creates
+
+
+def panel_space():
+    return _panel_space
+
+
+def set_panel_space(space):
+    """The panel's window tab: Viewport, Render View or Animation Player (also where New Layer goes).
+    Drawing in a window switches the panel to it."""
+    global _panel_space
+    if space not in SPACES or space == _panel_space:
+        return
+    _panel_space = space
+    signals.space.emit(space)
+
+
+def space_camera(space):
+    """Camera of a new layer of a window: the 3D view's camera when looking through it (else the View),
+    the Render View's render camera, the scene camera for the Animation Player."""
+    if space == "VIEWPORT":
+        return view_camera_name()
+    if space == "RENDER":
+        rv = getattr(_mw(), "render_window", None)
+        if rv is not None and hasattr(rv, "bp_camera"):
+            try:
+                return rv.bp_camera()
+            except Exception:
+                pass
+    cam = bpy.context.scene.camera
+    return cam.name if cam is not None else ""
+
+
+def new_space_layer(space=None):
+    """New layer for a window (default: the panel's tab)."""
+    sp = space or _panel_space
+    return new_layer(camera=space_camera(sp), space=sp)
 
 
 def in_space(lay, cam, space="VIEWPORT"):
@@ -1062,6 +1102,7 @@ class BPTools:
                 "o": round(float(st.opacity), 3), "w": st.size(kind if kind != "TEXT" else "PENCIL")}
 
     def _add(self, stroke, message):
+        set_panel_space(self.space)            # the panel shows the layers of the window drawn in
         i, lay = self._layer_for_view()
         if not _editable(lay):
             return False
@@ -1074,6 +1115,7 @@ class BPTools:
     def press(self, ev, pos):
         if not self.active():
             return False
+        set_panel_space(self.space)                # the panel lists this window's layers
         b = ev.button()
         mods = ev.modifiers()
         if mods & QtCore.Qt.AltModifier:
@@ -1733,6 +1775,20 @@ class ImageBPTools(BPTools):
         self._rect_fn = rect_fn
         self._frame_fn = frame_fn
         self._step_fn = step_fn
+        widget.installEventFilter(self._focus_filter())
+
+    def _focus_filter(self):
+        """Showing or clicking into the window while its Blue Pencil is on switches the panel to its layers."""
+        tools = self
+
+        class _F(QtCore.QObject):
+            def eventFilter(self, obj, ev):
+                if tools.enabled and ev.type() in (QtCore.QEvent.Show, QtCore.QEvent.FocusIn,
+                                                   QtCore.QEvent.WindowActivate):
+                    set_panel_space(tools.space)
+                return False
+        self._filter = _F(self.vp)
+        return self._filter
 
     def active(self):
         return self.enabled
@@ -1763,6 +1819,7 @@ class ImageBPTools(BPTools):
             self.tool_changed()
             self.cancel()
         self.enabled = on
+        set_panel_space(self.space if on else ("VIEWPORT" if tool_active() else _panel_space))
         self.vp.update()
 
     def paint_all(self, p, layers=True):
@@ -2098,8 +2155,20 @@ class BluePencilPanel(QtWidgets.QScrollArea):
 
         # layers
         head("Layers")
+        # one layer list per window: the 3D view, the Render View, the Animation Player
+        self.space_tabs = QtWidgets.QTabBar(inner)
+        self.space_tabs.setExpanding(False)
+        self.space_tabs.setDrawBase(False)
+        for sp, label in SPACES.items():
+            self.space_tabs.addTab(label)
+            self.space_tabs.setTabData(self.space_tabs.count() - 1, sp)
+        self.space_tabs.setToolTip("The layers of a window – drawing in the 3D view, the Render View or the "
+                                   "Animation Player uses only that window's layers (drawing there switches this "
+                                   "tab). New Layer creates a layer for the tab's window.")
+        self.space_tabs.currentChanged.connect(self._space_tab_changed)
+        v.addWidget(self.space_tabs)
         self.tree = QtWidgets.QTreeWidget(inner)
-        self.tree.setHeaderLabels(["", "", "Layer", "Camera · Window"])
+        self.tree.setHeaderLabels(["", "", "Layer", "Camera"])
         self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(0)
         self.tree.setMinimumHeight(theme.px(110))
@@ -2117,8 +2186,9 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         v.addWidget(self.tree)
         lb = QtWidgets.QHBoxLayout()
         lb.setSpacing(theme.px(1))
-        for icon, text, tip, fn in (("bp_layer_new", "", "New layer (for the camera you look through, else the View)",
-                                     lambda: new_layer()),
+        for icon, text, tip, fn in (("bp_layer_new", "", "New layer for the window of the tab (Viewport: the camera "
+                                     "you look through, else the View; Render View: the render's camera; Animation "
+                                     "Player: the scene camera)", lambda: new_space_layer()),
                                     ("trash", "", "Delete the active layer", self._delete_layer),
                                     (None, "▲", "Move the layer up (drawn on top)", lambda: self._move_layer(-1)),
                                     (None, "▼", "Move the layer down", lambda: self._move_layer(1))):
@@ -2158,6 +2228,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
 
         self._syncing = False
         signals.changed.connect(self.sync)
+        signals.space.connect(lambda _sp: self.sync())
         signals.selection.connect(self.sync)
         st.changed.connect(self.sync)
         tool_state().changed.connect(self.sync)
@@ -2239,6 +2310,19 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             st.set(f"ghost_color_{key}", c.name())
             _views_update()
 
+    def _space_tab_changed(self, idx):
+        if self._syncing:
+            return
+        sp = self.space_tabs.tabData(idx)
+        set_panel_space(sp)
+        d = data()
+        act = active_index(d)
+        if act < 0 or layer_space(d["layers"][act]) != sp:      # the active layer follows the tab
+            for i, lay in enumerate(d["layers"]):
+                if layer_space(lay) == sp:
+                    set_active(i)
+                    break
+
     def _layer_clicked(self, item, col):
         i = item.data(0, QtCore.Qt.UserRole)
         d = data()
@@ -2312,12 +2396,13 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         d = data()
         d["layers"][i]["space"] = sp
         d["active"] = i
+        set_panel_space(sp)                    # follow the layer to its window's list
         commit("Layer Window")
 
     def _move_all(self, src, cam):
         d = data()
-        for lay in d["layers"]:
-            if lay.get("camera", "") == src:
+        for lay in d["layers"]:                # only this window's layers
+            if lay.get("camera", "") == src and layer_space(lay) == _panel_space:
                 lay["camera"] = cam
         commit("Layers Camera")
 
@@ -2331,16 +2416,24 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         i = active_index(d)
         if i < 0:
             return
+        sp = layer_space(d["layers"][i])
         del d["layers"][i]
-        d["active"] = max(0, min(i, len(d["layers"]) - 1))
+        same = [j for j, lay in enumerate(d["layers"]) if layer_space(lay) == sp]   # stay in the window's list
+        d["active"] = min(same, key=lambda j: abs(j - i)) if same else max(0, min(i, len(d["layers"]) - 1))
         commit("Delete Layer")
 
     def _move_layer(self, delta):
+        """Up / down within the window's own layers."""
         d = data()
         i = active_index(d)
-        j = i + delta
-        if i < 0 or not 0 <= j < len(d["layers"]):
+        if i < 0:
             return
+        sp = layer_space(d["layers"][i])
+        js = [j for j in range(len(d["layers"])) if layer_space(d["layers"][j]) == sp]
+        k = js.index(i) + delta
+        if not 0 <= k < len(js):
+            return
+        j = js[k]
         d["layers"][i], d["layers"][j] = d["layers"][j], d["layers"][i]
         d["active"] = j
         commit("Move Layer")
@@ -2430,9 +2523,17 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             self.tl_combo.setCurrentIndex(max(0, self.tl_combo.findData(st.timeline_frames)))
             d = data()
             ai = active_index(d)
+            sp_now = panel_space()
+            for t in range(self.space_tabs.count()):
+                n = sum(1 for lay in d["layers"] if layer_space(lay) == self.space_tabs.tabData(t))
+                self.space_tabs.setTabText(t, SPACES[self.space_tabs.tabData(t)] + (f" ({n})" if n else ""))
+                if self.space_tabs.tabData(t) == sp_now and self.space_tabs.currentIndex() != t:
+                    self.space_tabs.setCurrentIndex(t)
             self.tree.clear()
             f = current_frame()
             for i, lay in enumerate(d["layers"]):
+                if layer_space(lay) != sp_now:
+                    continue
                 it = QtWidgets.QTreeWidgetItem()
                 it.setData(0, QtCore.Qt.UserRole, i)
                 it.setIcon(0, icons.icon("eye_on" if lay.get("visible", True) else "eye_off"))
@@ -2443,7 +2544,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
                 it.setText(2, lay["name"])
                 it.setToolTip(2, f"{len(lay['frames'])} frames" + (f" · showing frame {k}" if k is not None else ""))
                 sp = layer_space(lay)
-                it.setText(3, (lay.get("camera") or "View") + ("" if sp == "VIEWPORT" else f" · {SPACES[sp]}"))
+                it.setText(3, lay.get("camera") or "View")
                 it.setToolTip(3, f"Camera: {lay.get('camera') or 'View (no camera)'} · drawn in the {SPACES[sp]}")
                 it.setFlags(it.flags() | QtCore.Qt.ItemIsEditable)
                 self.tree.addTopLevelItem(it)
@@ -2453,6 +2554,8 @@ class BluePencilPanel(QtWidgets.QScrollArea):
                     it.setFont(2, f2)
                     self.tree.setCurrentItem(it)
             lay = active_layer(d)
+            if lay is not None and layer_space(lay) != sp_now:
+                lay = None                              # the active layer is in another window's list
             self.layer_opacity.setEnabled(lay is not None)
             if lay is not None and not self.layer_opacity.isSliderDown():
                 self.layer_opacity.setValue(int(round(float(lay.get("opacity", 1.0)) * 100)))

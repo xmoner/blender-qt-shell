@@ -736,6 +736,7 @@ annotations and the Blue Pencil of the render's camera (OpenEXR keeps the clean 
 frame shown – the strokes go to the Animation Player's own layers at that frame. Since Qt Shell 0.69.0 every Blue
 Pencil layer has a `"space"`: `VIEWPORT`, `RENDER` or `ANIM` (`bluepencil.SPACES`, `bluepencil.in_space(layer, camera,
 space)`, `bluepencil.new_layer(..., space=…)`); each window draws only its own layers.
+Since Qt Shell 0.70.0 the Blue Pencil panel lists one window at a time: `bluepencil.panel_space()` / `bluepencil.set_panel_space("RENDER")` (signal `bluepencil.signals.space(str)`); `bluepencil.new_space_layer(space=None)` creates a layer for a window (default: the panel's tab) with `bluepencil.space_camera(space)` – the 3D view's camera or View, the Render View's render camera, or the scene camera.
 
 ## Timeline from a script
 
