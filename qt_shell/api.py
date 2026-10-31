@@ -40,7 +40,7 @@ __all__ = [
     "active_tool", "set_tool", "TOOLS", "timeline", "image_editor",
 ]
 
-API_VERSION = (1, 9)
+API_VERSION = (1, 10)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {

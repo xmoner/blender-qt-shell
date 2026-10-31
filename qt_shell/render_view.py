@@ -35,7 +35,10 @@ CHANNELS = [("COLOR_ALPHA", "Color & Alpha"), ("COLOR", "Color"), ("ALPHA", "Alp
             ("RED", "Red"), ("GREEN", "Green"), ("BLUE", "Blue")]
 TOOLS = [("SAMPLE", "Sample", "tool_sample",
           "Sample – hold the left mouse button to read the pixel under it (footer: X / Y, R G B A)"),
-         ("ANNOTATE", "Annotate", "tool_annotate", "Annotate – draw notes over the render")]
+         ("ANNOTATE", "Annotate", "tool_annotate", "Annotate – draw notes over the render"),
+         ("BLUE_PENCIL", "Blue Pencil", "tool_blue_pencil",
+          "Blue Pencil – draw on the camera the picture was rendered with, at its frame: the same drawings the "
+          "3D view shows through that camera (Blue Pencil panel: colour, size, layers)")]
 ANNOTATE_VARIANTS = [
     ("FREEHAND", "Annotate", "tool_annotate", "Draw a free-hand note"),
     ("LINE", "Annotate Line", "tool_annotate_line", "Drag to draw a straight line"),
@@ -320,7 +323,10 @@ class _Canvas(QtWidgets.QWidget):
             p.drawRect(r.adjusted(-0.5, -0.5, 0.5, 0.5))
             if self.view.show_overlays:
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
+                self.view.bp.paint_all(p, layers=self.view.bp_layers_shown())
                 self._paint_notes(p)
+            elif self.view.bp.enabled:
+                self.view.bp.paint_all(p, layers=False)
             if (self.view.tool == "ANNOTATE" and self.view.annotate_variant == "ERASER" and self._mouse is not None
                     and self.underMouse()):
                 p.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -351,6 +357,8 @@ class _Canvas(QtWidgets.QWidget):
 
     # --- mouse
     def wheelEvent(self, ev):
+        if self.view.bp.enabled and self.view.bp.wheel(ev):     # Ctrl + wheel: Blue Pencil size
+            return
         steps = ev.angleDelta().y() / 120.0
         if steps:
             self.zoom_step(1.25 ** steps, ev.position())
@@ -363,6 +371,8 @@ class _Canvas(QtWidgets.QWidget):
             self._nav = (nav, pos)
             self.setCursor(QtCore.Qt.SizeVerCursor if nav == "zoom" else QtCore.Qt.ClosedHandCursor)
             self.update()
+        elif self.view.bp.enabled and self.image is not None and self.view.bp.press(ev, pos):
+            pass                              # Blue Pencil (Alt / middle mouse still navigate)
         elif ev.button() == QtCore.Qt.MiddleButton or (
                 ev.button() == QtCore.Qt.LeftButton and ev.modifiers() & QtCore.Qt.AltModifier):
             self._pan = pos
@@ -408,6 +418,8 @@ class _Canvas(QtWidgets.QWidget):
             self._pan = pos
             self.offset += d
             self.update()
+        elif self.view.bp.enabled and self.view.bp.move(ev, pos):
+            pass
         elif self._sampling:
             self.sampled.emit(self.pixel_at(pos))
         elif self._erasing:
@@ -442,6 +454,9 @@ class _Canvas(QtWidgets.QWidget):
         if self._pan is not None:
             self._pan = None
             self.unsetCursor()
+            return
+        if self.view.bp.enabled and self.view.bp.release(ev, ev.position()):
+            return
         if ev.button() != QtCore.Qt.LeftButton:
             return
         if self._sampling:
@@ -462,6 +477,8 @@ class _Canvas(QtWidgets.QWidget):
     def mouseDoubleClickEvent(self, ev):
         if ev.button() == QtCore.Qt.MiddleButton:
             self.fit()
+        elif self.view.bp.enabled and self.view.bp.double_click(ev, ev.position()):
+            pass
         elif ev.button() == QtCore.Qt.LeftButton and self._poly:
             self.finish_polygon()
 
@@ -526,18 +543,24 @@ class _VariantButton(QtWidgets.QToolButton):
         self.setMenu(m)
         self.setPopupMode(QtWidgets.QToolButton.DelayedPopup)
 
+    tool_id = "ANNOTATE"
+
+    def _variants(self):
+        return ANNOTATE_VARIANTS, self.view.annotate_variant
+
     def _fill(self):
         m = self.menu()
         m.clear()
-        for vid, name, icon, tip in ANNOTATE_VARIANTS:
+        variants, cur = self._variants()
+        for vid, name, icon, tip in variants:
             a = m.addAction(icons.icon(icon), name)
             a.setToolTip(tip)
-            if self.view.annotate_variant == vid:      # no check mark next to an icon: bold
+            if cur == vid:      # no check mark next to an icon: bold
                 f = a.font()
                 f.setBold(True)
                 a.setFont(f)
-            pytips.tag(a, _api(f"set_tool('ANNOTATE', '{vid}')"))
-            a.triggered.connect(lambda _c=False, v=vid: self.view.set_tool("ANNOTATE", v))
+            pytips.tag(a, _api(f"set_tool('{self.tool_id}', '{vid}')"))
+            a.triggered.connect(lambda _c=False, v=vid: self.view.set_tool(self.tool_id, v))
 
     def contextMenuEvent(self, ev):
         self.showMenu()
@@ -554,6 +577,15 @@ class _VariantButton(QtWidgets.QToolButton):
         x, y = r.right() - theme.px(2), r.bottom() - theme.px(2)
         p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, y - k), QtCore.QPointF(x, y), QtCore.QPointF(x - k, y)]))
         p.end()
+
+
+class _BPButton(_VariantButton):
+    """The Blue Pencil button: hold or right click it for Pencil, Brush, Eraser, Text, shapes, Transform."""
+    tool_id = "BLUE_PENCIL"
+
+    def _variants(self):
+        from . import bluepencil
+        return bluepencil.TOOLS, bluepencil.current_tool()
 
 
 # ---------------------------------------------------------------- window
@@ -609,6 +641,10 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.toolbar = self._build_toolbar()
         body.addWidget(self.toolbar)
         self.canvas = _Canvas(self)
+        from . import bluepencil
+        self.bp = bluepencil.ImageBPTools(self.canvas, self.bp_camera, self.canvas.image_rect, self.bp_frame)
+        bluepencil.signals.changed.connect(self._bp_changed)
+        bluepencil.tool_state().changed.connect(self._sync_tools)
         self.canvas.zoom_changed.connect(self._zoom_changed)
         self.canvas.sampled.connect(self._sampled)
         body.addWidget(self.canvas, 1)
@@ -791,7 +827,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
         group = QtWidgets.QButtonGroup(w)
         group.setExclusive(True)
         for tid, name, icon, tip in TOOLS:
-            b = _VariantButton(w, self) if tid == "ANNOTATE" else QtWidgets.QToolButton(w)
+            b = _VariantButton(w, self) if tid == "ANNOTATE" else _BPButton(w, self) if tid == "BLUE_PENCIL" \
+                else QtWidgets.QToolButton(w)
             b.setCheckable(True)
             b.setFixedSize(theme.px(30), theme.px(30))
             icons.set_icon(b, icon)
@@ -810,22 +847,36 @@ class RenderView(QtWidgets.QWidget, Dockable):
                 b.setChecked(tid == self.tool)
             vinfo = dict((x[0], x) for x in ANNOTATE_VARIANTS)[self.annotate_variant]
             icons.set_icon(self.tool_buttons["ANNOTATE"], vinfo[2])
+            from . import bluepencil
+            binfo = dict((x[0], x) for x in bluepencil.TOOLS).get(bluepencil.current_tool())
+            if binfo:
+                icons.set_icon(self.tool_buttons["BLUE_PENCIL"], binfo[2])
             self.note_opts.setVisible(self.tool == "ANNOTATE")
+            self.bp.set_enabled(self.tool == "BLUE_PENCIL")
             pm = QtGui.QPixmap(theme.px(28), theme.px(14))
             pm.fill(QtGui.QColor(self.note_color))
             self.note_color_btn.setIcon(QtGui.QIcon(pm))
             self.note_color_btn.setIconSize(pm.size())
-            self.canvas.setCursor(QtCore.Qt.CrossCursor if self.tool == "ANNOTATE" else QtCore.Qt.ArrowCursor)
+            self.canvas.setCursor(QtCore.Qt.CrossCursor if self.tool in ("ANNOTATE", "BLUE_PENCIL")
+                                  else QtCore.Qt.ArrowCursor)
             self._update_tips()
         except (RuntimeError, AttributeError):
             pass
 
     def set_tool(self, tool, variant=None):
-        """Toolbar tool: 'SAMPLE' or 'ANNOTATE' (variant FREEHAND, LINE, POLYGON or ERASER)."""
+        """Toolbar tool: 'SAMPLE', 'ANNOTATE' (variant FREEHAND, LINE, POLYGON or ERASER) or 'BLUE_PENCIL'
+        (variant PENCIL, BRUSH, ERASER, TEXT, LINE, ARROW, ELLIPSE, RECT or TRANSFORM – shared with the 3D view)."""
         tool = str(tool).upper()
         if tool not in [t[0] for t in TOOLS]:
-            raise ValueError(f"Unknown tool {tool!r} – SAMPLE or ANNOTATE")
+            raise ValueError(f"Unknown tool {tool!r} – SAMPLE, ANNOTATE or BLUE_PENCIL")
         st = QtCore.QSettings("QtShell", "QtShell")
+        if tool == "BLUE_PENCIL" and variant is not None:
+            from . import bluepencil
+            variant = str(variant).upper()
+            if variant not in bluepencil.TOOL_IDS:
+                raise ValueError(f"Unknown Blue Pencil tool {variant!r} – {', '.join(bluepencil.TOOL_IDS)}")
+            bluepencil.set_variant(variant)
+            variant = None
         if variant is not None:
             variant = str(variant).upper()
             if variant not in [x[0] for x in ANNOTATE_VARIANTS]:
@@ -933,6 +984,11 @@ class RenderView(QtWidgets.QWidget, Dockable):
                              "Hold or right click: " + ", ".join(x[1] for x in ANNOTATE_VARIANTS),
                              "Undo the last change: {window.undo}"]
                     pytips.tag(b, _api(f"set_tool('ANNOTATE', '{self.annotate_variant}')"))
+                elif tid == "BLUE_PENCIL":
+                    from . import bluepencil
+                    lines = [tip, "Hold or right click: " + ", ".join(x[1] for x in bluepencil.TOOLS),
+                             "Right click on the picture: the Blue Pencil menu (frames, ghosting, panel)"]
+                    pytips.tag(b, _api(f"set_tool('BLUE_PENCIL', '{bluepencil.current_tool()}')"))
                 else:
                     pytips.tag(b, _api("set_tool('SAMPLE')"))
                 lines.append(f"Key: {{{aid}}}")
@@ -1302,6 +1358,40 @@ class RenderView(QtWidgets.QWidget, Dockable):
             return base
         return self._exr.image(self.layer, self.pas) or self._combined
 
+    # --- Blue Pencil over the render
+    def bp_camera(self):
+        """Camera the picture was rendered with (its Blue Pencil layers are drawn / drawn into)."""
+        burn = self._slot_burn.get(self._active_slot())
+        if burn and burn.get("camera"):
+            return burn["camera"]
+        cam = bpy.context.scene.camera
+        return cam.name if cam is not None else ""
+
+    def bp_frame(self):
+        burn = self._slot_burn.get(self._active_slot())
+        return int(burn["frame"]) if burn else int(bpy.context.scene.frame_current)
+
+    def bp_layers_shown(self):
+        """The Blue Pencil layers are painted over the picture (not when they are burnt into it already)."""
+        return (self.show_overlays and self._external is None and self.canvas.image is not None
+                and not self.burnt_in())
+
+    def _bp_changed(self):
+        try:
+            if self.burnt_in() and self._combined is not None:
+                self._show(True)               # the burnt-in picture gets the new strokes
+            self.canvas.update()
+        except RuntimeError:
+            pass
+
+    def _bp_has_strokes(self):
+        from . import bluepencil
+        if not bluepencil.settings().show:
+            return False
+        cam, f = self.bp_camera(), self.bp_frame()
+        return any(lay.get("visible", True) and lay.get("camera", "") == cam and bluepencil.strokes_at(lay, f)
+                   for lay in bluepencil.layers())
+
     @staticmethod
     def note_width_px(width, img_h):
         """Stroke width in image pixels for a saved picture (screen thickness scaled to the render size)."""
@@ -1314,11 +1404,16 @@ class RenderView(QtWidgets.QWidget, Dockable):
         if base is None:
             return None
         notes = [st for st in self.annotations() if st.get("pts")]
-        if not notes or not self.show_overlays:
+        bp = self._external is None and not self.burnt_in() and self.show_overlays and self._bp_has_strokes()
+        if (not notes and not bp) or not self.show_overlays:
             return base
         q = base.convertToFormat(QtGui.QImage.Format_RGBA8888)
         p = QtGui.QPainter(q)
         try:
+            if bp:                               # Blue Pencil of the render's camera, like on the screen
+                from . import bluepencil
+                bluepencil.paint_layers(p, self.bp_camera(), QtCore.QRectF(0, 0, q.width(), q.height()),
+                                        self.bp_frame(), ghosts=False)
             p.setRenderHint(QtGui.QPainter.Antialiasing)
             p.setBrush(QtCore.Qt.NoBrush)
             for st in notes:
@@ -1337,7 +1432,8 @@ class RenderView(QtWidgets.QWidget, Dockable):
 
     def has_drawings(self):
         """True when Save writes the picture with drawings (burnt-in or Render View annotations)."""
-        return self.burnt_in() or (self.show_overlays and any(st.get("pts") for st in self.annotations()))
+        return self.burnt_in() or (self.show_overlays and (any(st.get("pts") for st in self.annotations()) or
+                                                           (self._external is None and self._bp_has_strokes())))
 
     def burnt_in(self):
         """True when the picture shown has the drawings burnt in (Save then saves that picture)."""
@@ -1619,13 +1715,23 @@ class RenderView(QtWidgets.QWidget, Dockable):
         return True
 
     # ------------------------------------------------------------ keys
+    def event(self, ev):
+        # Blue Pencil keys (Ctrl+C / Ctrl+V, Enter, Delete …) win over window shortcuts while it draws here
+        if ev.type() == QtCore.QEvent.ShortcutOverride and getattr(self, "bp", None) is not None \
+                and self.bp.enabled and self.bp.owns_key(ev):
+            ev.accept()
+            return True
+        return super().event(ev)
+
     def keyPressEvent(self, ev):
         names = keymap.event_names(ev)
 
         def H(aid):
             return keymap.hit(aid, ev, names)
 
-        if self.canvas._poly and ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Escape):
+        if self.bp.enabled and self.bp.key(ev, H):      # Blue Pencil keys first (copy / paste, Enter, Esc …)
+            self.canvas.update()
+        elif self.canvas._poly and ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Escape):
             self.canvas.finish_polygon()
         elif H("window.render_cancel") and self.mw.is_rendering():
             self.mw.cancel_render()
@@ -1635,6 +1741,13 @@ class RenderView(QtWidgets.QWidget, Dockable):
             self.set_toolbar(not self.toolbar.isVisible())
         elif H("render.tool_sample"):
             self.set_tool("SAMPLE")
+        elif H("render.tool_blue_pencil"):
+            if self.tool == "BLUE_PENCIL":           # again: the next drawing tool
+                from . import bluepencil
+                ids = bluepencil.TOOL_IDS
+                self.set_tool("BLUE_PENCIL", ids[(ids.index(bluepencil.current_tool()) + 1) % len(ids)])
+            else:
+                self.set_tool("BLUE_PENCIL")
         elif H("render.tool_annotate"):
             if self.tool == "ANNOTATE":          # again: next variant (like the 3D view's tools)
                 ids = [x[0] for x in ANNOTATE_VARIANTS]

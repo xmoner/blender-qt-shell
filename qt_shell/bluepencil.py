@@ -22,6 +22,7 @@ a frame REF_H px high.
 """
 import json
 import math
+import weakref
 
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -501,36 +502,40 @@ def ghost_frames(layer, f, st=None):
     return out
 
 
+def paint_layers(p, cam, rect, f, hide=(), ghosts=True):
+    """Blue Pencil layers of a camera ("" = the View) at frame f, drawn into rect (the camera frame)."""
+    st = settings()
+    d = data()
+    if not st.show or not d["layers"]:
+        return
+    playing = bool(getattr(_hub(), "playing", False))
+    act = active_index(d)
+    p.save()
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    for i in reversed(range(len(d["layers"]))):
+        lay = d["layers"][i]
+        if not lay.get("visible", True) or lay.get("camera", "") != cam:
+            continue
+        op = float(lay.get("opacity", 1.0))
+        if ghosts and i == act and (not playing or st.ghost_playback) and lay.get("state") != "STATIC":
+            for k, colr, a in ghost_frames(lay, f, st):
+                for s in lay["frames"].get(str(k), []):
+                    draw_stroke(p, s, rect, a * op, colr)
+        k = held_key(lay, f)
+        if k is None:
+            continue
+        for j, s in enumerate(lay["frames"].get(str(k), [])):
+            if (i, k, j) in hide:
+                continue
+            draw_stroke(p, s, rect, op)
+    p.restore()
+
+
 def paint(vp, p):
     """All Blue Pencil drawings of a 3D view (called from its paintEvent)."""
-    st = settings()
     tools = getattr(vp, "bp_tools", None)
-    d = data()
-    if st.show and d["layers"]:
-        cam, rect = view_space(vp)
-        f = current_frame()
-        playing = bool(getattr(_hub(), "playing", False))
-        act = active_index(d)
-        hide = tools.hidden_strokes() if tools is not None else set()
-        p.save()
-        p.setRenderHint(QtGui.QPainter.Antialiasing)
-        for i in reversed(range(len(d["layers"]))):
-            lay = d["layers"][i]
-            if not lay.get("visible", True) or lay.get("camera", "") != cam:
-                continue
-            op = float(lay.get("opacity", 1.0))
-            if i == act and (not playing or st.ghost_playback) and lay.get("state") != "STATIC":
-                for k, colr, a in ghost_frames(lay, f, st):
-                    for s in lay["frames"].get(str(k), []):
-                        draw_stroke(p, s, rect, a * op, colr)
-            k = held_key(lay, f)
-            if k is None:
-                continue
-            for j, s in enumerate(lay["frames"].get(str(k), [])):
-                if (i, k, j) in hide:
-                    continue
-                draw_stroke(p, s, rect, op)
-        p.restore()
+    cam, rect = view_space(vp)
+    paint_layers(p, cam, rect, current_frame(), tools.hidden_strokes() if tools is not None else set())
     if tools is not None:
         tools.paint(p)
 
@@ -940,9 +945,19 @@ class BPTools:
         self._prev_tool = None      # E toggles the eraser and back
         self._erase_last = None
 
-    # --- state
+    # --- state (hooks – ImageBPTools draws over a rendered picture instead of a 3D view)
     def active(self):
         return tool_active()
+
+    def frame(self):
+        """The frame drawn into / shown."""
+        return current_frame()
+
+    def pick_tool(self, tool):
+        set_tool(tool)
+
+    def step(self, direction):
+        step(direction)
 
     def tool(self):
         return current_tool()
@@ -965,7 +980,7 @@ class BPTools:
         layer first, then from the top), or None."""
         cam, rect = self._space()
         d = data()
-        f = current_frame()
+        f = self.frame()
         act = active_index(d)
         order = ([act] if act >= 0 else []) + [i for i in range(len(d["layers"])) if i != act]
         for i in order:
@@ -1033,7 +1048,7 @@ class BPTools:
         i, lay = self._layer_for_view()
         if not _editable(lay):
             return False
-        k = target_key(lay, current_frame())
+        k = target_key(lay, self.frame())
         lay["frames"][str(k)].append(stroke)
         commit(message)
         return True
@@ -1228,7 +1243,7 @@ class BPTools:
         if lay is None or lay.get("camera", "") != cam or not lay.get("visible", True) or \
                 lay.get("state") == "LOCKED":
             return
-        k = held_key(lay, current_frame())
+        k = held_key(lay, self.frame())
         if k is None:
             return
         r = settings().size("ERASER") * theme.ui_scale
@@ -1319,7 +1334,7 @@ class BPTools:
             self.sel = None
             return
         lay = d["layers"][i]
-        k = held_key(lay, current_frame())
+        k = held_key(lay, self.frame())
         if k is None:
             self.sel = None
             return
@@ -1423,7 +1438,7 @@ class BPTools:
         strokes = self._sel_strokes()
         if not strokes:
             _i, lay = self._layer_for_view(create=False)
-            strokes = strokes_at(lay, current_frame()) if lay is not None else []
+            strokes = strokes_at(lay, self.frame()) if lay is not None else []
         if not strokes:
             _status("Blue Pencil: nothing to copy")
             return False
@@ -1433,7 +1448,7 @@ class BPTools:
                 self.delete_selected()
             else:
                 _i, lay = self._layer_for_view(create=False)
-                k = held_key(lay, current_frame()) if lay is not None else None
+                k = held_key(lay, self.frame()) if lay is not None else None
                 if k is not None and _editable(lay):
                     lay["frames"][str(k)] = []
                     commit("Cut")
@@ -1449,13 +1464,13 @@ class BPTools:
         i, lay = self._layer_for_view()
         if not _editable(lay):
             return False
-        k = target_key(lay, current_frame())
+        k = target_key(lay, self.frame())
         fr = lay["frames"][str(k)]
         start = len(fr)
         fr.extend(json.loads(json.dumps(_stroke_clip)))
         commit("Paste")
         if transform:
-            set_tool("TRANSFORM")
+            self.pick_tool("TRANSFORM")
             self.sel = {"layer": i, "key": k, "idx": list(range(start, len(fr)))}
             self.xf = QtGui.QTransform()
         self.vp.update()
@@ -1508,10 +1523,10 @@ class BPTools:
         if H("bp.paste"):
             return self.paste() or True
         if H("bp.step_prev"):
-            step(-1)
+            self.step(-1)
             return True
         if H("bp.step_next"):
-            step(1)
+            self.step(1)
             return True
         if (H("bp.size_up") or H("bp.size_down")) and self.sel is not None:
             self.scale_selection_size(1.25 if H("bp.size_up") else 0.8)
@@ -1525,10 +1540,10 @@ class BPTools:
             return True
         if H("bp.eraser"):
             if self.tool() == "ERASER":
-                set_tool(self._prev_tool or "PENCIL")
+                self.pick_tool(self._prev_tool or "PENCIL")
             else:
                 self._prev_tool = self.tool()
-                set_tool("ERASER")
+                self.pick_tool("ERASER")
             return True
         return False
 
@@ -1557,7 +1572,7 @@ class BPTools:
     def context_menu(self, gpos):
         menu = QtWidgets.QMenu(self.vp)
         for tid, name, icon, tip in TOOLS:
-            a = menu.addAction(icons.icon(icon), name, lambda t=tid: set_tool(t))
+            a = menu.addAction(icons.icon(icon), name, lambda t=tid: self.pick_tool(t))
             a.setCheckable(True)
             a.setChecked(self.tool() == tid)
         menu.addSeparator()
@@ -1577,16 +1592,16 @@ class BPTools:
         menu.addAction(keymap.render("Paste and Transform\t{bp.paste_transform}"), lambda: self.paste(True))
         menu.addSeparator()
         fm = menu.addMenu("Frame")
-        fm.addAction(icons.icon("bp_frame_insert"), "Insert Blank Frame", insert_frame)
-        fm.addAction(icons.icon("bp_frame_dup"), "Duplicate Previous Frame", duplicate_frame)
-        fm.addAction(icons.icon("bp_frame_delete"), "Delete Frame", delete_frame)
+        fm.addAction(icons.icon("bp_frame_insert"), "Insert Blank Frame", lambda: insert_frame(self.frame()))
+        fm.addAction(icons.icon("bp_frame_dup"), "Duplicate Previous Frame", lambda: duplicate_frame(self.frame()))
+        fm.addAction(icons.icon("bp_frame_delete"), "Delete Frame", lambda: delete_frame(self.frame()))
         fm.addSeparator()
-        fm.addAction("Cut Frame", lambda: copy_frame(cut=True))
-        fm.addAction("Copy Frame", copy_frame)
-        fm.addAction("Paste Frame", paste_frame)
+        fm.addAction("Cut Frame", lambda: copy_frame(self.frame(), cut=True))
+        fm.addAction("Copy Frame", lambda: copy_frame(self.frame()))
+        fm.addAction("Paste Frame", lambda: paste_frame(self.frame()))
         fm.addSeparator()
-        fm.addAction(keymap.render("Previous Frame\t{bp.step_prev}"), lambda: step(-1))
-        fm.addAction(keymap.render("Next Frame\t{bp.step_next}"), lambda: step(1))
+        fm.addAction(keymap.render("Previous Frame\t{bp.step_prev}"), lambda: self.step(-1))
+        fm.addAction(keymap.render("Next Frame\t{bp.step_next}"), lambda: self.step(1))
         gm = menu.addMenu("Ghosting")
         st = settings()
         for key, label in (("ghost_prev", "Ghost Previous"), ("ghost_next", "Ghost Next")):
@@ -1647,7 +1662,7 @@ class BPTools:
             d = data()
             i = active_index(d)
             lay = d["layers"][i] if i >= 0 else None
-            f = current_frame()
+            f = self.frame()
             if lay is not None and lay.get("camera", "") == cam:
                 k = held_key(lay, f)
                 state = lay.get("state", "ANIMATION")
@@ -1668,13 +1683,85 @@ class BPTools:
         p.restore()
 
 
+_IMAGE_TOOLS = weakref.WeakSet()       # ImageBPTools of the Render View / Animation Player
+
+
+def set_variant(tool):
+    """The Blue Pencil drawing tool (Pencil, Brush, …) without switching the 3D view to Blue Pencil –
+    used by the Render View and the Animation Player, which share the tool with the 3D view."""
+    ts = tool_state()
+    if tool not in TOOL_IDS or ts.variants.get("BLUE_PENCIL") == tool:
+        return
+    ts.variants["BLUE_PENCIL"] = tool
+    QtCore.QSettings("QtShell", "QtShell").setValue("viewport/tool_variant_blue_pencil", tool)
+    ts.changed.emit()
+
+
+class ImageBPTools(BPTools):
+    """Blue Pencil over a rendered picture (Render View, Animation Player): the strokes go to the layers of
+    the camera the picture was rendered with, at the picture's frame – the same drawings the 3D view shows
+    through that camera and the burn-in puts into renders.
+
+    widget: the canvas (update / focus / text field parent); camera_fn() → camera name; rect_fn() → the
+    picture in widget coordinates (= the camera frame); frame_fn() → frame; step_fn(direction) optional."""
+
+    def __init__(self, widget, camera_fn, rect_fn, frame_fn, step_fn=None):
+        super().__init__(widget)
+        _IMAGE_TOOLS.add(self)
+        self.enabled = False
+        self._camera_fn = camera_fn
+        self._rect_fn = rect_fn
+        self._frame_fn = frame_fn
+        self._step_fn = step_fn
+
+    def active(self):
+        return self.enabled
+
+    def frame(self):
+        try:
+            return int(self._frame_fn())
+        except Exception:
+            return current_frame()
+
+    def pick_tool(self, tool):
+        set_variant(tool)
+        self.tool_changed()
+        self.vp.update()
+
+    def step(self, direction):
+        if self._step_fn is not None:
+            self._step_fn(direction)
+
+    def _space(self):
+        return (self._camera_fn() or ""), QtCore.QRectF(self._rect_fn())
+
+    def set_enabled(self, on):
+        on = bool(on)
+        if on == self.enabled:
+            return
+        if not on:
+            self.tool_changed()
+            self.cancel()
+        self.enabled = on
+        self.vp.update()
+
+    def paint_all(self, p, layers=True):
+        """The drawings of the picture's camera / frame (layers=False: only what the tool draws)."""
+        if layers:
+            cam, rect = self._space()
+            paint_layers(p, cam, rect, self.frame(), self.hidden_strokes() if self.enabled else set())
+        if self.enabled:
+            self.paint(p)
+
+
 def _all_tools():
     mw = _mw()
     if mw is None:
         return []
     area = getattr(mw, "viewports", None)
     views = getattr(area, "views", None) or [getattr(mw, "viewport", None)]
-    return [v.bp_tools for v in views if v is not None and getattr(v, "bp_tools", None) is not None]
+    return [v.bp_tools for v in views if v is not None and getattr(v, "bp_tools", None) is not None] + \
+        [t for t in list(_IMAGE_TOOLS) if t.enabled]
 
 
 def selected_strokes():
@@ -1711,6 +1798,11 @@ def apply_to_selection(prop, value, do_commit=True):
 
 
 def _views_update():
+    for t in list(_IMAGE_TOOLS):          # Render View / Animation Player canvases
+        try:
+            t.vp.update()
+        except RuntimeError:
+            pass
     mw = _mw()
     if mw is None:
         return

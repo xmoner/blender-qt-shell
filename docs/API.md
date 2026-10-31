@@ -687,6 +687,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
 | 1.5 | 0.34.0 | `set_tool()`, `active_tool()`, `TOOLS` – the 3D viewport's toolbar tools (incl. Annotate, Measure, Add); Render View: `set_tool()`, annotations (`add_annotation`, `annotations`, `clear_annotations`, `undo_annotation`, `set_annotation_style`), `set_overlays`, `set_gizmos`, `set_toolbar`. |
+| 1.10 | 0.68.0 | Render View `set_tool("BLUE_PENCIL", variant)`, `picture()`, `has_drawings()`; Animation Player `set_blue_pencil()`; `bluepencil.ImageBPTools`, `bluepencil.set_variant()`, `bluepencil.paint_layers()`. |
 | 1.9 | 0.64.0 | `image_editor()` – the Image editor: sources (compositor Viewer, render result, rendered animation, images), live compositor updates, channels, zoom, frames / playback, export image / animation (MP4, image sequences). |
 | 1.8 | 0.58.0 | `run_op(idname, invoke=False, **props)` – a Blender operator run like Qt Shell's menus (3D view context, Qt-handled operators, undo). |
 | 1.7 | 0.53.1 | `uv_editor()` – the UV editor: component mode, Blender UV operators in a UV editor context, projections, unwrap / layout, move / rotate / flip / align / normalize, texel density, display toggles, image. |
@@ -718,6 +719,8 @@ rv.save_as("C:/renders/frame.png")   # the format follows the extension (.png .j
 rv.copy_to_clipboard()
 # API 1.5 – toolbar (T), annotations, header toggles
 rv.set_tool("ANNOTATE", "LINE")      # SAMPLE, or ANNOTATE with FREEHAND / LINE / POLYGON / ERASER
+rv.set_tool("BLUE_PENCIL", "BRUSH")  # API 1.10 – Blue Pencil on the render's camera / frame (tool shared with the 3D view)
+rv.picture()                         # API 1.10 – QImage as shown: render + Blue Pencil + annotations
 rv.add_annotation([(10, 10), (200, 120)], color="#ff4040", width=4)   # image pixels from the top-left
 rv.annotations()                     # strokes of the active render slot: [{"pts", "color", "width"}, …]
 rv.undo_annotation(); rv.clear_annotations()
@@ -725,8 +728,13 @@ rv.set_annotation_style(color="#619bc7", width=3)   # colour / thickness of new 
 rv.set_overlays(False); rv.set_gizmos(True); rv.set_toolbar(True)
 ```
 
-Render View annotations are kept per render slot for the Blender session (like Blender's they are not part of
-the saved image).
+Render View annotations are kept per render slot for the Blender session. Since Qt Shell 0.67.3 Save / Save As
+(PNG, JPEG, TIFF, WebP, BMP), Copy to Clipboard and Edit Externally write the picture as shown – with the
+annotations and the Blue Pencil of the render's camera (OpenEXR keeps the clean render).
+
+**Animation Player** (API 1.10): `qs.main_window().anim_player.set_blue_pencil(True)` draws Blue Pencil on the
+frame shown – the strokes go to the scene camera's layers at that frame (the same drawings the 3D view shows
+through the camera).
 
 ## Timeline from a script
 

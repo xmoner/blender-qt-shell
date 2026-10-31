@@ -146,6 +146,13 @@ class _Canvas(QtWidgets.QWidget):
         c = QtCore.QPointF(self.width() / 2, self.height() / 2) + self.offset
         return QtCore.QRectF(c.x() - w / 2, c.y() - h / 2, w, h)
 
+    def bp_rect(self):
+        return self.image_rect() if self.image is not None else QtCore.QRectF(self.rect())
+
+    def _bp(self):
+        bp = getattr(self.player, "bp", None)
+        return bp if bp is not None and self.image is not None else None
+
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(30, 30, 30))
@@ -156,6 +163,9 @@ class _Canvas(QtWidgets.QWidget):
             p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform,
                             (self.fit_zoom() if self.zoom is None else self.zoom) < 1.0)
             p.drawImage(r, self.image)
+            bp = self._bp()
+            if bp is not None:     # the camera's Blue Pencil (Render + Drawings / Viewport Render have it burnt in)
+                bp.paint_all(p, layers=self.player.source == "RENDER")
         if self.message:
             p.setPen(QtGui.QColor(170, 170, 170))
             p.drawText(self.rect().adjusted(20, 20, -20, -20), QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap,
@@ -163,6 +173,9 @@ class _Canvas(QtWidgets.QWidget):
         p.end()
 
     def wheelEvent(self, ev):
+        bp = self._bp()
+        if bp is not None and bp.enabled and bp.wheel(ev):       # Ctrl + wheel: Blue Pencil size
+            return
         steps = ev.angleDelta().y() / 120.0
         if not steps or self.image is None:
             return
@@ -175,10 +188,16 @@ class _Canvas(QtWidgets.QWidget):
 
     def mousePressEvent(self, ev):
         self.setFocus()
+        bp = self._bp()
+        if bp is not None and bp.enabled:
+            if self.player.is_playing():
+                self.player.pause()
+            if bp.press(ev, ev.position()):
+                return
         if ev.button() == QtCore.Qt.MiddleButton:
             self._pan = ev.position()
             self.setCursor(QtCore.Qt.ClosedHandCursor)
-        elif ev.button() == QtCore.Qt.LeftButton:
+        elif ev.button() == QtCore.Qt.LeftButton and not (bp is not None and bp.enabled):
             self.player.toggle_play()
 
     def mouseMoveEvent(self, ev):
@@ -186,13 +205,24 @@ class _Canvas(QtWidgets.QWidget):
             self.offset += ev.position() - self._pan
             self._pan = ev.position()
             self.update()
+            return
+        bp = self._bp()
+        if bp is not None and bp.enabled:
+            bp.move(ev, ev.position())
 
-    def mouseReleaseEvent(self, _ev):
+    def mouseReleaseEvent(self, ev):
         if self._pan is not None:
             self._pan = None
             self.unsetCursor()
+            return
+        bp = self._bp()
+        if bp is not None and bp.enabled:
+            bp.release(ev, ev.position())
 
     def mouseDoubleClickEvent(self, ev):
+        bp = self._bp()
+        if bp is not None and bp.enabled and bp.double_click(ev, ev.position()):
+            return
         if ev.button() == QtCore.Qt.MiddleButton:
             self.fit()
 
@@ -346,6 +376,10 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         lay.setSpacing(0)
         self.stack = QtWidgets.QStackedWidget(self)
         self.canvas = _Canvas(self)
+        self.canvas.setMouseTracking(True)            # the Blue Pencil eraser circle follows the mouse
+        from . import bluepencil
+        self.bp = bluepencil.ImageBPTools(self.canvas, self.bp_camera, self.canvas.bp_rect, lambda: self.frame,
+                                          self.step)
         self.stack.addWidget(self.canvas)
         self.video = None
         lay.addWidget(self.stack, 1)
@@ -442,6 +476,25 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         self.source_combo.activated.connect(lambda _i: self.set_source(self.source_combo.currentData()))
         pytips.tag(self.source_combo, _api('set_source("OVERLAY")   # RENDER, OVERLAY, PLAYBLAST'))
         row.addWidget(self.source_combo)
+        # Blue Pencil: draw on the frames (the camera's layers, keyed on the frame shown)
+        self.bp_btn = QtWidgets.QToolButton(self)
+        self.bp_btn.setCheckable(True)
+        self.bp_btn.setAutoRaise(True)
+        icons.set_icon(self.bp_btn, "tool_blue_pencil")
+        if self.bp_btn.icon().isNull():
+            self.bp_btn.setText("✐")
+        bpm = QtWidgets.QMenu(self.bp_btn)
+        bpm.aboutToShow.connect(lambda: self._fill_bp_menu(bpm))
+        self.bp_btn.setMenu(bpm)
+        self.bp_btn.setPopupMode(QtWidgets.QToolButton.DelayedPopup)
+        self.bp_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
+        keymap.tip(self.bp_btn, "Blue Pencil ({anim.blue_pencil}) – draw on the frames: the drawings go to the "
+                                "scene camera's layers at the frame shown (the same ones the 3D view shows through "
+                                "the camera and Render + Drawings burns in). Hold or right click: the drawing tool. "
+                                "Right click on the picture: the Blue Pencil menu")
+        pytips.tag(self.bp_btn, _api("set_blue_pencil(True)"))
+        self.bp_btn.toggled.connect(self.set_blue_pencil)
+        row.addWidget(self.bp_btn)
         self.dock_btn = btn("dock", "⧉", lambda: None, _api("set_docked(True)"))
         self.dock_btn.setCheckable(True)
         self.dock_btn.setChecked(self.docked)
@@ -860,13 +913,47 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
             self._media.stop()
         super().closeEvent(ev)
 
+    # ------------------------------------------------------------ Blue Pencil
+    def bp_camera(self):
+        cam = bpy.context.scene.camera
+        return cam.name if cam is not None else ""
+
+    def set_blue_pencil(self, on):
+        """Blue Pencil on the frames (the drawing tool is shared with the 3D view's Blue Pencil)."""
+        on = bool(on)
+        if self.bp_btn.isChecked() != on:
+            self.bp_btn.setChecked(on)          # toggled → here again
+            return
+        if on:
+            self.pause()
+        self.bp.set_enabled(on)
+        self.canvas.setCursor(QtCore.Qt.CrossCursor if on else QtCore.Qt.ArrowCursor)
+        self.canvas.setFocus()
+
+    def _fill_bp_menu(self, m):
+        from . import bluepencil
+        m.clear()
+        cur = bluepencil.current_tool()
+        for tid, name, icon, tip in bluepencil.TOOLS:
+            a = m.addAction(icons.icon(icon), name)
+            a.setToolTip(tip)
+            if tid == cur:
+                f = a.font()
+                f.setBold(True)
+                a.setFont(f)
+            a.triggered.connect(lambda _c=False, t=tid: (bluepencil.set_variant(t), self.set_blue_pencil(True)))
+
     def keyPressEvent(self, ev):
         names = keymap.event_names(ev)
 
         def H(aid):
             return keymap.hit(aid, ev, names)
 
-        if H("anim.close"):
+        if self.bp.enabled and self.bp.key(ev, H):      # Blue Pencil keys first
+            self.canvas.update()
+        elif H("anim.blue_pencil"):
+            self.set_blue_pencil(not self.bp.enabled)
+        elif H("anim.close"):
             self.close()
         elif H("anim.play"):
             self.toggle_play()
@@ -894,10 +981,14 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
     def event(self, ev):
         # its keys win over the main window's shortcuts (Space = play here, not in the scene)
         if ev.type() == QtCore.QEvent.ShortcutOverride:
+            if getattr(self, "bp", None) is not None and self.bp.enabled and self.bp.owns_key(ev):
+                ev.accept()
+                return True
             names = keymap.event_names(ev)
             if any(keymap.hit(a, ev, names) for a in ("anim.play", "anim.play_reverse", "anim.frame_prev",
                                                        "anim.frame_next", "anim.jump_start", "anim.jump_end",
-                                                       "anim.fit", "anim.close", "anim.reload")):
+                                                       "anim.fit", "anim.close", "anim.reload",
+                                                       "anim.blue_pencil")):
                 ev.accept()
                 return True
         return super().event(ev)
