@@ -2240,9 +2240,13 @@ def encode_video(files, path, fps):
 
 
 class ExportAnimationDialog(QtWidgets.QDialog):
-    def __init__(self, parent, lo, hi, folder):
+    """Format, frame range and file of an animation export. blue_pencil (text) adds a check box
+    'Burn in Blue Pencil' (bp_check; checked when blue_pencil_on)."""
+
+    def __init__(self, parent, lo, hi, folder, title="Export Animation", blue_pencil=None, blue_pencil_on=False,
+                 name="animation"):
         super().__init__(parent)
-        self.setWindowTitle("Export Animation")
+        self.setWindowTitle(title)
         lay = QtWidgets.QFormLayout(self)
         self.kind = QtWidgets.QComboBox(self)
         for ident, label, _ext in ANIM_FORMATS:
@@ -2257,12 +2261,20 @@ class ExportAnimationDialog(QtWidgets.QDialog):
             rng.addWidget(s)
         lay.addRow("Frames", rng)
         row = QtWidgets.QHBoxLayout()
-        self.path = QtWidgets.QLineEdit(os.path.join(folder, "animation.mp4"), self)
+        self.path = QtWidgets.QLineEdit(os.path.join(folder, name + ".mp4"), self)
         row.addWidget(self.path, 1)
         browse = QtWidgets.QPushButton("…", self)
         browse.clicked.connect(self._browse)
         row.addWidget(browse)
         lay.addRow("File", row)
+        self.bp_check = None
+        if blue_pencil:
+            self.bp_check = QtWidgets.QCheckBox("Burn in Blue Pencil", self)
+            self.bp_check.setToolTip(blue_pencil)
+            self.bp_check.setChecked(bool(blue_pencil_on))
+            self.bp_check.toggled.connect(lambda _on: self._kind_changed(False))
+            lay.addRow("Drawings", self.bp_check)
+            self._kind_changed(False)
         self.kind.currentIndexChanged.connect(self._kind_changed)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, self)
         bb.button(QtWidgets.QDialogButtonBox.Ok).setText("Export")
@@ -2274,7 +2286,17 @@ class ExportAnimationDialog(QtWidgets.QDialog):
     def _ext(self):
         return next(e for i, _l, e in ANIM_FORMATS if i == self.kind.currentData())
 
-    def _kind_changed(self):
+    def _kind_changed(self, set_path=True):
+        if self.bp_check is not None:            # burnt-in drawings need new images – no plain copy
+            i = self.kind.findData("COPY")
+            item = self.kind.model().item(i) if i >= 0 else None
+            if item is not None:
+                item.setEnabled(not self.bp_check.isChecked())
+            if self.bp_check.isChecked() and self.kind.currentData() == "COPY":
+                self.kind.setCurrentIndex(self.kind.findData("PNG"))    # → here again
+                return
+        if set_path is False:
+            return
         p = self.path.text()
         root = os.path.splitext(p)[0] if os.path.splitext(p)[1] else p
         ext = self._ext()
@@ -2289,6 +2311,9 @@ class ExportAnimationDialog(QtWidgets.QDialog):
         p, _f = QtWidgets.QFileDialog.getSaveFileName(self, "Export Animation", self.path.text())
         if p:
             self.path.setText(p)
+
+    def burn_blue_pencil(self):
+        return self.bp_check is not None and self.bp_check.isChecked()
 
     def result_values(self):
         return (self.path.text(), self.kind.currentData(), min(self.start.value(), self.end.value()),

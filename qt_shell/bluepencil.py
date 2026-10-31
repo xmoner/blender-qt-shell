@@ -556,11 +556,12 @@ def in_space(lay, cam, space="VIEWPORT"):
     return lay.get("camera", "") == cam and layer_space(lay) == space
 
 
-def paint_layers(p, cam, rect, f, hide=(), ghosts=True, space="VIEWPORT"):
-    """Blue Pencil layers of a camera ("" = the View) and a window (space) at frame f, drawn into rect."""
+def paint_layers(p, cam, rect, f, hide=(), ghosts=True, space="VIEWPORT", always=False):
+    """Blue Pencil layers of a camera ("" = the View) and a window (space) at frame f, drawn into rect.
+    always: also when Show drawings is off (an export the user asked for)."""
     st = settings()
     d = data()
-    if not st.show or not d["layers"]:
+    if (not st.show and not always) or not d["layers"]:
         return
     playing = bool(getattr(_hub(), "playing", False))
     act = active_index(d)
@@ -583,6 +584,12 @@ def paint_layers(p, cam, rect, f, hide=(), ghosts=True, space="VIEWPORT"):
                 continue
             draw_stroke(p, s, rect, op)
     p.restore()
+
+
+def has_drawings(cam, space="VIEWPORT"):
+    """True when a visible layer of the camera / window has any strokes."""
+    return any(lay.get("visible", True) and in_space(lay, cam, space) and any(lay["frames"].values())
+               for lay in data()["layers"])
 
 
 def paint(vp, p):

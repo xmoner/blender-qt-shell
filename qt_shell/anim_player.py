@@ -18,7 +18,10 @@ one). Canvas: wheel zooms, middle mouse pans, {anim.fit} fits. Keys in the Keybo
 (Animation Player).
 """
 import os
+import shutil
+import tempfile
 import time
+import traceback
 
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -105,6 +108,10 @@ def load_image(path):
     except Exception as ex:
         bridge.log(f"Animation Player: can't read {path}: {ex}", "WARNING")
         return None
+
+
+class _Canceled(Exception):
+    pass
 
 
 # ---------------------------------------------------------------- canvas
@@ -495,6 +502,15 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
         pytips.tag(self.bp_btn, _api("set_blue_pencil(True)"))
         self.bp_btn.toggled.connect(self.set_blue_pencil)
         row.addWidget(self.bp_btn)
+        self.save_btn = btn("export", "💾", lambda: self.export_animation(), _api(
+            'export_animation(r"C:/tmp/anim.mp4", "MP4", blue_pencil=True)'))
+        from . import blicons
+        ic = blicons.icon("FILE_TICK")
+        if not ic.isNull():
+            self.save_btn.setIcon(ic)
+            self.save_btn.setText("")
+        keymap.tip(self.save_btn, "Save Animation… ({anim.export}) – the frames played here as a video (MP4) or an "
+                                  "image sequence: clean, or with the Animation Player's Blue Pencil burnt in")
         self.dock_btn = btn("dock", "⧉", lambda: None, _api("set_docked(True)"))
         self.dock_btn.setCheckable(True)
         self.dock_btn.setChecked(self.docked)
@@ -913,6 +929,118 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
             self._media.stop()
         super().closeEvent(ev)
 
+    # ------------------------------------------------------------ save
+    def _export_dir(self):
+        p = getattr(self, "_export_path", None)
+        if p:
+            return os.path.dirname(p)
+        return os.path.dirname(bpy.path.abspath(bpy.data.filepath)) if bpy.data.filepath else os.path.expanduser("~")
+
+    def export_animation(self, path=None, kind=None, start=None, end=None, blue_pencil=None):
+        """Saves the frames the player plays (its source and Start / End): kind MP4 (video), PNG / JPEG / TIFF
+        (image sequence – path is the first file, frame numbers are added) or COPY (the files copied as they
+        are). blue_pencil=True burns in the Animation Player's Blue Pencil layers (the scene camera's, at each
+        frame) – COPY then becomes PNG. Without a path a dialog asks. Returns the number of frames saved."""
+        from . import bluepencil
+        from .image_editor import ExportAnimationDialog, encode_video, export_sequence
+        if self.movie is not None:
+            QtWidgets.QMessageBox.information(self, "Save Animation", "The animation is a movie file:\n"
+                                              f"{self.movie}\n\nSave works on rendered image sequences.")
+            return 0
+        frames = {f: p for f, p in sorted(self.paths.items()) if self.exists.get(f)}
+        if not frames:
+            QtWidgets.QMessageBox.information(self, "Save Animation", "No rendered frames – render the animation "
+                                              "first (Render → Render Animation).")
+            return 0
+        cam = self.bp_camera()
+        has_bp = bluepencil.has_drawings(cam, "ANIM")
+        lo, hi = min(frames), max(frames)
+        if path is None:
+            dlg = ExportAnimationDialog(
+                self, lo, hi, self._export_dir(), title="Save Animation", name=bpy.context.scene.name,
+                blue_pencil=("Draw the Animation Player's Blue Pencil layers into the saved frames (the frames "
+                             "on disk are not changed)" + ("" if has_bp else " – there are no drawings yet")),
+                blue_pencil_on=has_bp)
+            if dlg.exec() != QtWidgets.QDialog.Accepted:
+                return 0
+            path, kind, start, end = dlg.result_values()
+            blue_pencil = dlg.burn_blue_pencil()
+        kind = (kind or "MP4").upper()
+        if kind not in ("MP4", "PNG", "JPEG", "TIFF", "COPY"):
+            raise ValueError("kind: MP4, PNG, JPEG, TIFF or COPY")
+        burn = bool(blue_pencil) and has_bp
+        if blue_pencil and kind == "COPY":
+            kind = "PNG"
+        if kind != "MP4" and not os.path.basename(path):     # a folder: name the files after the scene
+            path = os.path.join(path, bpy.path.clean_name(bpy.context.scene.name) + (
+                "" if kind == "COPY" else {"PNG": ".png", "JPEG": ".jpg", "TIFF": ".tif"}[kind]))
+        start = lo if start is None else int(start)
+        end = hi if end is None else int(end)
+        sel = [(f, frames[f]) for f in sorted(frames) if start <= f <= end]
+        if not sel:
+            return 0
+        self.pause()
+        tmp = None
+        prog = None
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            if burn:                       # new images: the frame + its drawings, in a temporary folder
+                tmp = tempfile.mkdtemp(prefix="qtshell_anim_bp_")
+                prog = QtWidgets.QProgressDialog("Burning in Blue Pencil…", "Cancel", 0, len(sel), self)
+                prog.setWindowTitle("Save Animation")
+                prog.setWindowModality(QtCore.Qt.WindowModal)
+                prog.setMinimumDuration(400)
+                out = []
+                for n, (f, src) in enumerate(sel):
+                    if prog.wasCanceled():
+                        raise _Canceled()
+                    q = self.cache.get(f) or load_image(src)
+                    if q is None:
+                        raise RuntimeError(f"Cannot read {src}")
+                    q = q.convertToFormat(QtGui.QImage.Format_RGBA8888)
+                    p = QtGui.QPainter(q)
+                    try:
+                        bluepencil.paint_layers(p, cam, QtCore.QRectF(0, 0, q.width(), q.height()), f,
+                                                ghosts=False, space="ANIM", always=True)
+                    finally:
+                        p.end()
+                    fp = os.path.join(tmp, f"frame_{f:04d}.png")
+                    if not q.save(fp):
+                        raise RuntimeError(f"Cannot write {fp}")
+                    out.append((f, fp))
+                    prog.setValue(n + 1)
+                    QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ExcludeUserInputEvents)
+                sel = out
+                prog.close()
+            if kind == "MP4":
+                if not os.path.splitext(path)[1]:
+                    path += ".mp4"
+                encode_video([p for _f, p in sel], path, self.scene_fps or 24.0)
+                msg = f"Saved {len(sel)} frames to {path}"
+            else:
+                n = export_sequence(sel, path, kind)
+                msg = f"Saved {n} frames to {os.path.dirname(path) or path}"
+        except _Canceled:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            return 0
+        except Exception as ex:
+            bridge.log(traceback.format_exc(), "WARNING")
+            QtWidgets.QApplication.restoreOverrideCursor()
+            QtWidgets.QMessageBox.warning(self, "Save Animation", f"Saving failed:\n{ex}")
+            return 0
+        finally:
+            if prog is not None:
+                prog.close()
+            if tmp is not None:
+                shutil.rmtree(tmp, ignore_errors=True)
+        QtWidgets.QApplication.restoreOverrideCursor()
+        self._export_path = path
+        msg += " (with Blue Pencil)" if burn else ""
+        st = getattr(self.mw, "statusBar", None)
+        if st is not None:
+            self.mw.statusBar().showMessage("Animation Player: " + msg, 8000)
+        return len(sel)
+
     # ------------------------------------------------------------ Blue Pencil
     def bp_camera(self):
         cam = bpy.context.scene.camera
@@ -971,6 +1099,8 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
             self.set_frame(self.end)
         elif H("anim.reload"):
             self.update_animation()
+        elif H("anim.export"):
+            self.export_animation()
         elif H("anim.fit"):
             self.canvas.fit()
         else:
@@ -988,7 +1118,7 @@ class AnimPlayer(QtWidgets.QWidget, Dockable):
             if any(keymap.hit(a, ev, names) for a in ("anim.play", "anim.play_reverse", "anim.frame_prev",
                                                        "anim.frame_next", "anim.jump_start", "anim.jump_end",
                                                        "anim.fit", "anim.close", "anim.reload",
-                                                       "anim.blue_pencil")):
+                                                       "anim.blue_pencil", "anim.export")):
                 ev.accept()
                 return True
         return super().event(ev)
