@@ -28,6 +28,14 @@ class Hub(QtCore.QObject):
 
     def in_redo(self):
         return time.perf_counter() < self.redo_until
+
+    def hold_frame(self, on):
+        """Between the undo and the new run of a redo the scene is in its 'before' state for a tick –
+        the 3D view keeps its last picture meanwhile (otherwise the object blinks away)."""
+        self.redo_hold_until = time.perf_counter() + 1.0 if on else 0.0   # 1 s: safety if the run never comes
+
+    def frame_held(self):
+        return time.perf_counter() < getattr(self, "redo_hold_until", 0.0)
     data_changed = QtCore.Signal()
     selection_changed = QtCore.Signal()
     frame_changed = QtCore.Signal(int)

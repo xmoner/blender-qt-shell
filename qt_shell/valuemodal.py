@@ -169,6 +169,7 @@ class ValueModal:
         try:
             from . import app
             app.hub().redo_burst()          # Properties waits with its full rebuild until the drag settles
+            app.hub().hold_frame(True)      # the 3D view keeps its picture until the new run
         except Exception:
             pass
         bridge.run_op("ed.undo")
@@ -183,6 +184,11 @@ class ValueModal:
                     self.applied = None
             finally:
                 self.busy = False
+                try:
+                    from . import app
+                    app.hub().hold_frame(False)
+                except Exception:
+                    pass
                 self.vp.redraw_scene()
                 if self.pending:
                     self.pending = False

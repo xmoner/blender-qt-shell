@@ -271,6 +271,7 @@ class LastOperatorPanel(QtWidgets.QWidget):
         self.hub.redo_burst()               # Properties waits with its full rebuild until the drag settles
         idname, values = self.idname, dict(self.values)
         if self._has_step:
+            self.hub.hold_frame(True)       # the 3D view keeps its picture until the new run
             run_op("ed.undo")
 
         def again():
@@ -280,6 +281,7 @@ class LastOperatorPanel(QtWidgets.QWidget):
                 self._applied = values
             finally:
                 self._redoing = False
+                self.hub.hold_frame(False)
             if self._pending and self.idname == idname:
                 self._pending = False
                 self._timer.start()

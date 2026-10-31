@@ -379,6 +379,10 @@ class Viewport(QtWidgets.QWidget):
         if bridge.gpu_held():               # no GPU context right now (a Blender window was just closed)
             self._dirty = True
             return
+        held = getattr(self.hub, "frame_held", None)
+        if held is not None and held() and self._image is not None:
+            self._dirty = True              # a redo is between its undo and its new run – keep the last picture
+            return
         scale = getattr(self.prefs, "viewport_scale", 1.0) if self.prefs else 1.0
         space, region = self.space()
         if space is None:
