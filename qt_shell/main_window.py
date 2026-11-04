@@ -2271,6 +2271,8 @@ class MainWindow(QtWidgets.QMainWindow):
         box.setWindowTitle("Close Qt Shell")
         box.setText("What do you want to do?")
         quit_b = box.addButton("Quit Blender", QtWidgets.QMessageBox.DestructiveRole)
+        restart_b = box.addButton("Restart Blender", QtWidgets.QMessageBox.ActionRole)
+        restart_b.setToolTip("Quit Blender and start it again (the current file is opened again when it is saved)")
         back_b = box.addButton("Return to the Blender UI", QtWidgets.QMessageBox.AcceptRole)
         box.addButton("Cancel", QtWidgets.QMessageBox.RejectRole)
         box.exec()
@@ -2287,11 +2289,38 @@ class MainWindow(QtWidgets.QMainWindow):
                     bpy.ops.wm.quit_blender()
             bridge.later(_quit, 0.1)
             return
+        if clicked is restart_b:
+            ev.ignore()
+            QtCore.QTimer.singleShot(0, self.restart_blender)
+            return
         if clicked is back_b:
             ev.ignore()
             QtCore.QTimer.singleShot(0, shell_app.stop)
             return
         ev.ignore()
+
+    def restart_blender(self, confirm=True):
+        """Quits Blender and starts it again (with the current file when it is saved). Unsaved changes: asks
+        Save / Discard / Cancel first. A small helper process waits until this Blender has exited (preferences
+        and the Qt Shell layout are saved) and then starts the new one. Returns False when cancelled."""
+        if confirm and bpy.data.is_dirty and not self._confirm_discard():
+            return False
+        args = [bpy.app.binary_path]
+        if bpy.data.filepath and os.path.isfile(bpy.data.filepath):
+            args.append(bpy.data.filepath)
+        try:
+            _spawn_restart_helper(os.getpid(), args)
+        except Exception as ex:
+            bridge.log(f"Restart Blender: {ex}", "ERROR")
+            QtWidgets.QMessageBox.warning(self, "Restart Blender", f"Blender could not be restarted:\n{ex}")
+            return False
+        shell_app.stop()
+
+        def _quit():
+            with bridge.blender_context():
+                bpy.ops.wm.quit_blender()
+        bridge.later(_quit, 0.1)
+        return True
 
     def shutdown(self):
         try:
@@ -2352,3 +2381,52 @@ class MainWindow(QtWidgets.QMainWindow):
         self.render_window.close()
         if getattr(self, "anim_player", None) is not None:
             self.anim_player.close()
+
+
+_RESTART_HELPER = r"""
+import os, subprocess, sys, time
+pid = int(sys.argv[1])
+args = sys.argv[2:]
+
+
+def alive(p):
+    if os.name == "nt":
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.OpenProcess.restype = ctypes.c_void_p
+        h = k.OpenProcess(0x00100000, False, p)          # SYNCHRONIZE
+        if not h:
+            return False
+        r = k.WaitForSingleObject(ctypes.c_void_p(h), 0)
+        k.CloseHandle(ctypes.c_void_p(h))
+        return r == 0x102                                 # WAIT_TIMEOUT: still running
+    try:
+        os.kill(p, 0)
+        return True
+    except OSError:
+        return False
+
+
+end = time.time() + 120
+while alive(pid) and time.time() < end:
+    time.sleep(0.25)
+flags = 0x00000008 | 0x00000200 if os.name == "nt" else 0   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+subprocess.Popen(args, close_fds=True, creationflags=flags, cwd=os.path.dirname(args[0]) or None)
+"""
+
+
+def _spawn_restart_helper(pid, args):
+    """Starts a detached Python process (Blender's own Python) that waits for process pid to exit and then
+    runs args (the Blender executable [+ the .blend file])."""
+    import subprocess
+    import sys
+    py = sys.executable
+    if not py or not os.path.isfile(py) or "blender" in os.path.basename(py).lower():
+        raise RuntimeError(f"Blender's Python executable was not found ({py!r})")
+    flags = 0
+    if os.name == "nt":
+        flags = 0x00000008 | 0x00000200 | 0x08000000      # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
+    subprocess.Popen([py, "-I", "-c", _RESTART_HELPER, str(pid)] + list(args), close_fds=True,
+                     creationflags=flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+

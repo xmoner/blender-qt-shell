@@ -72,6 +72,10 @@ Where to run it:
 
 ## 3. Window and status bar
 
+### Restart Blender
+`qt_shell.api.main_window().restart_blender(confirm=True)` (Qt Shell 0.74.0) quits Blender and starts it again with
+the current file (when saved); `confirm=True` asks Save / Discard / Cancel when the file has unsaved changes.
+
 ### `is_running() -> bool`
 `True` when the Qt Shell window exists.
 
