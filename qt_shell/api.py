@@ -37,10 +37,10 @@ __all__ = [
     "viewport_layout", "set_viewport_layout", "viewports", "status_history",
     "add_overlay", "remove_overlay", "on", "off", "EVENTS",
     "owner", "current_owner", "cleanup", "owned", "outliner", "graph_editor", "render_view",
-    "active_tool", "set_tool", "TOOLS", "timeline", "image_editor",
+    "active_tool", "set_tool", "TOOLS", "timeline", "image_editor", "check_for_updates", "latest_release",
 ]
 
-API_VERSION = (1, 11)
+API_VERSION = (1, 12)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -228,6 +228,23 @@ def uv_editor():
         uv.canvas.select_all("SELECT"); uv.canvas.frame_selected()"""
     w = main_window()
     return getattr(w, "uv_editor", None) if w is not None else None
+
+
+def check_for_updates():
+    """Help → Check for Qt Shell Updates…: opens the dialog (newer GitHub releases, notes, Install).
+    Returns the dialog, or None when Qt Shell is not open."""
+    w = main_window()
+    return w.check_for_updates() if w is not None else None
+
+
+def latest_release():
+    """The newest published Qt Shell release from GitHub (blocking network call, needs Blender's online
+    access): {"version": (0, 72, 0), "tag", "name", "notes", "url", "zip", "date"}, or None."""
+    from . import updates
+    if not updates.online_allowed():
+        raise RuntimeError("Blender's online access is off (Preferences → System → Network)")
+    rel = updates.fetch_releases()
+    return rel[0] if rel else None
 
 
 def timeline():

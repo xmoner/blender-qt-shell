@@ -867,6 +867,14 @@ qt_shell.api.run_op("render.render", animation=True)
 
 Shelf button icons: an emoji / symbol, an image file, or `bl:NAME` for any Blender icon (`bl:MESH_CUBE`).
 
+## Updates from a script
+
+`qt_shell.api.check_for_updates()` (API 1.12, Qt Shell 0.72.0) opens Help → Check for Qt Shell Updates… (returns the
+dialog). `qt_shell.api.latest_release()` reads the newest published release from GitHub (blocking; raises when
+Blender's online access is off): `{"version": (0, 72, 0), "tag", "name", "notes", "url", "zip", "date"}` or None.
+The startup check is QSettings `updates/auto` ("true" / "false", default off) – at most once a day
+(`updates/last_check`).
+
 ## Shelf files
 
 Shelves can be saved to and loaded from `.json` files (the button next to the shelf's **+**), also from Python:

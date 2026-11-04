@@ -707,6 +707,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # never crashed. The window therefore appears with the default layout for a moment.
         if st is not None:
             QtCore.QTimer.singleShot(0, lambda s=st: self._restore_saved_layout(s))
+        # Help → Check for Qt Shell Updates: the optional quiet check at startup (off by default)
+        QtCore.QTimer.singleShot(8000, self, self._auto_update_check)
         # windows that were floating when Qt Shell closed float again a moment after the start
         # (shutdown() docks them before saving the layout and remembers them here)
         try:
@@ -1918,6 +1920,24 @@ class MainWindow(QtWidgets.QMainWindow):
             menufind.add_to_menu(menu, self)
         except Exception as ex:
             bridge.log(f"Help search: {ex}", "ERROR")
+        menu.addSeparator()
+        act = menu.addAction("Check for Qt Shell Updates…")
+        act.setToolTip(f"Qt Shell {_QT_SHELL_VERSION} – look for a newer release on GitHub (release notes, "
+                       "Install, Open Release Page)")
+        pytips.tag(act, "import qt_shell; qt_shell.api.check_for_updates()")
+        act.triggered.connect(lambda: QtCore.QTimer.singleShot(0, self.check_for_updates))
+
+    def check_for_updates(self):
+        """Help → Check for Qt Shell Updates…: the dialog (compares with the GitHub releases)."""
+        from . import updates
+        return updates.open_dialog(self)
+
+    def _auto_update_check(self):
+        try:
+            from . import updates
+            updates.auto_check(self)
+        except Exception as ex:
+            bridge.log(f"Update check: {ex}", "WARNING")
 
     def find_all(self, text=""):
         """Help → Search: menu items, buttons, tabs and operators of the whole window."""
