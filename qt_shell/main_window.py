@@ -778,7 +778,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _viewport_header(self):
         bar = QtWidgets.QWidget()
-        bar.setStyleSheet("QWidget { background: #303030; }\n" + theme.hover_qss() + theme.field_hover_qss())
+        # checked buttons (shading Wireframe / Solid / Material / Rendered, X-Ray, overlays, select modes …) in blue
+        # like everywhere else – the header's "QWidget { background }" would hide the app style's :checked colour
+        bar.setStyleSheet("QWidget { background: #303030; }\n" + theme.checked_qss() + theme.hover_qss()
+                          + theme.field_hover_qss())
         lay = QtWidgets.QHBoxLayout(bar)
         lay.setContentsMargins(4, 3, 4, 3)
         lay.setSpacing(3)

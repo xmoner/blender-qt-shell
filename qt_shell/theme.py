@@ -24,6 +24,13 @@ def hover_qss(sel="QToolButton, QPushButton"):
             f"{chk} {{ background: {h['checked_hover']}; }}\n")
 
 
+def checked_qss(sel="QToolButton, QPushButton"):
+    """Checked buttons in blue – add it to widget style sheets that set a background for all widgets
+    (e.g. "QWidget { background: … }" of a header), otherwise checked buttons there would not light up."""
+    chk = ", ".join(f"{s.strip()}:checked" for s in sel.split(","))
+    return f"{chk} {{ background: {C['highlight']}; }}\n"
+
+
 def field_hover_qss():
     """Hover for fields (numbers, text, drop-downs): light blue frame, slightly lighter background."""
     h = HOVER
