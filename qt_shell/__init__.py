@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Qt Shell – Blender UI in PySide6",
     "author": "Lukas Bilek",
-    "version": (0, 73, 1),
+    "version": (0, 73, 2),
     "blender": (4, 2, 0),
     "location": "F3 → Open Qt Shell / Preferences → Add-ons → Qt Shell",
     "description": "Replaces the Blender UI with a Qt (PySide6) window: viewport, outliner, "
@@ -160,14 +160,41 @@ class QTSHELL_OT_open(bpy.types.Operator):
         if not _pyside_available():
             self.report({"ERROR"}, "PySide6 is missing – install it in Preferences → Add-ons → Qt Shell.")
             return {"CANCELLED"}
-        try:
-            from . import app
-            app.start(prefs())
-        except Exception:
-            traceback.print_exc()
-            self.report({"ERROR"}, "Qt Shell failed to start – see the system console.")
-            return {"CANCELLED"}
+        # Started from a Blender timer, outside this operator: clicked in Edit → Preferences the operator runs
+        # in the Preferences window, whose temporary screen can't be overridden ("Overriding context with an
+        # active temporary screen isn't supported") – the Qt window was never created and nothing happened.
+        bpy.app.timers.register(_open_later, first_interval=0.05)
+        self.report({"INFO"}, "Opening Qt Shell…")
         return {"FINISHED"}
+
+
+def _open_later():
+    try:
+        from . import app
+        app.start(prefs())
+        ok = app._win is not None
+    except Exception:
+        traceback.print_exc()
+        ok = False
+    if not ok:
+        _start_failed()
+    return None
+
+
+def _start_failed():
+    """Qt Shell did not open: say so in Blender (the details are in <temp>/qtshell.log)."""
+    import tempfile
+
+    def draw(menu, _context):
+        menu.layout.label(text="Qt Shell could not be opened.")
+        menu.layout.label(text=f"Details: {os.path.join(tempfile.gettempdir(), 'qtshell.log')}")
+    try:
+        wm = bpy.context.window_manager
+        win = bpy.context.window or (wm.windows[0] if wm.windows else None)
+        with bpy.context.temp_override(window=win):
+            wm.popup_menu(draw, title="Qt Shell", icon="ERROR")
+    except Exception:
+        traceback.print_exc()
 
 
 class QTSHELL_OT_close(bpy.types.Operator):
