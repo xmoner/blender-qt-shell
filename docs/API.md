@@ -870,7 +870,8 @@ Shelf button icons: an emoji / symbol, an image file, or `bl:NAME` for any Blend
 ## Updates from a script
 
 `qt_shell.api.check_for_updates()` (API 1.12, Qt Shell 0.72.0) opens Help → Check for Qt Shell Updates… (returns the
-dialog). `qt_shell.api.latest_release()` reads the newest published release from GitHub (blocking; raises when
+dialog; since 0.73.0 `dlg.select_version("0.65.0")` picks a release in its Version list, `dlg.selected()` returns it,
+`dlg.install()` installs the picked one). `qt_shell.api.latest_release()` reads the newest published release from GitHub (blocking; raises when
 Blender's online access is off): `{"version": (0, 72, 0), "tag", "name", "notes", "url", "zip", "date"}` or None.
 The startup check is QSettings `updates/auto` ("true" / "false", default off) – at most once a day
 (`updates/last_check`).

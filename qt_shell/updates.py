@@ -1,9 +1,10 @@
 """Help → Check for Qt Shell Updates…: compares the running version with the GitHub releases.
 
 The releases of github.com/xmoner/blender-qt-shell are read in a background thread (the UI never waits on
-the network). A newer release shows its notes (all releases newer than the running one) and offers:
+the network). A newer release shows its notes (all releases newer than the running one); the Version list
+holds every published release (the newest 30) – also older ones to go back to – and offers:
 
-- Install – downloads the release's qt_shell.zip and installs it like Edit → Preferences → Add-ons →
+- Install – downloads the picked release's qt_shell.zip and installs it like Edit → Preferences → Add-ons →
   Install from Disk (the add-on folder is replaced); Blender must then be restarted;
 - Open Release Page – the release on GitHub in the web browser.
 
@@ -139,6 +140,16 @@ class UpdateDialog(QtWidgets.QDialog):
         self.head.setTextFormat(QtCore.Qt.RichText)
         self.head.setOpenExternalLinks(True)
         lay.addWidget(self.head)
+        # every published release (newest first) – also older ones to go back to
+        vrow = QtWidgets.QHBoxLayout()
+        self.version_label = QtWidgets.QLabel("Version", self)
+        self.version_combo = QtWidgets.QComboBox(self)
+        self.version_combo.setToolTip("The releases on GitHub (newest first) – pick one to see its notes and "
+                                      "install it, also an older version to go back to")
+        self.version_combo.currentIndexChanged.connect(lambda _i: self._show_selected())
+        vrow.addWidget(self.version_label)
+        vrow.addWidget(self.version_combo, 1)
+        lay.addLayout(vrow)
         self.notes = QtWidgets.QTextBrowser(self)
         self.notes.setOpenExternalLinks(True)
         pal = self.notes.palette()                 # readable links on the dark theme
@@ -182,8 +193,21 @@ class UpdateDialog(QtWidgets.QDialog):
     def _set_head(self, html):
         self.head.setText(html)
 
+    def selected(self):
+        """The release picked in the Version list (None before the releases are read)."""
+        i = self.version_combo.currentIndex()
+        return self.releases[i] if 0 <= i < len(self.releases) and self.version_combo.count() else None
+
     def _buttons(self):
-        self.install_btn.setVisible(bool(self.newer) and bool(self.newer[0].get("zip")))
+        rel = self.selected()
+        self.install_btn.setVisible(bool(rel and rel.get("zip")))
+        if rel is not None:
+            cur = current_version()
+            v = vstr(rel["version"])
+            self.install_btn.setText(f"Install {v}" if rel["version"] > cur else
+                                     f"Reinstall {v}" if rel["version"] == cur else f"Install {v} (older)")
+            self.install_btn.setMinimumWidth(self.install_btn.fontMetrics().horizontalAdvance(
+                self.install_btn.text()) + theme.px(24))       # the text changes – never clipped
         self.page_btn.setVisible(True)
         self.install_btn.setEnabled(not self._busy)
         self.retry_btn.setEnabled(not self._busy)
@@ -198,6 +222,11 @@ class UpdateDialog(QtWidgets.QDialog):
         cur = vstr(current_version())
         self.newer = []
         self.notes.setVisible(False)
+        self.version_label.setVisible(False)
+        self.version_combo.setVisible(False)
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        self.version_combo.blockSignals(False)
         self._forced = self._forced or bool(force)
         if not online_allowed() and not self._forced:
             self._set_head(f"Qt Shell <b>{cur}</b> is running.<br><br>Blender's online access is off "
@@ -227,15 +256,6 @@ class UpdateDialog(QtWidgets.QDialog):
             n = self.newer[0]
             self._set_head(f"<b>Qt Shell {vstr(n['version'])} is available</b> ({n['date']}) – you have "
                            f"{vstr(cur)}." + (f" {len(self.newer)} newer releases:" if len(self.newer) > 1 else ""))
-            md = "\n\n---\n\n".join(f"# {r['name']}\n\n*{r['date']}* · [release page]({r['url']})\n\n{r['notes']}"
-                                    for r in self.newer)
-            self.notes.setMarkdown(md)
-            # Qt gives links a fixed dark blue – unreadable on the dark theme
-            html = re.sub(r'(<a href="[^"]*"><span style="[^"]*?color:)#[0-9a-fA-F]{6}', r"\g<1>#6fa8ff",
-                          self.notes.toHtml())
-            self.notes.setHtml(html)
-            self.notes.setVisible(True)
-            self.resize(self.width(), max(self.height(), theme.px(480)))
         elif latest is not None and cur > latest["version"]:
             self._set_head(f"Qt Shell <b>{vstr(cur)}</b> is newer than the latest release "
                            f"({vstr(latest['version'])}).")
@@ -243,23 +263,67 @@ class UpdateDialog(QtWidgets.QDialog):
             self._set_head(f"Qt Shell <b>{vstr(cur)}</b> is up to date (the latest release, {latest['date']}).")
         else:
             self._set_head(f"Qt Shell <b>{vstr(cur)}</b> is running. No releases found.")
+        self.version_combo.blockSignals(True)
+        self.version_combo.clear()
+        for r in self.releases:
+            tag = "installed" if r["version"] == cur else "newer" if r["version"] > cur else "older"
+            self.version_combo.addItem(f"{vstr(r['version'])}  ·  {r['date']}  ·  {tag}  –  {r['name']}")
+        self.version_combo.setCurrentIndex(0)
+        self.version_combo.blockSignals(False)
+        self.version_label.setVisible(bool(self.releases))
+        self.version_combo.setVisible(bool(self.releases))
+        if self.releases:
+            self.resize(self.width(), max(self.height(), theme.px(480)))
+        self._show_selected()
+
+    def select_version(self, version):
+        """Picks a release in the Version list: (0, 70, 0) or '0.70.0'. Returns True when it is listed."""
+        v = parse_version(version) if isinstance(version, str) else tuple(version)
+        for i, r in enumerate(self.releases):
+            if r["version"] == v:
+                self.version_combo.setCurrentIndex(i)
+                return True
+        return False
+
+    def _show_selected(self):
+        """The notes of the release picked (the newest with newer releases: the notes of all of them)."""
+        rel = self.selected()
+        if rel is None:
+            self.notes.setVisible(False)
+            self._buttons()
+            return
+        shown = self.newer if (self.newer and rel is self.newer[0]) else [rel]
+        md = "\n\n---\n\n".join(f"# {r['name']}\n\n*{r['date']}* · [release page]({r['url']})\n\n{r['notes']}"
+                                  for r in shown)
+        self.notes.setMarkdown(md)
+        # Qt gives links a fixed dark blue – unreadable on the dark theme
+        html = re.sub(r'(<a href="[^"]*"><span style="[^"]*?color:)#[0-9a-fA-F]{6}', r"\g<1>#6fa8ff",
+                      self.notes.toHtml())
+        self.notes.setHtml(html)
+        self.notes.setVisible(True)
         self._buttons()
 
     # --- actions
     def open_page(self):
-        url = self.newer[0]["url"] if self.newer else PAGE
+        rel = self.selected()
+        url = rel["url"] if rel else PAGE
         if not QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)):
             webbrowser.open(url)
 
     def install(self, dry_run=False):
-        """Downloads the newest release's zip and installs it. dry_run: download and check only."""
-        if not self.newer or not self.newer[0].get("zip"):
+        """Downloads the release picked in the Version list (default the newest) and installs it.
+        dry_run: download and check only."""
+        rel = self.selected()
+        if rel is None or not rel.get("zip"):
             return
-        rel = self.newer[0]
         if not dry_run:
+            older = rel["version"] < current_version()
             ok = QtWidgets.QMessageBox.question(
-                self, "Install Qt Shell", f"Install Qt Shell {vstr(rel['version'])}?\n\nThe add-on folder is "
-                "replaced (like Install from Disk). Restart Blender afterwards to use the new version.",
+                self, "Install Qt Shell", f"Install Qt Shell {vstr(rel['version'])}"
+                + (f" – an OLDER version than the running {vstr(current_version())}" if older else "") +
+                "?\n\nThe add-on folder is replaced (like Install from Disk); your settings, shelves and shortcuts "
+                "stay. Restart Blender afterwards to use it." + ("\n\nFeatures added after this version will be "
+                                                                "missing; you can update again any time." if older else ""),
                 QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
             if ok != QtWidgets.QMessageBox.Yes:
                 return
@@ -299,7 +363,6 @@ class UpdateDialog(QtWidgets.QDialog):
                            "Preferences → Add-ons → Install from Disk.")
             self._buttons()
             return
-        self.newer = []
         self._set_head(f"<b>Qt Shell {vstr(rel['version'])} is installed.</b><br><br>Restart Blender to use it "
                        f"(the running Qt Shell is still {vstr(current_version())}). After the restart the status "
                        "bar shows the new version.")
