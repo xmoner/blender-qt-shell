@@ -144,6 +144,26 @@ def apply(app):
     font.setPointSizeF(_base_pt * ui_scale * font_scale)
     app.setFont(font)
     app.setStyleSheet(qss())
+    _dock_title_fonts(font)          # after the style sheet: re-polishing would put the old widget fonts back
+
+
+def _dock_title_fonts(font):
+    """Dock titles (Console, Graph editor, Outliner …) follow the text size too.
+
+    QDockWidget draws its title with a font taken once, when the dock is created, from
+    QApplication.font("QDockWidgetTitle") (the system's fixed title font) – unless the dock's own font differs
+    from the class font. So: the class font for new docks, and for the existing ones an explicit font that is
+    marked (style strategy) so it never compares equal and the dock paints its title with it."""
+    QtWidgets.QApplication.setFont(font, "QDockWidgetTitle")
+    marked = QtGui.QFont(font)
+    marked.setStyleStrategy(QtGui.QFont.PreferAntialias)
+    for w in QtWidgets.QApplication.allWidgets():
+        if isinstance(w, QtWidgets.QDockWidget):
+            w.setFont(marked)
+            if w.layout() is not None:
+                w.layout().invalidate()          # the title bar height follows the font
+            w.updateGeometry()
+            w.update()
 
 
 _icon_cache = {}
