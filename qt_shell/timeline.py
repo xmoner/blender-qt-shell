@@ -57,6 +57,7 @@ KEY_TYPES = {
     "GENERATED": ("Generated", 0.75, "#585858", "#a28962"),
 }
 AUTO_CACHE_IDLE = 0.6   # background caching waits this long after the last mouse / wheel / key input
+AUTO_CACHE_BUDGET = 0.02   # work per background caching step (at least one frame)
 _KEY_PRIORITY = ("EXTREME", "KEYFRAME", "BREAKDOWN", "JITTER", "MOVING_HOLD", "GENERATED")
 INTERPOLATIONS = [("CONSTANT", "Constant"), ("LINEAR", "Linear"), ("BEZIER", "Bézier")]
 _COPY = []             # copied keys: {"ob", "path", "index", "offset", "value", "interp", "type"}
@@ -1223,6 +1224,8 @@ class Timeline(QtWidgets.QWidget):
                 return
             if self.is_playing() or bridge.is_rendering() or not self.isVisible():
                 return
+            if time.perf_counter() < getattr(self, "_ac_next", 0.0):
+                return                         # rest between steps: the UI gets most of the time
             app = QtWidgets.QApplication
             if (app.mouseButtons() != QtCore.Qt.NoButton or app.activePopupWidget() is not None
                     or app.activeModalWidget() is not None):
@@ -1277,7 +1280,7 @@ class Timeline(QtWidgets.QWidget):
                 for f in missing:
                     sc.frame_set(f)
                     self._cache_store(views, f)
-                    if playcache.full() or time.perf_counter() - t0 > 0.035:
+                    if playcache.full() or time.perf_counter() - t0 > AUTO_CACHE_BUDGET:
                         break
             finally:
                 sc.frame_set(keep)
@@ -1285,6 +1288,10 @@ class Timeline(QtWidgets.QWidget):
                     v._image, v._img_transparent = img, tr
                     v._dirty = False
                 bridge.Flags.depsgraph = dirty_flag   # frame hops are not edits – no UI refresh storm
+                spent = time.perf_counter() - t0
+                # at most ~1/3 of the time: a heavy scene (one frame = 25 ms+) no longer keeps Blender busy
+                # almost all the time, so starting to orbit / scroll right after a pause stays smooth
+                self._ac_next = time.perf_counter() + 2.0 * spent
             self.bar.update()
         except Exception as ex:
             bridge.log(f"Background caching: {ex}", "WARNING")
@@ -1301,7 +1308,7 @@ class Timeline(QtWidgets.QWidget):
         for key, text, tip in (
                 ("GEOMETRY", "Cache Geometry (camera can move)",
                  "Stores the animated geometry and rig controls; playback draws them from any camera in "
-                 "solid shading. Moving the camera keeps the cache."),
+                 "Solid or Wireframe shading. Moving the camera keeps the cache."),
                 ("IMAGE", "Cache Images (exact look)",
                  "Stores finished viewport pictures – exact look incl. materials, but any camera move "
                  "drops the cache.")):

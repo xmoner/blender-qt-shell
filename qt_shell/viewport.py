@@ -495,9 +495,9 @@ class Viewport(QtWidgets.QWidget):
         return img
 
     def geo_cache_usable(self):
-        """Geometry-cache playback draws solid shading only."""
+        """Geometry-cache playback draws Solid and Wireframe shading."""
         space, _r = self.space()
-        return space is not None and space.shading.type == "SOLID"
+        return space is not None and space.shading.type in ("SOLID", "WIREFRAME")
 
     def show_geo(self, frame):
         """Cached playback from the geometry cache: draws the stored geometry from the current camera."""

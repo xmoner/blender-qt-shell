@@ -8,7 +8,8 @@ For every cached frame we keep what the evaluated scene looks like, not a pictur
   line when there is no shape), with their bone colours.
 
 During cached playback the viewport draws this itself into its offscreen buffer (solid shading with
-material / object / single / random colours and a simple studio-like light, rig controls as lines), so the
+material / object / single / random colours and a simple studio-like light, or Wireframe shading – the mesh
+edges with theme / object / random colours, X-ray or hidden lines – rig controls as lines), so the
 camera can move freely while the cache stays valid. Any scene edit (bridge.Flags.edit_version) drops it.
 """
 import math
@@ -71,8 +72,26 @@ def _nbytes(*arrays):
 
 
 # ---------------------------------------------------------------- capture
+def _corner_edges(me, cv):
+    """The mesh edges as pairs of corner indices (E,2) – for Wireframe playback (positions are per corner).
+    Loose edges (vertices without a face corner) are left out."""
+    try:
+        ne = len(me.edges)
+        if not ne:
+            return np.zeros((0, 2), np.int32)
+        ev = np.empty(ne * 2, np.int32)
+        me.edges.foreach_get("vertices", ev)
+        first = np.full(len(me.vertices), -1, np.int32)
+        first[cv[::-1]] = np.arange(len(cv) - 1, -1, -1, dtype=np.int32)   # a corner of each vertex
+        ec = first[ev].reshape(-1, 2)
+        return ec[(ec >= 0).all(axis=1)]
+    except Exception:
+        return np.zeros((0, 2), np.int32)
+
+
 def _corner_data(me):
-    """(corner positions (C,3), corner normals (C,3), triangles (T,3) of corner indices, corner material (C,))."""
+    """(corner positions (C,3), corner normals (C,3), triangles (T,3) of corner indices, corner material (C,),
+    edges (E,2) of corner indices)."""
     nv, nl = len(me.vertices), len(me.loops)
     co = np.empty(nv * 3, np.float32)
     me.vertices.foreach_get("co", co)
@@ -108,7 +127,7 @@ def _corner_data(me):
     cmat = np.zeros(nl, np.int32)
     if nt:
         cmat[tris.ravel()] = np.repeat(tmat, 3)
-    return co[cv], nor, tris, cmat
+    return co[cv], nor, tris, cmat, _corner_edges(me, cv)
 
 
 def _corner_uv(me):
@@ -150,7 +169,7 @@ def _capture_mesh(ob, ev):
     try:
         if me is None or not len(me.loops):
             return False
-        pos, nor, tris, cmat = _corner_data(me)
+        pos, nor, tris, cmat, edges = _corner_data(me)
         need_uv = st is None or len(st["pos"]) != len(pos) or not np.array_equal(st["tris"], tris)
         uv = _corner_uv(me) if need_uv else None
     finally:
@@ -160,15 +179,15 @@ def _capture_mesh(ob, ev):
             pass
     if st is None:
         mats = [s.material for s in ob.material_slots]
-        st = {"pos": pos, "nor": nor, "tris": tris, "cmat": cmat, "mats": mats, "uv": uv}
+        st = {"pos": pos, "nor": nor, "tris": tris, "cmat": cmat, "mats": mats, "uv": uv, "edges": edges}
         _static[ob.name] = st
-        _bytes += _nbytes(pos, nor, tris, cmat, uv)
+        _bytes += _nbytes(pos, nor, tris, cmat, uv, edges)
         return None
     if len(st["pos"]) != len(pos) or not np.array_equal(st["tris"], tris):
         # the topology changes between frames (some modifiers do) – this frame keeps its own mesh;
         # the shared base must never be replaced, earlier frames refer to it
-        _bytes += _nbytes(pos, nor, tris, cmat, uv)
-        return (pos, nor, tris, cmat, uv)
+        _bytes += _nbytes(pos, nor, tris, cmat, uv, edges)
+        return (pos, nor, tris, cmat, uv, edges)
     if rigid or np.allclose(pos, st["pos"], atol=1e-6):
         return None
     _bytes += _nbytes(pos, nor)
@@ -240,18 +259,21 @@ def capture(frame):
     ctx = bpy.context
     dg = ctx.evaluated_depsgraph_get()
     meshes = []
+    wire_only = set()
     for ob in ctx.visible_objects:
-        if ob.type not in GEOM_TYPES or ob.display_type in ("WIRE", "BOUNDS"):
+        if ob.type not in GEOM_TYPES or ob.display_type == "BOUNDS":
             continue
         ev = ob.evaluated_get(dg)
         d = _capture_mesh(ob, ev)
         if d is False or ob.name not in _static:
             continue
+        if ob.display_type == "WIRE":
+            wire_only.add(ob.name)               # Solid shading draws these as wires too
         meshes.append((ob.name, np.array(ev.matrix_world, np.float32), d))
     lines = _capture_lines()
     if lines is not None:
         _bytes += _nbytes(*lines)
-    _frames[frame] = {"meshes": meshes, "lines": lines}
+    _frames[frame] = {"meshes": meshes, "lines": lines, "wire_only": wire_only}
 
 
 # ---------------------------------------------------------------- drawing
@@ -481,6 +503,106 @@ def _parts(name, st, space, pos, nor, tris, cmat, uv, cache_key=None):
     return out
 
 
+def wire_mode(space):
+    return space is not None and space.shading.type == "WIREFRAME"
+
+
+def _wire_colors(space):
+    """name → RGBA of each object's wires like Blender's Wireframe shading (Theme: selected / active /
+    other from the theme, Object: the object colour, Random)."""
+    kind = getattr(space.shading, "wireframe_color_type", "THEME")
+    out = {}
+    ctx = bpy.context
+    act = ctx.view_layer.objects.active
+    try:
+        th = ctx.preferences.themes[0].view_3d
+        c_wire, c_sel, c_act = (tuple(th.wire) + (1.0,), tuple(th.object_selected) + (1.0,),
+                                tuple(th.object_active) + (1.0,))
+    except Exception:
+        c_wire, c_sel, c_act = (0.0, 0.0, 0.0, 1.0), (0.93, 0.34, 0.0, 1.0), (1.0, 0.67, 0.25, 1.0)
+    for ob in ctx.visible_objects:
+        if kind == "OBJECT":
+            c = tuple(ob.color)
+        elif kind == "RANDOM":
+            h = zlib.crc32(ob.name.encode()) / 0xFFFFFFFF
+            c = tuple(0.5 + 0.4 * math.cos(6.283 * (h + k / 3.0)) for k in range(3)) + (1.0,)
+        else:
+            c = c_wire
+        if ob.select_get():
+            c = c_act if ob == act else c_sel
+        out[ob.name] = c
+    return out
+
+
+def _draw_wire(offscreen, data, vm, pm, space, dpr, sh, only=None):
+    """Wireframe shading of the cached meshes: their edges as lines; without X-ray the faces hide the edges
+    behind them (a depth-only pass first), like Blender. only: just these objects, over the solid picture
+    (objects displayed as Wire in Solid shading)."""
+    xray = bool(getattr(space.shading, "show_xray_wireframe", True)) if only is None else False
+    items = []
+    for name, mat, deformed in data["meshes"]:
+        st = _static.get(name)
+        if st is None or (only is not None and name not in only):
+            continue
+        if deformed is None:
+            pos, tris, edges = st["pos"], st["tris"], st.get("edges")
+        elif len(deformed) >= 5:
+            pos, tris, edges = deformed[0], deformed[2], (deformed[5] if len(deformed) > 5 else None)
+        else:
+            pos, tris, edges = deformed[0], st["tris"], st.get("edges")
+        if edges is None:                        # captured before edges were stored: the triangle edges
+            edges = np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]]) if len(tris) else None
+        items.append((name, Matrix(mat.tolist()), pos, tris, edges, deformed is None))
+    if not xray and only is None:                # depth of the faces only – the hidden edges stay hidden
+        gpu.state.color_mask_set(False, False, False, False)
+        sh.bind()
+        sh.uniform_float("viewProj", pm @ vm)
+        sh.uniform_float("view", vm)
+        sh.uniform_int("useTex", 0)
+        sh.uniform_sampler("tex", _dummy())
+        for name, model, pos, tris, _e, rigid in items:
+            if not len(tris):
+                continue
+            key = ("depth", name)
+            b = _batch_cache.get(key) if rigid else None
+            if b is None:
+                z = np.zeros((len(pos), 3), np.float32)
+                b = batch_for_shader(sh, "TRIS", {"pos": pos, "nor": z, "col": np.zeros((len(pos), 4), np.float32),
+                                                  "uv": np.zeros((len(pos), 2), np.float32)}, indices=tris)
+                if rigid:
+                    _batch_cache[key] = b
+            sh.uniform_float("model", model)
+            b.draw(sh)
+        gpu.state.color_mask_set(True, True, True, True)
+    gpu.state.depth_test_set("NONE" if xray else "LESS_EQUAL")
+    gpu.state.depth_mask_set(False)
+    gpu.state.blend_set("ALPHA")
+    lsh = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
+    cols = _wire_colors(space)
+    alpha = float(getattr(space.shading, "xray_alpha_wireframe", 1.0)) if xray else 1.0
+    lsh.bind()
+    lsh.uniform_float("viewportSize", (offscreen.width, offscreen.height))
+    lsh.uniform_float("lineWidth", 1.0 * dpr)
+    with gpu.matrix.push_pop():
+        gpu.matrix.load_projection_matrix(pm)
+        for name, model, pos, _t, edges, rigid in items:
+            if edges is None or not len(edges):
+                continue
+            key = ("wire", name)
+            b = _batch_cache.get(key) if rigid else None
+            if b is None:
+                b = batch_for_shader(lsh, "LINES", {"pos": pos[edges.ravel()]})
+                if rigid:
+                    _batch_cache[key] = b
+            gpu.matrix.load_matrix(vm @ model)
+            c = cols.get(name, (0.0, 0.0, 0.0, 1.0))
+            lsh.uniform_float("color", (c[0], c[1], c[2], c[3] * max(alpha, 0.25)))
+            b.draw(lsh)
+    gpu.state.blend_set("NONE")
+    gpu.state.depth_mask_set(True)
+    gpu.state.depth_test_set("LESS_EQUAL")
+
+
 def draw(offscreen, frame, vm, pm, space, dpr):
     """Draws the cached frame into the offscreen (transparent background). True when it drew."""
     data = _frames.get(frame)
@@ -498,16 +620,20 @@ def draw(offscreen, frame, vm, pm, space, dpr):
         sh.bind()
         sh.uniform_float("viewProj", pm @ vm)
         sh.uniform_float("view", vm)
-        for name, mat, deformed in data["meshes"]:
+        if wire_mode(space):
+            _draw_wire(offscreen, data, vm, pm, space, dpr, sh)
+            sh.bind()
+        wire_only = data.get("wire_only", set())
+        for name, mat, deformed in ([] if wire_mode(space) else data["meshes"]):
             st = _static.get(name)
-            if st is None:
+            if st is None or name in wire_only:
                 continue
             sh.uniform_float("model", Matrix(mat.tolist()))
             if deformed is None:
                 parts = _parts(name, st, space, st["pos"], st["nor"], st["tris"], st["cmat"], st["uv"],
                                cache_key=name)
-            elif len(deformed) == 5:                    # own topology in this frame
-                parts = _parts(name, st, space, *deformed)
+            elif len(deformed) >= 5:                    # own topology in this frame
+                parts = _parts(name, st, space, *deformed[:5])
             else:
                 parts = _parts(name, st, space, deformed[0], deformed[1], st["tris"], st["cmat"], st["uv"])
             for b, tex in parts:
@@ -518,6 +644,8 @@ def draw(offscreen, frame, vm, pm, space, dpr):
                     sh.uniform_sampler("tex", _dummy())
                     sh.uniform_int("useTex", 0)
                 b.draw(sh)
+        if wire_only and not wire_mode(space):
+            _draw_wire(offscreen, data, vm, pm, space, dpr, sh, only=wire_only)
         lines = data["lines"]
         if lines is not None and show_bones:
             pos, col, front = lines
