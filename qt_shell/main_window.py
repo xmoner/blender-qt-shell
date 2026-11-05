@@ -1929,6 +1929,19 @@ class MainWindow(QtWidgets.QMainWindow):
                        "Install, Open Release Page)")
         pytips.tag(act, "import qt_shell; qt_shell.api.check_for_updates()")
         act.triggered.connect(lambda: QtCore.QTimer.singleShot(0, self.check_for_updates))
+        # links to the project on the web (opened in the default browser)
+        menu.addSeparator()
+        try:
+            from . import blicons
+            icon = blicons.icon("URL") if blicons.has("URL") else QtGui.QIcon()
+        except Exception:
+            icon = QtGui.QIcon()
+        for text, url, tip in QT_SHELL_LINKS:
+            a = menu.addAction(icon, text)
+            a.setToolTip(f"{tip}\n{url}")
+            a.setStatusTip(url)
+            a.setData(url)
+            a.triggered.connect(lambda _=False, u=url: open_url(u))
 
     def check_for_updates(self):
         """Help → Check for Qt Shell Updates…: the dialog (compares with the GitHub releases)."""
@@ -2381,6 +2394,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.render_window.close()
         if getattr(self, "anim_player", None) is not None:
             self.anim_player.close()
+
+
+QT_SHELL_REPO = "https://github.com/xmoner/blender-qt-shell"
+# Help menu: (label, url, tooltip)
+QT_SHELL_LINKS = (
+    ("Qt Shell Website", "https://xmoner.github.io/blender-qt-shell/", "The Qt Shell home page"),
+    ("Qt Shell Python API", QT_SHELL_REPO + "/blob/main/docs/API.md",
+     "The public Python API of Qt Shell (qt_shell.api) for scripts and other add-ons"),
+    ("Qt Shell Releases (GitHub)", QT_SHELL_REPO + "/releases", "All Qt Shell versions with their release notes"),
+    ("Report a Qt Shell Bug…", QT_SHELL_REPO + "/issues/new",
+     "Open a new issue on GitHub – please add the version from the status bar and <temp>/qtshell.log"),
+    ("Qt Shell on GitHub", QT_SHELL_REPO, "The Qt Shell source code repository"),
+)
+
+
+def open_url(url):
+    """Opens a web page in the default browser."""
+    if not QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)):
+        import webbrowser
+        webbrowser.open(url)
 
 
 _RESTART_HELPER = r"""
