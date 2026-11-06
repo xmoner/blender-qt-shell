@@ -813,6 +813,17 @@ def pivot(vp):
     if mode == "POSE":
         from . import posetransform
         return posetransform.pivot(ctx)
+    from . import editother
+    if editother.supported(mode):
+        cache = getattr(vp, "_gizmo_pivot_cache", None)
+        if cache is not None:
+            return cache[0]
+        try:
+            p = editother.pivot(ctx)
+        except Exception:
+            p = None
+        vp._gizmo_pivot_cache = (p,)
+        return p
     return None
 
 
@@ -849,6 +860,9 @@ def _selection_points(ctx):
                     if pb.select:
                         pts += [mw @ pb.head, mw @ pb.tail]
         return pts
+    from . import editother
+    if editother.supported(mode):
+        return editother.selected_points(ctx)
     return []
 
 

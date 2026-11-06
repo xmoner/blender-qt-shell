@@ -14,7 +14,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import annotate, bluepencil, bridge, editmesh, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
+from . import annotate, bluepencil, bridge, editmesh, editother, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -1389,8 +1389,16 @@ class Viewport(QtWidgets.QWidget):
                 self.status.emit(str(ex))
                 return
             sel, pivot = [], pose.pivot
+        elif editother.supported(ctx.mode):          # curves / surfaces, armatures, lattices
+            try:
+                edit = editother.TransformState(ctx)
+            except ValueError as ex:
+                self.status.emit(str(ex))
+                return
+            sel, pivot = [], edit.pivot
         else:
-            self.status.emit("Interactive G/R/S works in Object, Pose and Edit (mesh) mode.")
+            self.status.emit("Interactive G/R/S works in Object, Pose and Edit Mode (mesh, curve, armature, "
+                             "lattice).")
             return
         pos = self.mapFromGlobal(QtGui.QCursor.pos())
         self._modal = {

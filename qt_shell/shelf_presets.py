@@ -15,6 +15,13 @@ _OBJ = ("import bpy\n"
 _QS = "import qt_shell.api as qs\n"
 
 
+_EXTRUDE = "import qt_shell.editother as eo\neo.extrude()\n"
+# built-in buttons of earlier versions → today's command (only when the user hasn't changed the button)
+UPGRADES = {
+    _EDIT + "bpy.ops.mesh.extrude_region_move()\n" + _QS + "qs.viewport().start_modal('G')\n": _EXTRUDE,
+}
+
+
 def _b(label, icon, tooltip, command):
     return {"label": label, "icon": f"bl:{icon}", "tooltip": tooltip, "command": command}
 
@@ -48,8 +55,8 @@ SHELVES = [
         _prim("Monkey", "MESH_MONKEY", "primitive_monkey_add", "Suzanne the monkey"),
     ]},
     {"name": "Modeling", "buttons": [
-        _edit("Extrude", "FACESEL", "Extrude the selection and move it with the mouse",
-              "bpy.ops.mesh.extrude_region_move()\n" + _QS + "qs.viewport().start_modal('G')\n"),
+        _b("Extrude", "FACESEL", "Extrude the selection and move it with the mouse – mesh faces / edges / "
+           "vertices, curve end points or bones (switches to Edit Mode)", _EXTRUDE),
         _edit("Inset", "FACESEL", "Inset the selected faces – adjust Thickness in Adjust Last Operation",
               "bpy.ops.mesh.inset(thickness=0.1)\n"),
         _edit("Bevel", "MOD_BEVEL", "Bevel the selected edges – adjust Width / Segments in Adjust Last Operation",
@@ -178,12 +185,28 @@ SHELVES = [
 ]
 
 
+def upgrade_buttons(data):
+    """Built-in buttons the user left unchanged get the current command (e.g. Extrude that works in curve and
+    armature Edit Mode too). Buttons the user edited are never touched. True when data changed."""
+    changed = False
+    for s in data.get("shelves", []):
+        for b in s.get("buttons", []) or []:
+            new = UPGRADES.get(b.get("command"))
+            if new is not None:
+                b["command"] = new
+                if b.get("label") == "Extrude":
+                    b["tooltip"] = ("Extrude the selection and move it with the mouse – mesh faces / edges / "
+                                    "vertices, curve end points or bones (switches to Edit Mode)")
+                changed = True
+    return changed
+
+
 def add_builtin_shelves(data):
     """Adds the built-in shelves the user hasn't had yet (an existing empty shelf with the same name gets
     the buttons). True when data changed."""
     import copy
     done = data.setdefault("builtin_added", [])
-    changed = False
+    changed = upgrade_buttons(data)
     for s in SHELVES:
         if s["name"] in done:
             continue
