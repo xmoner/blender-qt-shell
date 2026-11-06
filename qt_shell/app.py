@@ -352,6 +352,11 @@ def start(addon_prefs=None):
             _win = MainWindow(_hub)
             _win.show()
         bridge.later(_started, 3.0)
+        try:
+            from . import errorwin          # program errors → a window with "Report on GitHub"
+            errorwin.install(_win)
+        except Exception:
+            bridge.log("Error window: " + traceback.format_exc(), "WARNING")
     except Exception:
         # never leave the user without a window: log the error and bring Blender back
         bridge.log("Qt Shell window could not be created:\n" + traceback.format_exc(), "ERROR")
@@ -401,6 +406,11 @@ def stop(show_blender=True):
     global _win, _hub
     if show_blender:
         set_blender_visible(True)
+    try:
+        from . import errorwin
+        errorwin.uninstall()
+    except Exception:
+        pass
     if _win is not None:
         try:
             _win.shutdown()
