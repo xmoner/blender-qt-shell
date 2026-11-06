@@ -9,6 +9,8 @@ restore() puts them back (right click / Esc). Several objects can be in Edit Mod
   head or tail moves alone; connected children follow their parent's tail.
 - Lattice: the selected points (co_deform).
 """
+import math
+
 import bpy
 from mathutils import Matrix, Vector
 
@@ -249,4 +251,182 @@ def extrude():
     if m and mode == "EDIT_MESH":
         m["axis"] = "Z"                          # along the normal, like Blender's extrude
         vp._set_modal_orient("NORMAL")
+    return True
+
+
+# ---------------------------------------------------------------- selection (click / box / circle / lasso)
+PICK_PX = 10          # how close (widget pixels) a click must be to a point / bone line
+
+
+def _elements(vp, ctx=None, mats=None):
+    """Selectable elements with their screen geometry: [(kind, ob, element, part, points)] where points are
+    widget-space QPointFs (one for a point, two for a bone body)."""
+    ctx = ctx or bpy.context
+    mode = ctx.mode
+    mats = mats or vp.matrices(vp.width(), vp.height())
+    out = []
+
+    def P(ob, co):
+        return vp.project(ob.matrix_world @ Vector(co[:3]), mats)
+    if mode in ("EDIT_CURVE", "EDIT_SURFACE"):
+        show_handles = True
+        try:
+            sp3d = vp.space()[0]
+            show_handles = getattr(sp3d.overlay, "display_handle", "SELECTED") != "NONE"
+        except Exception:
+            pass
+        for ob in _objects(ctx, {"CURVE", "SURFACE"}):
+            for sp in ob.data.splines:
+                if sp.type == "BEZIER":
+                    for bp in sp.bezier_points:
+                        if bp.hide:
+                            continue
+                        out.append(("CURVE", ob, bp, "co", [P(ob, bp.co)]))
+                        if show_handles:
+                            out.append(("CURVE", ob, bp, "handle_left", [P(ob, bp.handle_left)]))
+                            out.append(("CURVE", ob, bp, "handle_right", [P(ob, bp.handle_right)]))
+                else:
+                    for p in sp.points:
+                        if not p.hide:
+                            out.append(("POINT", ob, p, "co", [P(ob, p.co)]))
+    elif mode == "EDIT_ARMATURE":
+        for ob in _objects(ctx, {"ARMATURE"}):
+            for eb in ob.data.edit_bones:
+                if not _bone_visible(eb):
+                    continue
+                h, t = P(ob, eb.head), P(ob, eb.tail)
+                out.append(("BONE", ob, eb, "head", [h]))
+                out.append(("BONE", ob, eb, "tail", [t]))
+                out.append(("BONE", ob, eb, "body", [h, t]))
+    elif mode == "EDIT_LATTICE":
+        for ob in _objects(ctx, {"LATTICE"}):
+            for p in ob.data.points:
+                out.append(("POINT", ob, p, "co_deform", [P(ob, p.co_deform)]))
+    return [e for e in out if all(q is not None for q in e[4])]
+
+
+def _dist(e, x, y):
+    pts = e[4]
+    if len(pts) == 1:
+        return math.hypot(pts[0].x() - x, pts[0].y() - y)
+    a, b = pts
+    ax, ay, bx, by = a.x(), a.y(), b.x(), b.y()
+    dx, dy = bx - ax, by - ay
+    L = dx * dx + dy * dy
+    t = 0.0 if L < 1e-9 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L))
+    return math.hypot(ax + t * dx - x, ay + t * dy - y)
+
+
+def _is_selected(e):
+    kind, ob, el, part, _p = e
+    if kind == "CURVE":
+        return {"co": el.select_control_point, "handle_left": el.select_left_handle,
+                "handle_right": el.select_right_handle}[part]
+    if kind == "BONE":
+        return {"head": el.select_head, "tail": el.select_tail, "body": el.select}[part]
+    return el.select
+
+
+def _set_selected(e, state):
+    kind, ob, el, part, _p = e
+    if kind == "CURVE":
+        if part == "co":                       # a control point takes its handles along (like Blender)
+            el.select_control_point = el.select_left_handle = el.select_right_handle = state
+        elif part == "handle_left":
+            el.select_left_handle = state
+        else:
+            el.select_right_handle = state
+    elif kind == "BONE":
+        if part == "body":
+            el.select = el.select_head = el.select_tail = state
+            if state:
+                ob.data.edit_bones.active = el
+        else:
+            setattr(el, "select_" + part, state)
+            if state:
+                ob.data.edit_bones.active = el
+            el.select = el.select_head and el.select_tail
+        if part in ("head", "body") and el.use_connect and el.parent is not None:
+            el.parent.select_tail = el.select_head          # a connected head is the parent's tail
+    else:
+        el.select = state
+
+
+def _deselect_all(ctx):
+    mode = ctx.mode
+    if mode in ("EDIT_CURVE", "EDIT_SURFACE"):
+        for ob in _objects(ctx, {"CURVE", "SURFACE"}):
+            for sp in ob.data.splines:
+                for bp in sp.bezier_points:
+                    bp.select_control_point = bp.select_left_handle = bp.select_right_handle = False
+                for p in sp.points:
+                    p.select = False
+    elif mode == "EDIT_ARMATURE":
+        for ob in _objects(ctx, {"ARMATURE"}):
+            for eb in ob.data.edit_bones:
+                eb.select = eb.select_head = eb.select_tail = False
+    elif mode == "EDIT_LATTICE":
+        for ob in _objects(ctx, {"LATTICE"}):
+            for p in ob.data.points:
+                p.select = False
+
+
+def _touch(ctx):
+    for ob in _objects(ctx, {"CURVE", "SURFACE", "ARMATURE", "LATTICE"}):
+        try:
+            ob.data.update_tag()
+        except Exception:
+            pass
+
+
+def element_at(vp, x, y):
+    """The element under (x, y) or None – points win over bone bodies, the nearest wins."""
+    best = None
+    for e in _elements(vp):
+        d = _dist(e, x, y)
+        if d > PICK_PX * theme_scale():
+            continue
+        rank = (1 if e[3] == "body" else 0, d)
+        if best is None or rank < best[0]:
+            best = (rank, e)
+    return best[1] if best else None
+
+
+def theme_scale():
+    try:
+        from . import theme
+        return max(0.5, theme.ui_scale)
+    except Exception:
+        return 1.0
+
+
+def pick(vp, x, y, extend):
+    """Click selection; extend (Shift) toggles. Returns True when the selection changed."""
+    ctx = bpy.context
+    e = element_at(vp, x, y)
+    if e is None and extend:
+        return False
+    if not extend:
+        _deselect_all(ctx)
+    if e is not None:
+        _set_selected(e, not (extend and _is_selected(e)))
+    _touch(ctx)
+    return True
+
+
+def box(vp, shape, mode):
+    """Box / circle / lasso: points inside (bones: their heads / tails; a bone is selected when both ends are).
+    mode SET / ADD / SUB."""
+    from . import selshape
+    ctx = bpy.context
+    if mode == "SET":
+        _deselect_all(ctx)
+    state = mode != "SUB"
+    for e in _elements(vp):
+        if e[3] == "body":
+            continue
+        p = e[4][0]
+        if selshape.contains(shape, p.x(), p.y()):
+            _set_selected(e, state)
+    _touch(ctx)
     return True

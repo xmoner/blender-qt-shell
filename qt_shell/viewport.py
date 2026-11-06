@@ -92,6 +92,18 @@ def _clip_segment_view(a, b, near):
     return a, b
 
 
+
+# the operator of a generic 3D view key per mode (Object / Edit Mode of each data type)
+_MODE_OPS = {
+    "select_all": {"OBJECT": "object.select_all", "EDIT_MESH": "mesh.select_all", "EDIT_CURVE": "curve.select_all",
+                   "EDIT_SURFACE": "curve.select_all", "EDIT_ARMATURE": "armature.select_all",
+                   "EDIT_LATTICE": "lattice.select_all", "POSE": "pose.select_all"},
+    "delete": {"OBJECT": "object.delete", "EDIT_MESH": "mesh.delete", "EDIT_CURVE": ("curve.delete", {"type": "VERT"}),
+               "EDIT_SURFACE": ("curve.delete", {"type": "VERT"}), "EDIT_ARMATURE": "armature.delete"},
+    "duplicate": {"OBJECT": "object.duplicate", "EDIT_MESH": "mesh.duplicate", "EDIT_CURVE": "curve.duplicate",
+                  "EDIT_SURFACE": "curve.duplicate", "EDIT_ARMATURE": "armature.duplicate"},
+}
+
 class Viewport(QtWidgets.QWidget):
     status = QtCore.Signal(str)
     selection_edited = QtCore.Signal()
@@ -1244,8 +1256,16 @@ class Viewport(QtWidgets.QWidget):
         if ctx.mode == "POSE":
             self._pose_select_click(x, y, extend)
             return
+        if editother.supported(ctx.mode):            # curve / armature / lattice points and bones
+            if editother.pick(self, x, y, extend):
+                bridge.undo_push("Select")
+                gizmo.invalidate(self)
+                self.request_redraw()
+                self.selection_edited.emit()
+                self.update()
+            return
         if ctx.mode != "OBJECT":
-            self.status.emit("Click selection works in Object, Pose and Edit (mesh) mode.")
+            self.status.emit("Click selection works in Object, Pose and Edit Mode.")
             return
         ob = self.pick(x, y)
         vl = ctx.view_layer
@@ -1279,6 +1299,15 @@ class Viewport(QtWidgets.QWidget):
             return
         if ctx.mode == "POSE":
             self._pose_select_box(rect, mode, label, undo)
+            return
+        if editother.supported(ctx.mode):
+            if editother.box(self, rect, mode):
+                if undo:
+                    bridge.undo_push(label)
+                gizmo.invalidate(self)
+                self.request_redraw()
+                self.selection_edited.emit()
+                self.update()
             return
         if ctx.mode != "OBJECT":
             return
@@ -1352,6 +1381,14 @@ class Viewport(QtWidgets.QWidget):
                 return False
             if not el.select:
                 editmesh.pick(self, x, y, False)
+                self.selection_edited.emit()
+            gizmo.invalidate(self)
+        elif editother.supported(ctx.mode):
+            e = editother.element_at(self, x, y)
+            if e is None:
+                return False
+            if not editother._is_selected(e):
+                editother.pick(self, x, y, False)
                 self.selection_edited.emit()
             gizmo.invalidate(self)
         else:
@@ -2085,20 +2122,22 @@ class Viewport(QtWidgets.QWidget):
         elif H("view3d.scale"):
             self.start_modal("S")
         elif H("view3d.duplicate"):
-            if bridge.run_op("object.duplicate") == {"FINISHED"}:
+            if bridge.run_op(_MODE_OPS["duplicate"].get(mode, "object.duplicate")) == {"FINISHED"}:
                 self.start_modal("G")
         elif H("view3d.delete"):
-            bridge.run_op("object.delete" if mode == "OBJECT" else "mesh.delete")
+            op = _MODE_OPS["delete"].get(mode, "mesh.delete")
+            bridge.run_op(op[0], op[1]) if isinstance(op, tuple) else bridge.run_op(op)
         elif H("view3d.add_menu"):
             self._add_menu()
         elif H("view3d.deselect_all"):
-            bridge.run_op("object.select_all" if mode == "OBJECT" else "mesh.select_all",
-                          {"action": "DESELECT"})
+            bridge.run_op(_MODE_OPS["select_all"].get(mode, "mesh.select_all"), {"action": "DESELECT"})
+            gizmo.invalidate(self)
         elif H("view3d.select_all"):
-            bridge.run_op("object.select_all" if mode == "OBJECT" else "mesh.select_all",
-                          {"action": "SELECT"})
+            bridge.run_op(_MODE_OPS["select_all"].get(mode, "mesh.select_all"), {"action": "SELECT"})
+            gizmo.invalidate(self)
         elif H("view3d.select_invert"):
-            bridge.run_op("object.select_all", {"action": "INVERT"})
+            bridge.run_op(_MODE_OPS["select_all"].get(mode, "object.select_all"), {"action": "INVERT"})
+            gizmo.invalidate(self)
         elif H("view3d.reveal"):
             bridge.run_op("object.hide_view_clear")
         elif H("view3d.hide"):
