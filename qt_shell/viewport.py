@@ -14,7 +14,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import annotate, bluepencil, bridge, editmesh, editother, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
+from . import annotate, blkeys, bluepencil, bridge, editmesh, editother, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -98,11 +98,21 @@ _MODE_OPS = {
     "select_all": {"OBJECT": "object.select_all", "EDIT_MESH": "mesh.select_all", "EDIT_CURVE": "curve.select_all",
                    "EDIT_SURFACE": "curve.select_all", "EDIT_ARMATURE": "armature.select_all",
                    "EDIT_LATTICE": "lattice.select_all", "POSE": "pose.select_all"},
-    "delete": {"OBJECT": "object.delete", "EDIT_MESH": "mesh.delete", "EDIT_CURVE": ("curve.delete", {"type": "VERT"}),
-               "EDIT_SURFACE": ("curve.delete", {"type": "VERT"}), "EDIT_ARMATURE": "armature.delete"},
+    # a "menu:" entry opens that Blender menu (curve X: Vertices / Segments like in Blender); None: nothing
+    "delete": {"OBJECT": "object.delete", "EDIT_MESH": "mesh.delete",
+               "EDIT_CURVE": "menu:VIEW3D_MT_edit_curve_delete", "EDIT_SURFACE": "menu:VIEW3D_MT_edit_curve_delete",
+               "EDIT_ARMATURE": "armature.delete", "EDIT_LATTICE": None},
     "duplicate": {"OBJECT": "object.duplicate", "EDIT_MESH": "mesh.duplicate", "EDIT_CURVE": "curve.duplicate",
-                  "EDIT_SURFACE": "curve.duplicate", "EDIT_ARMATURE": "armature.duplicate"},
+                  "EDIT_SURFACE": "curve.duplicate", "EDIT_ARMATURE": "armature.duplicate", "EDIT_LATTICE": None},
+    "hide": {"OBJECT": "object.hide_view_set", "EDIT_CURVE": "curve.hide", "EDIT_SURFACE": "curve.hide",
+             "EDIT_ARMATURE": "armature.hide", "EDIT_LATTICE": None},
+    "reveal": {"OBJECT": "object.hide_view_clear", "EDIT_CURVE": "curve.reveal", "EDIT_SURFACE": "curve.reveal",
+               "EDIT_ARMATURE": "armature.reveal", "EDIT_LATTICE": None},
+    "add_menu": {"OBJECT": "VIEW3D_MT_add", "EDIT_MESH": "VIEW3D_MT_mesh_add", "EDIT_CURVE": "VIEW3D_MT_curve_add",
+                 "EDIT_SURFACE": "VIEW3D_MT_surface_add", "EDIT_ARMATURE": "VIEW3D_MT_armature_add",
+                 "EDIT_LATTICE": None},
 }
+
 
 class Viewport(QtWidgets.QWidget):
     status = QtCore.Signal(str)
@@ -2064,6 +2074,9 @@ class Viewport(QtWidgets.QWidget):
             return
         if mode == "EDIT_MESH" and self._mesh_key(H, keypad):
             return
+        if editother.supported(mode) and H("mesh.extrude"):     # E (Maya: Ctrl+E) in curve / armature too
+            editother.extrude()
+            return
         step = 15 * DEG
         views = (
             ("view3d.orbit_down", lambda: self.orbit_step(0, step)),
@@ -2122,11 +2135,11 @@ class Viewport(QtWidgets.QWidget):
         elif H("view3d.scale"):
             self.start_modal("S")
         elif H("view3d.duplicate"):
-            if bridge.run_op(_MODE_OPS["duplicate"].get(mode, "object.duplicate")) == {"FINISHED"}:
+            op = _MODE_OPS["duplicate"].get(mode, "object.duplicate")
+            if op and bridge.run_op(op) == {"FINISHED"}:
                 self.start_modal("G")
         elif H("view3d.delete"):
-            op = _MODE_OPS["delete"].get(mode, "mesh.delete")
-            bridge.run_op(op[0], op[1]) if isinstance(op, tuple) else bridge.run_op(op)
+            self._mode_op("delete", mode, "mesh.delete")
         elif H("view3d.add_menu"):
             self._add_menu()
         elif H("view3d.deselect_all"):
@@ -2139,11 +2152,11 @@ class Viewport(QtWidgets.QWidget):
             bridge.run_op(_MODE_OPS["select_all"].get(mode, "object.select_all"), {"action": "INVERT"})
             gizmo.invalidate(self)
         elif H("view3d.reveal"):
-            bridge.run_op("object.hide_view_clear")
+            self._mode_op("reveal", mode, "object.hide_view_clear")
         elif H("view3d.hide"):
-            bridge.run_op("object.hide_view_set", {"unselected": False})
+            self._mode_op("hide", mode, "object.hide_view_set", {"unselected": False})
         elif H("view3d.hide_unselected"):
-            bridge.run_op("object.hide_view_set", {"unselected": True})
+            self._mode_op("hide", mode, "object.hide_view_set", {"unselected": True})
         elif H("view3d.edit_toggle"):
             bridge.run_op("object.editmode_toggle")
         elif H("view3d.mode_menu"):
@@ -2158,10 +2171,27 @@ class Viewport(QtWidgets.QWidget):
                 mw.switch_mode(next(_MODE_KEYS[k] for k in _MODE_KEYS if H(f"view3d.mode_{k}")))
         elif H("view3d.shading_pie"):
             self._shading_pie()
+        elif blkeys.handle(self, ev):         # Blender's keys of the armature / curve / lattice Edit Mode
+            return
         else:
             super().keyPressEvent(ev)
             return
         self.update()
+
+    def _mode_op(self, what, mode, default, props=None):
+        """Runs the operator of _MODE_OPS[what] for this mode ("menu:NAME" opens that menu, None: nothing)."""
+        op = _MODE_OPS[what].get(mode, default)
+        if not op:
+            return
+        if op.startswith("menu:"):
+            from .qt_ui import LazyMenu
+            LazyMenu(op[5:], self).exec(QtGui.QCursor.pos())
+        else:
+            bridge.run_op(op, props)
+        if editother.supported(mode):
+            gizmo.invalidate(self)
+            self.request_redraw()
+            self.selection_edited.emit()
 
     def _mesh_key(self, H, keypad):
         """Edit Mesh shortcuts. True when the key was used."""
@@ -2257,8 +2287,9 @@ class Viewport(QtWidgets.QWidget):
 
     def _add_menu(self):
         from .qt_ui import LazyMenu
-        mid = "VIEW3D_MT_add" if bpy.context.mode == "OBJECT" else "VIEW3D_MT_mesh_add"
-        LazyMenu(mid, self).exec(QtGui.QCursor.pos())
+        mid = _MODE_OPS["add_menu"].get(bpy.context.mode, "VIEW3D_MT_mesh_add")
+        if mid:
+            LazyMenu(mid, self).exec(QtGui.QCursor.pos())
 
     def _shading_pie(self):
         m = QtWidgets.QMenu(self)

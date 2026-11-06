@@ -430,3 +430,52 @@ def box(vp, shape, mode):
             _set_selected(e, state)
     _touch(ctx)
     return True
+
+
+def _linked_bones(eb):
+    """The connected island of a bone: parents and children joined by 'Connected'."""
+    seen, todo = set(), [eb]
+    out = []
+    while todo:
+        b = todo.pop()
+        if b.name in seen:
+            continue
+        seen.add(b.name)
+        out.append(b)
+        if b.use_connect and b.parent is not None:
+            todo.append(b.parent)
+        todo += [c for c in b.children if c.use_connect]
+    return out
+
+
+def select_linked_at(vp, x, y, deselect=False):
+    """L / Shift+L: (de)selects everything linked to the element under the mouse – the connected bone
+    chain, the whole spline. True when there was something under the mouse."""
+    ctx = bpy.context
+    e = element_at(vp, x, y)
+    if e is None:
+        return False
+    kind, ob, el, _part, _p = e
+    state = not deselect
+    if kind == "BONE":
+        for b in _linked_bones(el):
+            if _bone_visible(b):
+                b.select = b.select_head = b.select_tail = state
+        if state:
+            ob.data.edit_bones.active = el
+    elif ctx.mode in ("EDIT_CURVE", "EDIT_SURFACE"):
+        for sp in ob.data.splines:
+            pts = list(sp.bezier_points) if sp.type == "BEZIER" else list(sp.points)
+            if any(p == el for p in pts):
+                for p in pts:
+                    if p.hide:
+                        continue
+                    if sp.type == "BEZIER":
+                        p.select_control_point = p.select_left_handle = p.select_right_handle = state
+                    else:
+                        p.select = state
+                break
+    else:
+        return False
+    _touch(ctx)
+    return True

@@ -1228,6 +1228,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if idname in ("transform.translate", "transform.rotate", "transform.resize"):
             vp.start_modal({"transform.translate": "G", "transform.rotate": "R", "transform.resize": "S"}[idname])
             return True
+        from . import blkeys                       # Parent ▸ Make (Connected / Keep Offset), Move to Bone
+        if blkeys.wants_menu(idname, props):       # Collection …: Blender's invoke asks first – a Qt menu
+            blkeys.run(vp, idname, props)
+            return True
         from . import valuemodal                   # Shear, Bevel, Adjust Light Power … following the mouse
         if valuemodal.start(vp, idname, props, ctx):
             return True
@@ -1285,7 +1289,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if idname in ("wm.search_menu", "wm.search_operator", "wm.search_single_menu"):
             self.search()
             return True
-        if idname == "wm.call_menu" and props.get("name"):
+        if idname in ("wm.call_menu", "wm.call_menu_pie") and props.get("name"):
             LazyMenu(props["name"], self).exec(QtGui.QCursor.pos())
             return True
         if idname == "wm.call_panel" and props.get("name"):
