@@ -415,19 +415,20 @@ class InterfaceSizeDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Interface Size")
         self._orig = (theme.ui_scale, theme.font_scale)
+        self._ui_s = self._font_s = None
         lay = QtWidgets.QVBoxLayout(self)
         form = QtWidgets.QFormLayout()
-        self.ui = self._slider(50, 300, theme.ui_scale)
-        self.font = self._slider(50, 250, theme.font_scale)
-        form.addRow("Interface scale", self.ui[0])
-        form.addRow("Text size", self.font[0])
+        self._ui_s = self._slider(50, 300, theme.ui_scale)
+        self._font_s = self._slider(50, 250, theme.font_scale)
+        form.addRow("Interface scale", self._ui_s[0])
+        form.addRow("Text size", self._font_s[0])
         lay.addLayout(form)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("Presets:"))
         for v in self.PRESETS:
             b = QtWidgets.QPushButton(f"{int(v * 100)} %")
-            b.clicked.connect(lambda _=False, v=v: (self.ui[2].setValue(int(v * 100)),
-                                                    self.font[2].setValue(100)))
+            b.clicked.connect(lambda _=False, v=v: (self._ui_s[2].setValue(int(v * 100)),
+                                                    self._font_s[2].setValue(100)))
             row.addWidget(b)
         row.addStretch(1)
         lay.addLayout(row)
@@ -441,7 +442,7 @@ class InterfaceSizeDialog(QtWidgets.QDialog):
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         bb.button(QtWidgets.QDialogButtonBox.Reset).clicked.connect(
-            lambda: (self.ui[2].setValue(100), self.font[2].setValue(100)))
+            lambda: (self._ui_s[2].setValue(100), self._font_s[2].setValue(100)))
         lay.addWidget(bb)
         self.setMinimumWidth(theme.px(440))
 
@@ -467,10 +468,11 @@ class InterfaceSizeDialog(QtWidgets.QDialog):
         return w, sl, sp
 
     def values(self):
-        return self.ui[2].value() / 100.0, self.font[2].value() / 100.0
+        return self._ui_s[2].value() / 100.0, self._font_s[2].value() / 100.0
 
     def _preview(self):
-        if hasattr(self, "font"):
+        # QWidget.font() is a method – the sliders get their own names, and the preview waits until both exist
+        if getattr(self, "_font_s", None) is not None:
             shell_app.preview_interface_size(*self.values())
             QtCore.QTimer.singleShot(0, self.adjustSize)
 
