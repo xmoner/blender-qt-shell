@@ -389,6 +389,15 @@ class SculptPanel(QtWidgets.QScrollArea):
             grid.addWidget(b, i // cols, i % cols)
         lay.addLayout(grid)
 
+    def _multires_subdivide(self, name):
+        """Subdivide + keep the viewport level with the sculpt level (Object Mode shows the new level)."""
+        self._run("object.multires_subdivide", {"modifier": name, "mode": "CATMULL_CLARK"})
+        ob = _active_mesh_object()
+        mr = ob.modifiers.get(name) if ob is not None else None
+        if mr is not None and mr.levels < mr.sculpt_levels:
+            mr.levels = mr.sculpt_levels
+        self.sync(force=True)
+
     def _ensure_sculpt(self):
         """Brush / tool buttons used outside Sculpt Mode: the active mesh goes into Sculpt Mode (like
         picking a sculpt tool in Maya). False (with a status message) when there is no mesh to sculpt."""
@@ -594,13 +603,31 @@ class SculptPanel(QtWidgets.QScrollArea):
             sb = QtWidgets.QPushButton("Subdivide", self.widget())
             if blicons.has("MOD_SUBSURF"):
                 sb.setIcon(blicons.icon("MOD_SUBSURF"))
-            sb.clicked.connect(lambda _=False, n=mr.name: self._run("object.multires_subdivide",
-                                                                   {"modifier": n, "mode": "CATMULL_CLARK"}))
+            sb.clicked.connect(lambda _=False, n=mr.name: self._multires_subdivide(n))
             r.addWidget(sb)
             self.topo_sec.addLayout(r)
             r = QtWidgets.QHBoxLayout()
             self._row_into(r, "Sculpt Level", mr, "sculpt_levels")
-        self.topo_sec.addLayout(r)
+            self.topo_sec.addLayout(r)
+            r = None
+        if r is not None:
+            self.topo_sec.addLayout(r)
+        # Blender's offscreen drawing (what the Qt view shows) never draws the sculpt tree, so Multires
+        # levels and Dynamic Topology strokes only appear after leaving Sculpt Mode
+        live_off = []
+        if mr is not None and mr.total_levels > 0:
+            live_off.append("Multires levels")
+        if getattr(ob, "use_dynamic_topology_sculpting", False):
+            live_off.append("Dynamic Topology")
+        if live_off:
+            note = QtWidgets.QLabel(
+                f"⚠ {' and '.join(live_off)}: the Qt 3D view shows the mesh as it was when you entered Sculpt "
+                "Mode – Blender draws this kind of sculpting only in its own viewport. The strokes are applied; "
+                "leave Sculpt Mode (or switch it off and on) to see them. For detail you can see live, raise the "
+                "resolution with Voxel Remesh (smaller Voxel Size) instead.", self.widget())
+            note.setWordWrap(True)
+            note.setProperty("dim", True)
+            self.topo_sec.addWidget(note)
         # display
         sp = None
         try:
