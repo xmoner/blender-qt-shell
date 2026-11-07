@@ -793,6 +793,13 @@ class LazyMenu(QtWidgets.QMenu):
             api.extend_menu(self)    # items added by add-ons through qt_shell.api
         except Exception:
             pass
+        if getattr(self, "auto_icons", False):
+            try:
+                from . import menuicons
+                menuicons.apply(self)
+            except Exception:
+                import traceback
+                print("[QtShell] menu icons:\n" + traceback.format_exc())
 
 
 def fill_recent_menu(menu, limit=20):

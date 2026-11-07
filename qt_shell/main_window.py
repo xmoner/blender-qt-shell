@@ -1290,7 +1290,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.search()
             return True
         if idname in ("wm.call_menu", "wm.call_menu_pie") and props.get("name"):
-            LazyMenu(props["name"], self).exec(QtGui.QCursor.pos())
+            m = LazyMenu(props["name"], self)
+            m.auto_icons = "context_menu" in props["name"]     # right-click menus: an icon for every item
+            m.exec(QtGui.QCursor.pos())
             return True
         if idname == "wm.call_panel" and props.get("name"):
             PopoverMenu(props["name"], self).exec(QtGui.QCursor.pos())

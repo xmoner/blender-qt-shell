@@ -2283,7 +2283,9 @@ class Viewport(QtWidgets.QWidget):
             return None
         if kind == "panel":
             return PopoverMenu(ident, self)
-        return LazyMenu(ident, self)
+        m = LazyMenu(ident, self)
+        m.auto_icons = True             # menuicons: an icon for every item (Blender leaves most without)
+        return m
 
     def _add_menu(self):
         from .qt_ui import LazyMenu
