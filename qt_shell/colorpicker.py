@@ -551,7 +551,7 @@ class ColorPicker(QtWidgets.QDialog):
         else:
             self.dropper.setText("◉")
         self.dropper.setToolTip("Eyedropper – pick a colour anywhere on the screen (click: take it, Esc: cancel)")
-        self.dropper.clicked.connect(self._eyedropper)
+        self.dropper.clicked.connect(lambda _=False: self._eyedropper())
         row.addWidget(self.dropper)
         lay.addLayout(row)
 
@@ -618,11 +618,11 @@ class ColorPicker(QtWidgets.QDialog):
         btns.addStretch(1)
         cancel = QtWidgets.QPushButton("Cancel", self)
         cancel.setToolTip("Put the colour back as it was (Esc)")
-        cancel.clicked.connect(self.cancel)
+        cancel.clicked.connect(lambda _=False: self.cancel())
         ok = QtWidgets.QPushButton("OK", self)
         ok.setDefault(True)
         ok.setToolTip("Keep the colour (Enter)")
-        ok.clicked.connect(self.accept_color)
+        ok.clicked.connect(lambda _=False: self.accept_color())   # clicked(bool) would land in close=
         btns.addWidget(cancel)
         btns.addWidget(ok)
         lay.addLayout(btns)
@@ -646,7 +646,7 @@ class ColorPicker(QtWidgets.QDialog):
             add.setText("+")
             add.setAutoRaise(True)
             add.setToolTip("Add the current colour to the palette")
-            add.clicked.connect(self._add_to_palette)
+            add.clicked.connect(lambda _=False: self._add_to_palette())
             head.addWidget(add)
         v.addLayout(head)
         flow = QtWidgets.QGridLayout()
