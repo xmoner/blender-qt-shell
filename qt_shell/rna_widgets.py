@@ -548,7 +548,7 @@ class StringBinding(Binding):
 
 
 class EnumBinding(Binding):
-    def __init__(self, data, prop_id, rp, expand, on_change):
+    def __init__(self, data, prop_id, rp, expand, on_change, columns=0):
         super().__init__(data, prop_id, on_change)
         self.flag = rp.is_enum_flag
         self.items = enum_items(data, prop_id)
@@ -560,7 +560,8 @@ class EnumBinding(Binding):
         self.expand = expand or self.flag
         if self.expand:
             w = QtWidgets.QWidget()
-            lay = QtWidgets.QHBoxLayout(w)
+            # columns > 0: the buttons in a grid, row by row (e.g. 2 → pairs under each other)
+            lay = QtWidgets.QGridLayout(w) if columns > 0 else QtWidgets.QHBoxLayout(w)
             lay.setContentsMargins(0, 0, 0, 0)
             lay.setSpacing(1)
             self.buttons = {}
@@ -574,7 +575,11 @@ class EnumBinding(Binding):
                 if group is not None:
                     group.addButton(b)
                 b.clicked.connect(lambda _=False, i=ident: self._clicked(i))
-                lay.addWidget(b)
+                if columns > 0:
+                    n = len(self.buttons)
+                    lay.addWidget(b, n // columns, n % columns)
+                else:
+                    lay.addWidget(b)
                 self.buttons[ident] = b
             self._group = group
         else:
@@ -740,9 +745,10 @@ def set_prop_tooltip(widget, rp):
 
 
 def make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, invert=False,
-                 on_change=None, search=None):
-    """Returns (binding, label_text). label_text is None if the widget carries its own label."""
-    b, name = _make_binding(data, prop_id, text, expand, toggle, index, invert, on_change, search)
+                 on_change=None, search=None, columns=0):
+    """Returns (binding, label_text). label_text is None if the widget carries its own label.
+    columns: expanded enums only – buttons in a grid of that many columns."""
+    b, name = _make_binding(data, prop_id, text, expand, toggle, index, invert, on_change, search, columns)
     if b is not None:
         try:
             set_prop_tooltip(getattr(b, "widget", None), rna_prop(data, prop_id))
@@ -757,7 +763,7 @@ def make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, in
 
 
 def _make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, invert=False,
-                  on_change=None, search=None):
+                  on_change=None, search=None, columns=0):
     rp = rna_prop(data, prop_id)
     if rp is None:
         return None, None
@@ -783,7 +789,7 @@ def _make_binding(data, prop_id, text=None, expand=False, toggle=-1, index=-1, i
     if t == "STRING":
         return StringBinding(data, prop_id, rp, on_change), name
     if t == "ENUM":
-        return EnumBinding(data, prop_id, rp, expand, on_change), name
+        return EnumBinding(data, prop_id, rp, expand, on_change, columns), name
     if t == "POINTER":
         if rp.fixed_type is not None and is_id_type(rp.fixed_type) and not rp.is_readonly:
             return IDBinding(data, prop_id, rp, on_change), name

@@ -423,7 +423,11 @@ class SculptPanel(QtWidgets.QScrollArea):
         row = QtWidgets.QHBoxLayout()
         lab = QtWidgets.QLabel(label if label is not None else (name or prop), self.widget())
         lab.setMinimumWidth(theme.px(78))
-        row.addWidget(lab)
+        if kw.get("columns"):          # several rows of buttons: label at the first row
+            row.addWidget(lab, 0, QtCore.Qt.AlignTop)
+            lab.setMinimumHeight(b.widget.sizeHint().height() // max(1, b.widget.layout().rowCount()))
+        else:
+            row.addWidget(lab)
         row.addWidget(b.widget, 1)
         lay.addLayout(row)
         return b
@@ -472,7 +476,7 @@ class SculptPanel(QtWidgets.QScrollArea):
             if prop in br.bl_rna.properties:
                 self._row(lay, label, br, prop)
         if "curve_distance_falloff_preset" in br.bl_rna.properties:
-            self._row(lay, "Falloff", br, "curve_distance_falloff_preset", expand=True)
+            self._row(lay, "Falloff", br, "curve_distance_falloff_preset", expand=True, columns=2)
         r = QtWidgets.QHBoxLayout()
         for text, prop, icon in (("Front Faces Only", "use_frontface", "FACESEL"),
                                  ("Accumulate", "use_accumulate", "ADD")):
