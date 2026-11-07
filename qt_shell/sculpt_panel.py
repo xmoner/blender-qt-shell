@@ -389,9 +389,26 @@ class SculptPanel(QtWidgets.QScrollArea):
             grid.addWidget(b, i // cols, i % cols)
         lay.addLayout(grid)
 
-    def _run(self, op, props):
+    def _ensure_sculpt(self):
+        """Brush / tool buttons used outside Sculpt Mode: the active mesh goes into Sculpt Mode (like
+        picking a sculpt tool in Maya). False (with a status message) when there is no mesh to sculpt."""
+        if sculpt.active():
+            return True
+        ob = _active_mesh_object()
+        if ob is None:
+            bridge.log("Select a mesh object to sculpt – the brushes work in Sculpt Mode.", "INFO")
+            return False
+        if bpy.context.mode != "OBJECT":
+            bridge.run_op("object.mode_set", {"mode": "OBJECT"})
+        bridge.run_op("object.mode_set", {"mode": "SCULPT"})
         if not sculpt.active():
-            bridge.log("Switch to Sculpt Mode first.", "WARNING")
+            bridge.log(f"{ob.name} could not enter Sculpt Mode.", "INFO")
+            return False
+        return True
+
+    def _run(self, op, props):
+        if not self._ensure_sculpt():
+            self.sync(force=True)
             return
         bridge.run_op(op, dict(props))
         self._redraw()
@@ -606,8 +623,7 @@ class SculptPanel(QtWidgets.QScrollArea):
 
     # ---- sync
     def pick_brush(self, name):
-        if not sculpt.active():
-            bridge.log("Switch to Sculpt Mode first – the brushes are for Sculpt Mode.", "WARNING")
+        if not self._ensure_sculpt():
             self.sync(force=True)
             return
         sculpt.activate_brush(name)
