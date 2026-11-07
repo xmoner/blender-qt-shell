@@ -424,6 +424,19 @@ class Viewport(QtWidgets.QWidget):
             transparent = (space.shading.type in ("SOLID", "WIREFRAME")
                            and getattr(space.shading, "background_type", "THEME") == "THEME")
             fast = self._fast_samples(space)
+            mirror = None
+            if ctx.mode == "SCULPT":
+                from . import sculptmirror      # Multires / Dyntopo: Blender's own drawing (offscreen can't)
+                mirror = sculptmirror.frame(self, w, h, vm, space)
+            if mirror is not None:
+                mirror.setDevicePixelRatio(dpr)
+                self._image = mirror
+                self._img_transparent = False
+                self._lowres = nav < 1.0
+                self._degraded = self._lowres
+                self._geo_frame = False
+                self._failed = None
+                return
             with eevee_samples(1 if fast else None):
                 self._draw(ctx.scene, ctx.view_layer, space, region, vm, pm, transparent, off)
             try:

@@ -20,7 +20,7 @@ import time
 
 import bpy
 from bpy_extras import view3d_utils
-from PySide6 import QtCore, QtGui
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, keymap, theme
 
@@ -460,8 +460,15 @@ class ViewSculpt:
         if self.modal is not None:
             self.modal.paint(p)
             return
-        if not active() or self.mouse is None or not self.vp.underMouse() or getattr(self.vp, "_nav", None):
+        # the cursor position, not underMouse(): after a popup (the right-click menu's Radius / Strength)
+        # Qt keeps underMouse() False until the mouse leaves and re-enters – the circle vanished
+        if not active() or self.mouse is None or getattr(self.vp, "_nav", None):
             return
+        cur = self.vp.mapFromGlobal(QtGui.QCursor.pos())
+        if not self.vp.rect().contains(cur):
+            return
+        if QtWidgets.QApplication.activePopupWidget() is None:
+            self.mouse = QtCore.QPointF(cur)
         s = sculpt_settings()
         if s is not None and not getattr(s, "show_brush", True):
             return

@@ -1631,6 +1631,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _close_render_helper(self, win):
         self._render_win = None
+        return self.close_blender_window(win)
+
+    def close_blender_window(self, win):
+        """Closes a helper Blender window (render helper, sculpt view) and makes drawing safe again."""
         if win is None:
             return False
         try:
@@ -2068,8 +2072,10 @@ class MainWindow(QtWidgets.QMainWindow):
             b.setChecked(bool(on))
 
     def _on_mode(self, mode):
-        from . import sculpt
+        from . import sculpt, sculptmirror
         sculpt.forget()                      # undo groups of strokes belong to one Sculpt Mode session
+        if mode != "SCULPT":
+            sculptmirror.release()           # Blender's own sculpt drawing (Multires / Dyntopo) not needed
         if mode == "SCULPT" and not getattr(self, "_sculpt_panel_shown", False) and "sculpt" in self.docks:
             self._sculpt_panel_shown = True  # the Sculpt panel opens the first time Sculpt Mode is entered
             self.docks["sculpt"].show()
