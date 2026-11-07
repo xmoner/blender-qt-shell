@@ -620,6 +620,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dock("bluepencil", "Blue Pencil", self.bluepencil, QtCore.Qt.RightDockWidgetArea)
         self.docks["bluepencil"].hide()
         self._bp_panel_shown = False
+        from .sculpt_panel import SculptPanel
+        self.sculpt_panel = SculptPanel(hub)
+        self._dock("sculpt", "Sculpt", self.sculpt_panel, QtCore.Qt.RightDockWidgetArea)
+        self.docks["sculpt"].hide()          # opens the first time Sculpt Mode is entered (_on_mode)
         from . import gizmo as _gz
         _gz.tool_state(hub).changed.connect(self._bp_tool_changed)
 
@@ -1173,8 +1177,8 @@ class MainWindow(QtWidgets.QMainWindow):
         sc("window.open_recent", lambda: LazyMenu("TOPBAR_MT_file_open_recent", self).exec(QtGui.QCursor.pos()))
         sc("window.save", lambda: run_op("wm.save_mainfile"))
         sc("window.save_as", lambda: run_op("wm.save_as_mainfile"))
-        sc("window.undo", lambda: run_op("ed.undo"))
-        sc("window.redo", lambda: run_op("ed.redo"))
+        sc("window.undo", self.undo)
+        sc("window.redo", self.redo)
         sc("window.search", self.search)
         sc("window.find_all", lambda: self.find_all())
         sc("window.render", lambda: self.render_image(False))
@@ -1901,6 +1905,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(folder, 8000)
         return n
 
+    def undo(self):
+        """Ctrl+Z – a sculpt stroke (sent to Blender in pieces) goes back as a whole."""
+        from . import sculpt
+        for _i in range(max(1, sculpt.undo_steps())):
+            run_op("ed.undo")
+
+    def redo(self):
+        from . import sculpt
+        for _i in range(max(1, sculpt.redo_steps())):
+            run_op("ed.redo")
+
     def _bp_tool_changed(self):
         """The first time the Blue Pencil tool is picked in a session its panel opens."""
         from . import bluepencil
@@ -2051,6 +2066,12 @@ class MainWindow(QtWidgets.QMainWindow):
             b.setChecked(bool(on))
 
     def _on_mode(self, mode):
+        from . import sculpt
+        sculpt.forget()                      # undo groups of strokes belong to one Sculpt Mode session
+        if mode == "SCULPT" and not getattr(self, "_sculpt_panel_shown", False) and "sculpt" in self.docks:
+            self._sculpt_panel_shown = True  # the Sculpt panel opens the first time Sculpt Mode is entered
+            self.docks["sculpt"].show()
+            self.docks["sculpt"].raise_()
         ob = bpy.context.view_layer.objects.active
         cur = ob.mode if ob else "OBJECT"
         self.mode_combo.blockSignals(True)

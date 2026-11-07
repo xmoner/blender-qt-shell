@@ -107,6 +107,16 @@ _a("bp.reset", BP, "Reset Transform", "Backspace")
 _a("bp.size_down", BP, "Smaller Size", "[")
 _a("bp.size_up", BP, "Bigger Size", "]")
 _a("bp.eraser", BP, "Eraser (again: back to the drawing tool)", "E")
+# Sculpt Mode (sculpt.py) – while stroking: Ctrl subtracts, Shift smooths
+SC = "3D View · Sculpt"
+_a("sculpt.radius", SC, "Brush Radius (drag, click to confirm)", "F")
+_a("sculpt.strength", SC, "Brush Strength (drag, click to confirm)", "Shift+F")
+_a("sculpt.radius_down", SC, "Smaller Brush", "[")
+_a("sculpt.radius_up", SC, "Bigger Brush", "]")
+_a("sculpt.mask_invert", SC, "Invert Mask", "Ctrl+I")
+_a("sculpt.mask_clear", SC, "Clear Mask", "Alt+M")
+_a("sculpt.remesh", SC, "Voxel Remesh", "Ctrl+R")
+_a("sculpt.dyntopo", SC, "Dynamic Topology On / Off", "Ctrl+D")
 _a("view3d.key_location", V, "Key Location")
 _a("view3d.key_rotation", V, "Key Rotation")
 _a("view3d.key_scale", V, "Key Scale")
@@ -161,8 +171,9 @@ _a("pose.reveal", VP, "Reveal Bones", "Alt+H")
 # ---------------------------------------------------------------- Maya set (3D View areas)
 # The 3D View areas have two sets of keys – Blender (above) and Maya – switched together with the mouse
 # navigation (Qt Preferences → Interface). Only the differences from the Blender set are listed.
-PROFILED = {V, VM, VP}
+PROFILED = {V, VM, VP, SC}
 MAYA_DEFAULTS = {
+    "sculpt.radius": ("B",), "sculpt.strength": ("M",),
     "view3d.move": (), "view3d.rotate": (), "view3d.scale": (), "view3d.repeat_last": ("G",), "view3d.repeat_last_command": ("Shift+G",),
     "view3d.tool_select": ("Q",), "view3d.tool_move": ("W",), "view3d.tool_rotate": ("E",),
     "view3d.tool_scale": ("R",),
@@ -531,7 +542,7 @@ def hit(aid, ev, names=None):
     return bool(names) and any(k in names for k in keys(aid))
 
 
-_MODE_CTX = {"EDIT_MESH": "3D View · Edit Mesh", "POSE": "3D View · Pose"}
+_MODE_CTX = {"EDIT_MESH": "3D View · Edit Mesh", "POSE": "3D View · Pose", "SCULPT": "3D View · Sculpt"}
 
 
 def view_owns(ev, mode):

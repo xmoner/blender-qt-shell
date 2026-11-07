@@ -23,6 +23,7 @@ KEYMAPS = {
     "EDIT_CURVE": ("Curve",),
     "EDIT_SURFACE": ("Curve",),
     "EDIT_LATTICE": ("Lattice",),
+    "SCULPT": ("Sculpt",),
 }
 
 # operators whose invoke() is a menu of this enum property (WM_menu_invoke / own popup)
@@ -251,9 +252,36 @@ def set_tool(vp, name):
     return True
 
 
+# modal operators of Sculpt Mode that would run in Blender's hidden 3D view (mouse gestures, interactive
+# filters / expand / voxel size) – Qt Shell says so instead of starting them
+SCULPT_MODAL = ("gesture", "sculpt.expand", "voxel_size_edit", "brush_stroke", "sculpt.mesh_filter",
+                "sculpt.cloth_filter", "sculpt.color_filter", "sculpt.trim_", "sculpt.project_line",
+                "sculpt.face_set_edit", "sculpt.face_set_change_visibility", "paint.mask_box",
+                "paint.mask_lasso", "paint.mask_line", "paint.hide_show_lasso", "sample_detail_size")
+
+
 def run(vp, idname, props):
+    if idname == "wm.radial_control" and getattr(vp, "sculpt", None) is not None:
+        path = str(props.get("data_path_primary", "") or props.get("data_path", ""))
+        from . import sculpt as _sc
+        kind = "STRENGTH" if "strength" in path else ("RADIUS" if "size" in path else None)
+        if kind is not None and _sc.active():
+            vp.sculpt.modal = _sc.SizeModal(vp, kind)
+            vp.update()
+        else:
+            vp.status.emit("This radial control isn't in Qt Shell – use the Sculpt panel.")
+        return
     if idname == "wm.tool_set_by_id":
-        set_tool(vp, props.get("name", ""))
+        name = str(props.get("name", ""))
+        if name.startswith("builtin_brush.") and bpy.context.mode == "SCULPT":
+            from . import sculpt as _sc
+            _sc.activate_brush(name.split(".", 1)[1].replace("_", " ").title())
+            return
+        set_tool(vp, name)
+        return
+    if bpy.context.mode == "SCULPT" and any(m in idname for m in SCULPT_MODAL):
+        vp.status.emit(f"{bridge.op_label(idname)}: interactive in Blender's own view – use the Sculpt panel "
+                       "(Mask / Face Sets / Filters).")
         return
     if idname in PICK_OPS:
         from . import editother

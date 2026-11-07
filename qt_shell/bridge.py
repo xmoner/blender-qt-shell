@@ -184,9 +184,20 @@ def op_poll(idname, ctx=None):
         return True
 
 
+op_listeners = []          # fn(idname) before every run_op (sculpt.py: strokes stop being undo groups)
+# > 0 while run_op runs an operator. Windows pumps the thread's messages during some operators (sculpt
+# undo …), so Qt timers can fire in the middle of one – code touching Blender data from a timer checks it.
+op_depth = 0
+
+
 def run_op(idname, props=None, ctx=None, invoke=False):
     """Runs a Blender operator from Qt. Returns the result set (or {'CANCELLED'})."""
     props = dict(props or {})
+    for fn in op_listeners:
+        try:
+            fn(idname)
+        except Exception:
+            pass
     if "_OT_" in idname:   # C-style id from some menus ("WM_OT_search_single_menu" → "wm.search_single_menu")
         mod, name = idname.split("_OT_", 1)
         idname = f"{mod.lower()}.{name}"
@@ -217,14 +228,35 @@ def run_op(idname, props=None, ctx=None, invoke=False):
 
     def _exec():
         mode = "INVOKE_DEFAULT" if invoke else "EXEC_DEFAULT"
+        # Sculpt Mode: the operators push their own (sculpt) undo steps – only when called with undo=True;
+        # a plain Python call suppresses them and our memfile-style push would store nothing for the mesh.
+        # Entering Sculpt Mode pushes its own "enter" step the same way – without it, undoing the first stroke
+        # would land on an older memfile step (another mesh state) and Qt widgets could read freed data.
+        own_undo = not idname.startswith("ed.") and (
+            _mode_now() in OWN_UNDO_MODES or idname == "sculpt.sculptmode_toggle"
+            or (idname == "object.mode_set" and props.get("mode") in OWN_UNDO_MODES))
         try:
-            with blender_context(**(ctx or {})):
-                res = op(mode, **props)
+            global op_depth
+            op_depth += 1
+            try:
+                with blender_context(**(ctx or {})):
+                    if own_undo:
+                        res = op(mode, True, **props)
+                    else:
+                        res = op(mode, **props)
+            finally:
+                op_depth -= 1
         except Exception as ex:
             log(f"{idname}: {ex}".strip(), "ERROR")
             res = {"CANCELLED"}
+        if "FINISHED" in res and _mode_now() == "SCULPT":
+            if own_undo:
+                # the offscreen 3D view keeps the old sculpt batches until the object is tagged
+                _sculpt_refresh(False)
+            elif idname in ("ed.undo", "ed.redo", "ed.undo_history"):
+                _sculpt_refresh(True)
         # Operators called from Python don't push an undo step themselves → push it for them.
-        if "FINISHED" in res and not idname.startswith("ed."):
+        if "FINISHED" in res and not idname.startswith("ed.") and not own_undo:
             try:
                 if "UNDO" in (op.bl_options or set()):
                     undo_push(op_label(idname))
@@ -249,6 +281,43 @@ def run_op(idname, props=None, ctx=None, invoke=False):
 
 
 _undo_pending = None
+_full_refresh = False
+
+
+def _sculpt_refresh(full):
+    """Sculpt Mode: makes the offscreen 3D view show what an operator changed. A tag is enough after a
+    stroke; after undo / redo some sculpt batches stay stale (a dab of an undone stroke stays drawn), so the
+    mesh gets a full update – once, after the last of several undo steps."""
+    global _full_refresh
+    if not full:
+        try:
+            ob = bpy.context.active_object
+            if ob is not None:
+                ob.update_tag(refresh={"DATA"})
+        except Exception:
+            pass
+        return
+    if _full_refresh:
+        return
+    _full_refresh = True
+
+    def _go():
+        global _full_refresh
+        _full_refresh = False
+        ob = bpy.context.active_object
+        if ob is not None and ob.type == "MESH" and _mode_now() == "SCULPT":
+            ob.data.update()
+            Flags.depsgraph = True
+    later(_go)
+
+OWN_UNDO_MODES = ("SCULPT",)
+
+
+def _mode_now():
+    try:
+        return bpy.context.mode
+    except Exception:
+        return ""
 
 
 def undo_push(message="Qt Shell"):

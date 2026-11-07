@@ -14,7 +14,7 @@ import numpy as np
 from mathutils import Matrix, Quaternion, Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import annotate, blkeys, bluepencil, bridge, editmesh, editother, gizmo, keying, keymap, playcache, posetransform, selshape, theme, wirepick
+from . import annotate, blkeys, bluepencil, bridge, editmesh, editother, gizmo, keying, keymap, playcache, posetransform, sculpt, selshape, theme, wirepick
 from . import icons
 
 DEG = math.pi / 180.0
@@ -181,6 +181,7 @@ class Viewport(QtWidgets.QWidget):
         self.ann_tools = annotate.ViewTools(self)   # Annotate / Measure / Add tools
         self.tools.changed.connect(self.ann_tools.cancel)
         self.bp_tools = bluepencil.BPTools(self)    # Blue Pencil (2D drawings keyed on frames)
+        self.sculpt = sculpt.ViewSculpt(self)        # Sculpt Mode: brush strokes, brush circle
         self.tools.changed.connect(self.bp_tools.tool_changed)
         bluepencil.settings().changed.connect(self.update)
 
@@ -635,6 +636,10 @@ class Viewport(QtWidgets.QWidget):
             p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1, QtCore.Qt.DashLine))
             p.setBrush(QtGui.QColor(255, 255, 255, 20))
             p.drawRect(QtCore.QRectF(self._box[0], self._box[1]).normalized())
+        try:
+            self.sculpt.paint(p)             # brush circle / radius-strength drag
+        except Exception:
+            pass
         p.end()
 
     def _paint_camera_frame(self, p):
@@ -1739,6 +1744,8 @@ class Viewport(QtWidgets.QWidget):
         if self._modal:
             self._modal_end(b == QtCore.Qt.LeftButton)
             return
+        if self.sculpt.modal is not None and self.sculpt.press(ev, pos):   # radius / strength drag
+            return
         if b == QtCore.Qt.MiddleButton and self.bp_tools.press(ev, pos):   # Blue Pencil Transform: scale
             return
         if keymap.nav_scheme() == "MAYA" and self._maya_press(ev, pos, b, mods):
@@ -1766,6 +1773,8 @@ class Viewport(QtWidgets.QWidget):
             self.setCursor(QtCore.Qt.ClosedHandCursor)
         elif b == QtCore.Qt.LeftButton:
             if self.ann_tools.press(ev, pos):
+                return
+            if self.sculpt.press(ev, pos):          # Sculpt Mode: brush stroke
                 return
             tool = self.tools.tool
             if tool not in ("SELECT", "CURSOR"):
@@ -1828,6 +1837,8 @@ class Viewport(QtWidgets.QWidget):
             return
         if self._modal:
             self._modal_update(pos)
+            return
+        if self.sculpt.move(ev, pos):
             return
         g = self._navg
         if g is not None and not self._nav:
@@ -1896,6 +1907,8 @@ class Viewport(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, ev):
         pos = ev.position()
+        if self.sculpt.release(ev):
+            return
         if self._modal and self._modal.get("drag") and ev.button() == self._modal.get(
                 "drag_button", QtCore.Qt.LeftButton):
             self._modal_end(True)          # gizmo drag: releasing the button confirms
@@ -1989,7 +2002,18 @@ class Viewport(QtWidgets.QWidget):
                 return True
         return super().event(ev)
 
+    def tabletEvent(self, ev):
+        self.sculpt.tablet_event(ev)        # pen pressure for sculpt strokes; the mouse events follow
+        ev.ignore()
+
+    def leaveEvent(self, ev):
+        if bpy.context.mode == "SCULPT":
+            self.update()                   # hide the brush circle
+        super().leaveEvent(ev)
+
     def keyReleaseEvent(self, ev):
+        if self.sculpt.key_release(ev):
+            return
         if self._modal and ev.key() in (QtCore.Qt.Key_Control, QtCore.Qt.Key_Shift) and not ev.isAutoRepeat():
             QtCore.QTimer.singleShot(0, lambda: self._modal and self._modal_update(
                 self.mapFromGlobal(QtGui.QCursor.pos()).toPointF()))
@@ -2028,6 +2052,8 @@ class Viewport(QtWidgets.QWidget):
 
         def H(aid):
             return keymap.hit(aid, ev, names)
+        if self.sculpt.key(ev, H):           # Sculpt Mode: radius / strength / mask / remesh keys
+            return
 
         mode = bpy.context.mode
         if self.bp_tools.key(ev, H):           # Blue Pencil keys (while its tool is active)
