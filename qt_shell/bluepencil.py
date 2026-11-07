@@ -2251,22 +2251,39 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             set_tool(current_tool())
 
     def _pick_color(self):
+        """Colour tool: the drawing colour, the button and the selected strokes follow it live; OK keeps it
+        (one undo step, added to the custom colours), Cancel puts everything back."""
+        from . import colorpicker
         st = settings()
         sel = selected_strokes()
         cur = _color(sel[0], 1.0) if sel else QtGui.QColor(st.color)
-        dlg = QtWidgets.QColorDialog(cur, self)
-        dlg.setWindowTitle("Blue Pencil – Custom Colour")
-        dlg.setOption(QtWidgets.QColorDialog.DontUseNativeDialog, True)   # wheel + screen picker
-        for n, c in enumerate(custom_colors()[:16]):
-            QtWidgets.QColorDialog.setCustomColor(n, QtGui.QColor(c))
-        dlg.currentColorChanged.connect(lambda c: self.color_btn.setIcon(_swatch(c.name(), theme.px(22))))
-        if dlg.exec() != QtWidgets.QDialog.Accepted:
-            self.sync()
-            return
-        c = dlg.selectedColor()
-        if c.isValid():
-            add_custom_color(c.name())
-            self._set_color(c.name())
+        old_color = st.color
+        old_strokes = [(s, list(s.get("c", []))) for s in sel]
+
+        def live(c):
+            settings().set("color", c.name())
+            apply_to_selection("color", c.name(), do_commit=False)
+            try:
+                self.color_btn.setIcon(_swatch(c.name(), theme.px(22)))
+            except RuntimeError:
+                pass
+
+        def done(ok):
+            if ok:
+                add_custom_color(settings().color)
+                if old_strokes:
+                    commit("Colour")
+            else:
+                settings().set("color", old_color)
+                for s, c in old_strokes:
+                    if c:
+                        s["c"] = c
+                _views_update()
+            try:
+                self.sync()
+            except RuntimeError:
+                pass
+        colorpicker.pick(self.color_btn, cur, live, title="Blue Pencil – Colour", on_done=done)
 
     def _use_custom(self, n):
         cols = custom_colors()
@@ -2310,12 +2327,19 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             apply_to_selection("opacity", self.opacity.value() / 100.0)
 
     def _pick_ghost_color(self, key):
+        from . import colorpicker
         st = settings()
         cur = getattr(st, f"ghost_color_{key}")
-        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(cur), self, "Ghost Colour")
-        if c.isValid():
-            st.set(f"ghost_color_{key}", c.name())
+
+        def live(c):
+            settings().set(f"ghost_color_{key}", c.name())
             _views_update()
+            try:
+                self.sync()
+            except RuntimeError:
+                pass
+        anchor = self.ghost[key][2] if key in getattr(self, "ghost", {}) else self
+        colorpicker.pick(anchor, QtGui.QColor(cur), live, title=f"Ghost Colour – {key.title()}")
 
     def _space_tab_changed(self, idx):
         if self._syncing:

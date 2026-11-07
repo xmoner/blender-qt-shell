@@ -972,9 +972,9 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self._sync_tools()
 
     def _pick_note_color(self):
-        col = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.note_color), self, "Annotation Colour")
-        if col.isValid():
-            self.set_annotation_style(color=col.name())
+        from . import colorpicker
+        colorpicker.pick(self.note_color_btn, QtGui.QColor(self.note_color),
+                         lambda c: self.set_annotation_style(color=c.name()), title="Annotation Colour")
 
     def _update_tips(self):
         try:

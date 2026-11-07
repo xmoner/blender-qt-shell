@@ -1071,16 +1071,28 @@ class ToolHeader(QtWidgets.QWidget):
             v.update()
 
     def _pick_color(self):
+        """Colour tool for the annotation layer: the strokes and the button follow it live."""
+        from . import colorpicker
         lay = note_layer()
-        c = lay.color if lay is not None else NOTE_COLOR
-        col = QtWidgets.QColorDialog.getColor(QtGui.QColor.fromRgbF(c[0], c[1], c[2]), self, "Annotation Colour")
-        if not col.isValid():
-            return
-        lay = note_layer(create=True)
-        lay.color = (col.redF(), col.greenF(), col.blueF())
-        bridge.undo_push("Annotation Colour")
-        self.sync()
-        self._views_update()
+        c = tuple(lay.color) if lay is not None else tuple(NOTE_COLOR)
+
+        def live(col):
+            lay = note_layer(create=True)
+            lay.color = (col.redF(), col.greenF(), col.blueF())
+            self.sync()
+            self._views_update()
+
+        def done(ok):
+            lay = note_layer()
+            if not ok:
+                if lay is not None:
+                    lay.color = c
+                self.sync()
+                self._views_update()
+            else:
+                bridge.undo_push("Annotation Colour")
+        colorpicker.pick(self.color_btn, QtGui.QColor.fromRgbF(c[0], c[1], c[2]), live,
+                         title="Annotation Colour", on_done=done)
 
     def _set_thickness(self, v):
         lay = note_layer(create=True)

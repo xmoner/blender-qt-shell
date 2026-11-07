@@ -427,6 +427,7 @@ class ColorBinding(Binding):
         super().__init__(data, prop_id, on_change)
         self.size = rp.array_length
         self.linear = rp.subtype == "COLOR"
+        self.title = getattr(rp, "name", "") or "Color"
         w = QtWidgets.QPushButton()
         w.setMinimumHeight(theme.px(20))
         w.clicked.connect(self._pick)
@@ -443,20 +444,32 @@ class ColorBinding(Binding):
         return QtGui.QColor.fromRgbF(clamp(rgb[0]), clamp(rgb[1]), clamp(rgb[2]), clamp(a))
 
     def _pick(self):
-        if self.size > 3:
-            col = QtWidgets.QColorDialog.getColor(self._qcolor(), self.widget, tr("Color"),
-                                                  QtWidgets.QColorDialog.ShowAlphaChannel)
-        else:
-            col = QtWidgets.QColorDialog.getColor(self._qcolor(), self.widget, tr("Color"))
-        if not col.isValid():
+        """Opens the colour tool; the property (and this button) follow it live, Cancel restores the exact
+        values from before."""
+        from . import colorpicker
+        try:
+            before = list(getattr(self.data, self.prop_id))
+        except Exception:
             return
-        rgb = [col.redF(), col.greenF(), col.blueF()]
-        if self.linear:
-            rgb = [srgb_to_lin(c) for c in rgb]
-        vals = rgb + ([col.alphaF()] if self.size > 3 else [])
-        if _safe_set(self.data, self.prop_id, vals[: self.size]):
-            self.changed()
-            self.refresh()
+
+        def live(col):
+            if not self.alive():
+                return
+            rgb = [col.redF(), col.greenF(), col.blueF()]
+            if self.linear:
+                rgb = [srgb_to_lin(c) for c in rgb]
+            vals = rgb + ([col.alphaF()] if self.size > 3 else [])
+            if _safe_set(self.data, self.prop_id, vals[: self.size]):
+                self.changed()
+                self.refresh()
+
+        def done(ok):
+            if not ok and self.alive():
+                if _safe_set(self.data, self.prop_id, before[: self.size]):
+                    self.changed()
+                    self.refresh()
+        colorpicker.pick(self.widget, self._qcolor(), live, title=tr(self.title), alpha=self.size > 3,
+                         linear=self.linear, on_done=done)
 
     def refresh(self):
         c = self._qcolor()
