@@ -91,6 +91,24 @@ def brush_type():
     return str(getattr(b, "sculpt_brush_type", "") or "") if b is not None else ""
 
 
+# brushes that only work on a Multires modifier – Blender's own UI never lets them stroke without one, and a
+# stroke run from Python on a plain mesh crashes Blender (do_displacement_eraser_brush reads missing grids)
+MULTIRES_BRUSHES = {"DISPLACEMENT_ERASER": "Erase Multires Displacement",
+                    "DISPLACEMENT_SMEAR": "Smear Multires Displacement"}
+
+
+def stroke_blocker():
+    """A message why the active brush can't stroke on the active object now, or None."""
+    kind = brush_type()
+    if kind in MULTIRES_BRUSHES:
+        ob = bpy.context.active_object
+        mr = next((m for m in getattr(ob, "modifiers", ()) if m.type == "MULTIRES"), None)
+        if mr is None or not mr.show_viewport or mr.sculpt_levels < 1 or mr.total_levels < 1:
+            return (f"{MULTIRES_BRUSHES[kind]} works only on a Multires modifier with subdivision levels – "
+                    "add one in the Sculpt panel (Topology → Add Multires, then Subdivide).")
+    return None
+
+
 # ---------------------------------------------------------------- undo of whole strokes
 def undo_steps():
     """How many Blender undo steps the next Undo should take back (1, or all chunks of the last stroke)."""
@@ -338,6 +356,10 @@ class ViewSculpt:
             return False
         if bpy.context.active_object is None or bpy.context.active_object.type != "MESH":
             return False
+        msg = stroke_blocker()
+        if msg:
+            bridge.log(msg, "INFO")
+            return True                      # eaten: no stroke, no selection click
         _redo_groups.clear()
         self.stroke = Stroke(self.vp, pos, ev.modifiers(), self.pressure if self.tablet else 1.0)
         self.stroke.flush()

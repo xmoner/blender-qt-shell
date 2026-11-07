@@ -627,6 +627,9 @@ class SculptPanel(QtWidgets.QScrollArea):
             self.sync(force=True)
             return
         sculpt.activate_brush(name)
+        msg = sculpt.stroke_blocker()
+        if msg:
+            bridge.log(msg, "INFO")
         self.sync(force=True)
 
     def sync(self, force=False):
