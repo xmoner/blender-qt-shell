@@ -2072,10 +2072,14 @@ class MainWindow(QtWidgets.QMainWindow):
             b.setChecked(bool(on))
 
     def _on_mode(self, mode):
-        from . import sculpt, sculptmirror
+        from . import sculpt, sculptview
         sculpt.forget()                      # undo groups of strokes belong to one Sculpt Mode session
-        if mode != "SCULPT":
-            sculptmirror.release()           # Blender's own sculpt drawing (Multires / Dyntopo) not needed
+        # Sculpt Mode: Blender's own 3D view embedded in the Qt view (Blender's speed); deferred – the mode
+        # may have been switched from inside that Blender window
+        if mode == "SCULPT":
+            QtCore.QTimer.singleShot(0, lambda: bpy.context.mode == "SCULPT" and sculptview.enter(self.viewport))
+        elif sculptview.active():
+            QtCore.QTimer.singleShot(0, sculptview.leave)
         if mode == "SCULPT" and not getattr(self, "_sculpt_panel_shown", False) and "sculpt" in self.docks:
             self._sculpt_panel_shown = True  # the Sculpt panel opens the first time Sculpt Mode is entered
             self.docks["sculpt"].show()

@@ -164,7 +164,12 @@ def _notify_with_context(app, obj, ev):
         pt = sys.modules.get(__name__.rsplit(".", 1)[0] + ".pytips")
         if pt is not None and pt.enabled() and pt.handle(obj, ev):
             return True
-    elif et == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.MiddleButton \
+    if et == QtCore.QEvent.MouseButtonPress:
+        # a click into Qt takes the keyboard back from the embedded Blender 3D view (Sculpt Mode)
+        sv = sys.modules.get(__name__.rsplit(".", 1)[0] + ".sculptview")
+        if sv is not None and sv._view is not None:
+            sv.qt_pressed(obj)
+    if et == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.MiddleButton \
             and ev.modifiers() & QtCore.Qt.ShiftModifier:
         # Shift + middle click: copy the Python command of a button / field / menu item
         pt = sys.modules.get(__name__.rsplit(".", 1)[0] + ".pytips")
