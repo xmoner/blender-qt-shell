@@ -1049,7 +1049,14 @@ class MainWindow(QtWidgets.QMainWindow):
             b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
             b.setAutoRaise(True)
             # View keeps Qt Shell's own menu: Blender's view3d.* operators would move the hidden Blender view
-            b.setMenu(self._view_menu(b) if mid == "VIEW3D_MT_view" else LazyMenu(mid, b))
+            if mid == "VIEW3D_MT_view":
+                hm = self._view_menu(b)
+                from . import menuicons
+                menuicons.apply(hm)              # Qt's own items: icons by their names
+            else:
+                hm = LazyMenu(mid, b)
+                hm.auto_icons = True             # menuicons: an icon for every item
+            b.setMenu(hm)
             pytips.tag(b, f'bpy.ops.wm.call_menu(name="{mid}")')
             lay.addWidget(b)
 

@@ -200,7 +200,111 @@ OPS = {
     "particle.remove_doubles": "AUTOMERGE_ON", "particle.weight_set": "MOD_VERTEX_WEIGHT",
     "particle.mirror": "MOD_MIRROR", "particle.unify_length": "MOD_LENGTH",
     "particle.select_all": "RESTRICT_SELECT_OFF", "particle.hide": "HIDE_ON", "particle.reveal": "HIDE_OFF",
+    # ---------------------------------------------------------------- header menus (Object / Mesh / Select …)
+    "object.track_set": {"DAMPTRACK": "CON_DAMPTRACK", "TRACKTO": "CON_TRACKTO", "LOCKTRACK": "CON_LOCKTRACK",
+                         None: "CON_TRACKTO"},
+    "object.track_clear": "X", "object.constraint_add_with_targets": "CONSTRAINT",
+    "object.select_grouped": "GROUP", "object.select_linked": "LINKED", "object.select_camera": "VIEW_CAMERA",
+    "object.select_pattern": "SORTALPHA", "object.randomize_transform": "RNDCURVE", "object.align": "ALIGN_CENTER",
+    "object.transforms_to_deltas": "ORIENTATION_LOCAL", "object.anim_transforms_to_deltas": "ANIM",
+    "object.visual_geometry_to_objects": "OBJECT_DATA", "object.duplicates_make_real": "OUTLINER_OB_GROUP_INSTANCE",
+    "object.make_override_library": "LIBRARY_DATA_OVERRIDE", "object.reset_override_library": "LOOP_BACK",
+    "object.clear_override_library": "X", "object.make_local": "LINK_BLEND",
+    "object.data_transfer": "MOD_DATA_TRANSFER", "object.datalayout_transfer": "MOD_DATA_TRANSFER",
+    "object.light_linking_receivers_link": {"INCLUDE": "CHECKBOX_HLT", "EXCLUDE": "CHECKBOX_DEHLT", None: "LIGHT_DATA"},
+    "object.light_linking_blockers_link": {"INCLUDE": "CHECKBOX_HLT", "EXCLUDE": "CHECKBOX_DEHLT", None: "LIGHT_DATA"},
+    "object.quick_fur": "CURVES", "object.quick_explode": "MOD_EXPLODE", "object.quick_smoke": "MOD_FLUIDSIM",
+    "object.quick_liquid": "MATFLUID", "object.transfer_mode": "SCULPTMODE_HLT",
+    "object.assign_property_defaults": "PROPERTIES",
+    "object.vertex_group_lock": {"LOCK": "LOCKED", "UNLOCK": "UNLOCKED", None: "LOCKED"},
+    "object.select_hierarchy": "CON_CHILDOF", "object.select_mirror": "MOD_MIRROR",
+    "collection.objects_add_active": "OUTLINER_COLLECTION", "collection.objects_remove_active": "OUTLINER_COLLECTION",
+    "collection.create": "COLLECTION_NEW", "collection.objects_remove": "REMOVE",
+    "collection.objects_remove_all": "REMOVE",
+    "mesh.circularize": "MESH_CIRCLE", "mesh.flatten": "MESH_PLANE", "mesh.knife_project": "SHARPCURVE",
+    "mesh.convex_hull": "MESH_ICOSPHERE", "mesh.normals_tools": "NORMALS_VERTEX",
+    "mesh.mod_weighted_strength": "MOD_WEIGHTED_NORMAL", "mesh.attribute_set": "SPREADSHEET",
+    "mesh.fill_holes": "FACESEL", "mesh.screw": "MOD_SCREW", "mesh.intersect": "MOD_BOOLEAN",
+    "mesh.intersect_boolean": "MOD_BOOLEAN", "mesh.colors_rotate": "COLOR", "mesh.colors_reverse": "COLOR",
+    "mesh.uvs_rotate": "UV", "mesh.uvs_reverse": "UV", "mesh.select_non_manifold": "ERROR",
+    "mesh.select_loose": "STICKY_UVS_DISABLE", "mesh.select_by_pole_count": "VERTEXSEL",
+    "mesh.shortest_path_select": "CURVE_PATH", "mesh.select_boundary_loop_multi": "EDGESEL",
+    "mesh.loop_to_region": "FACESEL", "mesh.region_to_loop": "EDGESEL", "mesh.select_axis": "EMPTY_AXIS",
+    "mesh.select_by_attribute": "SPREADSHEET", "mesh.select_next_item": "TRIA_RIGHT",
+    "mesh.select_prev_item": "TRIA_LEFT", "mesh.select_face_by_sides": "FACESEL", "mesh.select_interior_faces": "FACESEL",
+    "curve.spin": "MOD_SCREW", "curve.select_next": "TRIA_RIGHT", "curve.select_previous": "TRIA_LEFT",
+    "curve.de_select_first": "TRIA_LEFT_BAR", "curve.de_select_last": "TRIA_RIGHT_BAR",
+    "asset.mark": "ASSET_MANAGER", "asset.clear": "X", "poselib.create_pose_asset": "ASSET_MANAGER",
+    "nla.bake": "NLA", "anim.keying_set_active_set": "KEYINGSET", "anim.replace_action": "ACTION",
+    "anim.replace_action_new": "ACTION",
+    "rigidbody.objects_add": "RIGID_BODY", "rigidbody.objects_remove": "X", "rigidbody.shape_change": "MESH_ICOSPHERE",
+    "rigidbody.mass_calculate": "MOD_PHYSICS", "rigidbody.connect": "RIGID_BODY_CONSTRAINT",
+    "rigidbody.bake_to_keyframes": "KEY_HLT", "rigidbody.object_settings_copy": "COPYDOWN",
+    "transform.translate": "EMPTY_ARROWS", "transform.rotate_normal": "NORMALS_FACE",
+    "pose.blend_with_rest": "ARMATURE_DATA", "pose.select_grouped": "GROUP", "pose.select_hierarchy": "CON_CHILDOF",
+    "pose.select_linked": "LINKED", "pose.select_mirror": "MOD_MIRROR",
+    "paint.weight_from_bones": "BONE_DATA", "paint.weight_gradient": {"LINEAR": "IPO_LINEAR",
+                                                                      "RADIAL": "MESH_CIRCLE", None: "IPO_LINEAR"},
+    "paint.sample_color": "EYEDROPPER", "paint.weight_sample_group": "EYEDROPPER",
+    "paint.vertex_color_hsv": "MOD_HUE_SATURATION", "paint.vertex_color_brightness_contrast": "MOD_BRIGHTNESS_CONTRAST",
+    "paint.vertex_color_levels": "MOD_COLOR_BALANCE", "paint.vertex_color_invert": "IMAGE_ALPHA",
+    "paint.visibility_invert": "HIDE_OFF", "paint.visibility_filter": {"GROW": "ADD", "SHRINK": "REMOVE", None: "HIDE_OFF"},
+    "paint.mask_flood_fill": {"INVERT": "IMAGE_ALPHA", None: "MOD_MASK"},
+    "sculpt.mesh_filter": {"SPHERE": "SPHERE", "INFLATE": "MOD_SOLIDIFY", "RELAX": "MOD_SMOOTH", "SMOOTH": "MOD_SMOOTH",
+                           "SHARPEN": "SHARPCURVE", "ENHANCE_DETAILS": "MOD_DISPLACE",
+                           "ERASE_DISPLACEMENT": "MOD_MULTIRES", "RANDOM": "RNDCURVE", "SCALE": "FULLSCREEN_ENTER",
+                           None: "SCULPTMODE_HLT"},
+    "sculpt.optimize": "FILE_REFRESH", "sculpt.set_pivot_position": "PIVOT_CURSOR",
+    "sculpt.mask_filter": {"GROW": "ADD", "SHRINK": "REMOVE", "SHARPEN": "SHARPCURVE", "SMOOTH": "MOD_SMOOTH",
+                           "CONTRAST_INCREASE": "MOD_BRIGHTNESS_CONTRAST", "CONTRAST_DECREASE": "MOD_BRIGHTNESS_CONTRAST",
+                           None: "MOD_MASK"},
+    "sculpt.expand": "FULLSCREEN_ENTER", "sculpt.paint_mask_extract": "MOD_SOLIDIFY",
+    "sculpt.paint_mask_slice": "MOD_BOOLEAN", "sculpt.mask_from_cavity": "MOD_MASK",
+    "sculpt.mask_from_boundary": "MOD_MASK", "sculpt.mask_by_color": "EYEDROPPER", "sculpt.mask_init": "RNDCURVE",
+    "sculpt.face_sets_randomize_colors": "COLOR", "sculpt.face_set_change_visibility": "HIDE_OFF",
+    "sculpt.face_set_edit": "FACE_MAPS", "sculpt.face_sets_init": "FACE_MAPS", "sculpt.face_sets_create": "FACE_MAPS",
+    "sculpt.project_line_gesture": "IPO_LINEAR",
+    "sculpt.trim_box_gesture": {"JOIN": "ADD", None: "MOD_BOOLEAN"},
+    "sculpt.trim_lasso_gesture": {"JOIN": "ADD", None: "MOD_BOOLEAN"},
+    "sculpt.trim_line_gesture": {"JOIN": "ADD", None: "MOD_BOOLEAN"},
+    "sculpt.trim_polyline_gesture": {"JOIN": "ADD", None: "MOD_BOOLEAN"},
+    "font.move_select": {"PREVIOUS_PAGE": "TRIA_UP_BAR", "NEXT_PAGE": "TRIA_DOWN_BAR", "LINE_BEGIN": "TRIA_LEFT_BAR",
+                         "LINE_END": "TRIA_RIGHT_BAR", "PREVIOUS_LINE": "TRIA_UP", "NEXT_LINE": "TRIA_DOWN",
+                         "PREVIOUS_WORD": "TRIA_LEFT", "NEXT_WORD": "TRIA_RIGHT", None: "FONT_DATA"},
+    "grease_pencil.bake_grease_pencil_animation": "RENDER_ANIMATION",
+    "grease_pencil.select_by_stroke_type": {"STROKE": "GP_DRAW_STROKE", "FILL": "GP_DRAW_FILL", None: "STROKE"},
+    "grease_pencil.select_ends": "TRIA_RIGHT_BAR", "grease_pencil.layer_active": "RENDERLAYERS",
+    "grease_pencil.interpolate_sequence": "IPO_EASE_IN_OUT", "grease_pencil.reproject": "VIEW_CAMERA_UNSELECTED",
+    "grease_pencil.set_handle_type": "HANDLE_AUTO", "grease_pencil.move_to_layer": "RENDERLAYERS",
+    "grease_pencil.reorder": {"TOP": "TRIA_UP_BAR", "UP": "TRIA_UP", "DOWN": "TRIA_DOWN", "BOTTOM": "TRIA_DOWN_BAR",
+                              None: "SORT_ASC"},
+    "grease_pencil.caps_set": "GP_CAPS_ROUND", "grease_pencil.set_curve_resolution": "MOD_SUBSURF",
+    "grease_pencil.select_alternate": "MESH_GRID", "grease_pencil.select_fill": "GP_DRAW_FILL",
+    "grease_pencil.snap_to_grid": "SNAP_GRID", "grease_pencil.snap_to_cursor": "PIVOT_CURSOR",
+    "grease_pencil.snap_cursor_to_selected": "RESTRICT_SELECT_OFF",
 }
+
+# patterns on the operator's name (the part after the dot) – before the label words and the family
+OP_PATTERNS = [
+    (r"^select_all$", None), (r"^select_more|^select_less", None), (r"select_random", "RNDCURVE"),
+    (r"select_nth|checker", "MESH_GRID"), (r"select_linked", "LINKED"), (r"select_similar", "SELECT_INTERSECT"),
+    (r"select_grouped", "GROUP"), (r"select_mirror", "MOD_MIRROR"), (r"^select_box", "SELECT_SET"),
+    (r"^select_circle", "MESH_CIRCLE"), (r"^select_lasso", "SELECT_EXTEND"), (r"select_pattern", "SORTALPHA"),
+    (r"select_row", "EDGESEL"), (r"select_hierarchy", "CON_CHILDOF"),
+    (r"^hide", "HIDE_ON"), (r"reveal|unhide", "HIDE_OFF"), (r"delete|_remove$", "TRASH"),
+    (r"duplicate", "DUPLICATE"), (r"copy", "COPYDOWN"), (r"paste", "PASTEDOWN"), (r"mask", "MOD_MASK"),
+    (r"face_set", "FACE_MAPS"), (r"smooth", "MOD_SMOOTH"), (r"mirror|symmetr", "MOD_MIRROR"),
+    (r"subdivide", "MOD_SUBSURF"), (r"_clear$|^clear", "X"), (r"snap", "SNAP_ON"), (r"merge|join", "AUTOMERGE_ON"),
+    (r"separate|split", "MOD_EDGESPLIT"), (r"weight", "MOD_VERTEX_WEIGHT"), (r"color", "COLOR"),
+    (r"material", "MATERIAL"), (r"layer", "RENDERLAYERS"), (r"uv", "UV"), (r"normal", "NORMALS_FACE"),
+    (r"bake", "RENDER_STILL"), (r"vertex_group", "GROUP_VERTEX"), (r"hook", "HOOK"), (r"constraint", "CONSTRAINT"),
+    (r"keyframe|keying", "KEY_HLT"), (r"extrude", "MOD_SOLIDIFY"), (r"_add$|^add", "ADD"),
+]
+SELECT_ALL = {"SELECT": "SELECT_SET", "DESELECT": "SELECT_SUBTRACT", "INVERT": "SELECT_DIFFERENCE",
+              "TOGGLE": "RESTRICT_SELECT_OFF"}
+# Blender tools started from a menu (Add Cube … in Sculpt) → the object they add
+TOOL_ICONS = {"cube": "MESH_CUBE", "cylinder": "MESH_CYLINDER", "cone": "MESH_CONE", "ico_sphere": "MESH_ICOSPHERE",
+              "uv_sphere": "MESH_UVSPHERE", "torus": "MESH_TORUS", "plane": "MESH_PLANE", "circle": "MESH_CIRCLE"}
 
 # Blender menus (submenus / wm.call_menu) → icon
 MENUS = {
@@ -228,10 +332,38 @@ MENUS = {
     "VIEW3D_MT_edit_curve_showhide": "HIDE_OFF", "VIEW3D_MT_armature_showhide": "HIDE_OFF",
     "VIEW3D_MT_edit_mesh_showhide": "HIDE_OFF", "VIEW3D_MT_edit_greasepencil_stroke": "STROKE",
     "VIEW3D_MT_edit_greasepencil_point": "GP_SELECT_POINTS",
+    "VIEW3D_MT_transform": "EMPTY_ARROWS", "VIEW3D_MT_transform_object": "EMPTY_ARROWS",
+    "VIEW3D_MT_transform_armature": "EMPTY_ARROWS", "VIEW3D_MT_sculpt_transform": "EMPTY_ARROWS",
+    "VIEW3D_MT_object_relations": "LINKED", "VIEW3D_MT_object_asset": "ASSET_MANAGER",
+    "VIEW3D_MT_object_liboverride": "LIBRARY_DATA_OVERRIDE", "OBJECT_MT_modifier_add_edit": "EDITMODE_HLT",
+    "OBJECT_MT_modifier_add_generate": "MOD_BUILD", "OBJECT_MT_modifier_add_deform": "MOD_SIMPLEDEFORM",
+    "OBJECT_MT_modifier_add_physics": "PHYSICS", "OBJECT_MT_modifier_add": "MODIFIER",
+    "VIEW3D_MT_object_track": "CON_TRACKTO", "VIEW3D_MT_object_cleanup": "BRUSH_DATA",
+    "VIEW3D_MT_edit_curve_clean": "BRUSH_DATA", "VIEW3D_MT_edit_greasepencil_cleanup": "BRUSH_DATA",
+    "VIEW3D_MT_edit_mesh_normals_average": "NORMALS_VERTEX_FACE", "VIEW3D_MT_paint_weight_lock": "LOCKED",
+    "VIEW3D_MT_sculpt_trim": "MOD_BOOLEAN", "VIEW3D_MT_add_object": "ADD", "VIEW3D_MT_sculpt_set_pivot": "PIVOT_CURSOR",
+    "VIEW3D_MT_random_mask": "RNDCURVE", "GREASE_PENCIL_MT_layer_active": "RENDERLAYERS",
+    "GREASE_PENCIL_MT_move_to_layer": "RENDERLAYERS",
+    "VIEW3D_MT_select_object_more_less": "ADD", "VIEW3D_MT_edit_mesh_select_more_less": "ADD",
+    "VIEW3D_MT_select_pose_more_less": "ADD", "VIEW3D_MT_edit_mesh_select_similar": "SELECT_INTERSECT",
+    "VIEW3D_MT_edit_mesh_select_by_trait": "FILTER", "VIEW3D_MT_edit_mesh_select_linked": "LINKED",
+    "VIEW3D_MT_edit_mesh_select_loops": "EDGESEL", "VIEW3D_MT_edit_mesh_normals_select_strength": "MOD_WEIGHTED_NORMAL",
+    "VIEW3D_MT_select_object_by_type": "OBJECT_DATA", "VIEW3D_MT_select_grouped": "GROUP",
+    "VIEW3D_MT_select_linked": "LINKED",
 }
 
 # label words → icon (first match; for submenus Qt fills itself and anything not in the tables)
 LABEL_RULES = [
+    # View menu (Qt's own items)
+    (r"^frame selected", "ZOOM_SELECTED"), (r"^frame all", "ZOOM_ALL"), (r"^frame camera", "VIEW_CAMERA_UNSELECTED"),
+    (r"^zoom camera", "ZOOM_IN"), (r"^(front|back)$", "AXIS_FRONT"), (r"^(right|left)$", "AXIS_SIDE"),
+    (r"^(top|bottom)$", "AXIS_TOP"), (r"^camera$|camera to view", "VIEW_CAMERA"),
+    (r"perspective|orthographic", "VIEW_PERSPECTIVE"), (r"viewport layout|layout", "SPLIT_HORIZONTAL"),
+    (r"preferences", "PREFERENCES"), (r"shortcuts", "KEY_CONTROL"), (r"make local", "LINK_BLEND"),
+    (r"to scene", "SCENE_DATA"), (r"emitter", "LIGHT_DATA"), (r"sort elements", "SORTSIZE"), (r"^arrange", "SORT_ASC"),
+    (r"caps", "GP_CAPS_ROUND"), (r"display wire", "SHADING_WIRE"), (r"^deform$", "MOD_ARMATURE"),
+    (r"inherit rotation", "ORIENTATION_PARENT"), (r"^lock$", "LOCKED"), (r"lasso", "SELECT_EXTEND"),
+    (r"by type|all by", "FILTER"), (r"grouped", "GROUP"), (r"\blinked\b", "LINKED"), (r"more/less", "ADD"),
     (r"\bdelete|\bremove\b", "TRASH"), (r"^clear\b|\bclear\b", "X"), (r"duplicat|\bcopy\b(?!.*paste)", "DUPLICATE"),
     (r"\bpaste\b", "PASTEDOWN"), (r"\bcut\b", "X"), (r"set origin|\borigin\b", "OBJECT_ORIGIN"),
     (r"convert", "FILE_REFRESH"), (r"separate|\bsplit\b", "MOD_EDGESPLIT"), (r"\bjoin\b|merge", "AUTOMERGE_ON"),
@@ -284,7 +416,7 @@ def _from_table(entry, props):
 
 
 def for_label(text):
-    t = (text or "").strip().lower()
+    t = (text or "").split("\t")[0].replace("&", "").strip().lower()
     for pat, name in LABEL_RULES:
         if re.search(pat, t) and blicons.has(name):
             return name
@@ -300,12 +432,32 @@ def for_operator(idname, props=None, text=""):
     props = props or {}
     if idname in ("wm.call_menu", "wm.call_menu_pie") and props.get("name"):
         return for_menu(props["name"], text)
+    op = idname.split(".")[-1].lower()
+    if op == "select_all" or op == "select_all_toggle":
+        return SELECT_ALL.get(props.get("action"), "SELECT_SET")
+    if op == "select_more":
+        return "ADD"
+    if op == "select_less":
+        return "REMOVE"
+    if idname == "wm.tool_set_by_id":
+        tool = str(props.get("name", ""))
+        for k, v in TOOL_ICONS.items():
+            if k in tool:
+                return v
+    if idname.lower().startswith("object.modifier_add") and props.get("type"):
+        name = "MOD_" + str(props["type"])
+        if blicons.has(name):
+            return name
+        return "MODIFIER"
     axis = props.get("constraint_axis")
     if idname == "transform.mirror" and isinstance(axis, (tuple, list)) and sum(bool(a) for a in axis) == 1:
         return ("EVENT_X", "EVENT_Y", "EVENT_Z")[[bool(a) for a in axis].index(True)]
-    name = _ok(_from_table(OPS.get(idname), props))
+    name = _ok(_from_table(OPS.get(idname) or OPS.get(idname.lower()), props))
     if name:
         return name
+    for pat, ic in OP_PATTERNS:
+        if ic and re.search(pat, op) and blicons.has(ic):
+            return ic
     if idname.startswith("wm.context_modal_mouse") or idname == "wm.context_modal_mouse":
         return for_label(text) or "MOUSE_MOVE"
     return for_label(text) or _ok(FAMILY.get(idname.split(".")[0])) or FALLBACK
@@ -346,8 +498,8 @@ def apply(menu):
                     apply(sub)               # filled already (operator_menu_enum, enum props)
         if not act.icon().isNull() or act.isCheckable():
             continue
-        if not act.isEnabled() and act.font().bold():
-            continue                         # a label / heading
+        if (not act.isEnabled() and act.font().bold()) or act.text().strip() in ("", "—"):
+            continue                         # a label / heading / empty placeholder
         name = None
         tag = pytips._get(act) or (pytips._get(sub.menuAction()) if sub is not None else None)
         if sub is not None and getattr(sub, "menu_id", None):
@@ -360,3 +512,4 @@ def apply(menu):
             name = for_label(act.text()) or FALLBACK
         if blicons.has(name):
             act.setIcon(blicons.icon(name))
+            act.setProperty("qtshell_auto_icon", name)      # chosen here, not Blender's (tests)
