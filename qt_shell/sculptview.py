@@ -31,7 +31,11 @@ TAG = "qtshell_view"     # ID property on the helper window's screen: found agai
 _view = None            # the NativeView in use
 _timer = None
 _watch = None           # checks for Blender's own playback started in the embedded view
-_suspended = False      # cached playback: the Qt view shows the cache, Blender's view is hidden meanwhile
+_reasons = set()        # why Blender's view is hidden for a while (the Qt view shown): "playback", "bluepencil"
+_bp_handle = None       # draw handler showing Blue Pencil drawings in Blender's view
+_bp_tex = None          # (key, GPUTexture) of the drawings last drawn there
+_bp_version = 0         # bumped when drawings / Blue Pencil settings change
+_tool_state = None      # the tool state whose changes are watched (Blue Pencil tool on / off)
 
 
 # ---------------------------------------------------------------- setting
@@ -66,8 +70,44 @@ def active(vp=None):
 
 
 def covers(vp=None):
-    """Blender's view is embedded and shown over the Qt view (not while cached playback uses the Qt view)."""
-    return active(vp) and not _suspended
+    """Blender's view is embedded and shown over the Qt view (not while the Qt view is used for a while:
+    cached playback, drawing with Blue Pencil)."""
+    return active(vp) and not _reasons
+
+
+def _set_reason(name, on):
+    """The Qt view for a while (cached playback, Blue Pencil drawing) – Blender's view hidden while any reason
+    holds, shown again with the Qt view's camera when none is left."""
+    v = _view
+    if v is None or v.stale:
+        _reasons.clear()
+        return
+    before = bool(_reasons)
+    if on:
+        _reasons.add(name)
+    else:
+        _reasons.discard(name)
+    after = bool(_reasons)
+    if before == after:
+        return
+    try:
+        if after:
+            v.suspend()
+        else:
+            v.resume()
+    except Exception as ex:
+        bridge.log(f"Blender's viewport: switching to the Qt view failed ({ex})", "WARNING")
+
+
+def bp_check(*_args):
+    """The Blue Pencil tool draws in the Qt view (its tools, cursor and panel work there): Blender's view is
+    hidden while the tool is active."""
+    try:
+        from . import bluepencil
+        on = bluepencil.tool_active()
+    except Exception:
+        on = False
+    _set_reason("bluepencil", on)
 
 
 # ---------------------------------------------------------------- cached playback
@@ -75,28 +115,15 @@ def playback(on):
     """Timeline playback started / stopped. With the playback cache on, the Qt view plays (from the cache –
     Blender's own view would evaluate the scene every frame): Blender's view is hidden meanwhile and comes back,
     with the camera of the Qt view, when playback stops."""
-    global _suspended
-    v = _view
-    if v is None or v.stale:
-        _suspended = False
-        return
     from . import playcache
-    try:
-        if on and not _suspended and playcache.enabled():
-            _suspended = True
-            v.suspend()
-        elif not on and _suspended:
-            _suspended = False
-            v.resume()
-    except Exception as ex:
-        bridge.log(f"Blender's viewport: playback switch failed ({ex})", "WARNING")
+    _set_reason("playback", bool(on) and playcache.enabled())
 
 
 def _watch_playback():
     """Space pressed in Blender's view starts Blender's own playback (no cache) – with the playback cache on,
     it is handed to the Qt Timeline instead."""
     v = _view
-    if v is None or v.stale or _suspended or bridge.op_depth:
+    if v is None or v.stale or _reasons or bridge.op_depth:
         return
     from . import app, playcache
     if not playcache.enabled() or app._win is None:
@@ -142,6 +169,19 @@ def start(win):
     _watch.setInterval(100)
     _watch.timeout.connect(_watch_playback)
     _watch.start()
+    global _tool_state, _bp_handle
+    try:
+        from . import gizmo, bluepencil
+        ts = gizmo.tool_state(win.hub)
+        if ts is not _tool_state:
+            ts.changed.connect(bp_check)
+            _tool_state = ts
+            bluepencil.signals.changed.connect(_bp_changed)
+            bluepencil.settings().changed.connect(_bp_changed)
+    except Exception as ex:
+        bridge.log(f"Blender's viewport: Blue Pencil not connected ({ex})", "WARNING")
+    if _bp_handle is None:
+        _bp_handle = bpy.types.SpaceView3D.draw_handler_add(_bp_draw, (), "WINDOW", "POST_PIXEL")
     QtCore.QTimer.singleShot(0, sync)
 
 
@@ -154,6 +194,14 @@ def stop():
             except RuntimeError:
                 pass
     _timer = _watch = None
+    global _bp_handle, _bp_tex
+    if _bp_handle is not None:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(_bp_handle, "WINDOW")
+        except Exception:
+            pass
+        _bp_handle = None
+    _bp_tex = None
     leave()
 
 
@@ -172,10 +220,11 @@ def sync(vp=None):
         _close_stale_windows()
         want = wanted() and vp is not None and vp.isVisible()
         if want and not active(vp):
-            enter(vp)
+            if enter(vp):
+                bp_check()
         elif not want and _view is not None:
             leave()
-        elif _view is not None and not _suspended:
+        elif _view is not None and not _reasons:
             _view.apply_regions()
     except Exception as ex:
         bridge.log(f"Blender's viewport: {ex}", "WARNING")
@@ -200,12 +249,13 @@ def enter(vp):
 
 def leave(camera=True):
     """The camera and the shading back to the Qt view, the Blender window closed."""
-    global _view, _suspended
+    global _view, _bp_tex
     v, _view = _view, None
     bridge.preferred_view3d = None
-    if _suspended:
-        camera = False                     # the Qt view already has the camera (cached playback)
-        _suspended = False
+    _bp_tex = None
+    if _reasons:
+        camera = False                     # the Qt view already has the camera (cached playback, Blue Pencil)
+        _reasons.clear()
     if v is not None:
         v.close(camera=camera)
 
@@ -316,6 +366,94 @@ def invoke(idname, props):
         return False
 
 
+# ---------------------------------------------------------------- Blue Pencil drawings in Blender's view
+def _bp_changed(*_args):
+    global _bp_version
+    _bp_version += 1
+    v = _view
+    if v is not None and not v.stale:
+        try:
+            a = v.area()
+            if a is not None:
+                a.tag_redraw()
+        except Exception:
+            pass
+
+
+def _bp_rect(region, rv, w, h):
+    """(camera name or "", frame rect in region pixels – top-down like Qt) of Blender's view."""
+    sc = bpy.context.scene
+    full = QtCore.QRectF(0, 0, w, h)
+    cam = sc.camera
+    if rv is None or rv.view_perspective != "CAMERA" or cam is None:
+        return "", full
+    if cam.type != "CAMERA":
+        return cam.name, full
+    from bpy_extras.view3d_utils import location_3d_to_region_2d
+    try:
+        pts = [location_3d_to_region_2d(region, rv, cam.matrix_world @ q) for q in cam.data.view_frame(scene=sc)]
+    except Exception:
+        return cam.name, full
+    if any(q is None for q in pts):
+        return cam.name, full
+    xs = [q.x for q in pts]
+    ys = [h - q.y for q in pts]
+    r = QtCore.QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+    return cam.name, (r if r.width() > 4 and r.height() > 4 else full)
+
+
+def _bp_draw():
+    """POST_PIXEL draw handler: the Blue Pencil layers of the view / camera drawn over Blender's view (painted
+    by Qt into an image – the same drawing as in the Qt view – shown as a texture)."""
+    global _bp_tex
+    v = _view
+    if v is None or v.stale or _reasons:
+        return
+    ctx = bpy.context
+    sp = ctx.space_data
+    if sp is None or sp.as_pointer() != v.space_ptr:
+        return
+    try:
+        from . import bluepencil as bp
+        if not bp.settings().show:
+            return
+        region, rv = ctx.region, ctx.region_data
+        w, h = region.width, region.height
+        if w < 4 or h < 4:
+            return
+        cam, rect = _bp_rect(region, rv, w, h)
+        if not bp.has_drawings(cam):
+            return
+        f = bp.current_frame()
+        raw = ctx.scene.get(bp.PROP)
+        key = (w, h, cam, round(rect.x(), 1), round(rect.y(), 1), round(rect.width(), 1), round(rect.height(), 1),
+               f, _bp_version, hash(raw) if isinstance(raw, str) else 0,
+               bool(getattr(bp._hub(), "playing", False)))
+        if _bp_tex is None or _bp_tex[0] != key:
+            img = QtGui.QImage(w, h, QtGui.QImage.Format_RGBA8888_Premultiplied)
+            img.fill(0)
+            p = QtGui.QPainter(img)
+            try:
+                bp.paint_layers(p, cam, rect, f, space="VIEWPORT")
+            finally:
+                p.end()
+            img = img.mirrored(False, True)          # GPU rows go bottom-up
+            import gpu
+            import numpy as np
+            arr = np.frombuffer(img.constBits(), dtype=np.uint8, count=w * h * 4).astype(np.float32)
+            arr *= 1.0 / 255.0
+            buf = gpu.types.Buffer("FLOAT", w * h * 4, arr)
+            _bp_tex = (key, gpu.types.GPUTexture((w, h), format="RGBA8", data=buf))
+        import gpu
+        from gpu_extras.presets import draw_texture_2d
+        gpu.state.blend_set("ALPHA_PREMULT")
+        draw_texture_2d(_bp_tex[1], (0, 0), w, h)
+        gpu.state.blend_set("NONE")
+    except Exception as ex:
+        _bp_tex = None
+        bridge.log(f"Blender's viewport: Blue Pencil drawing failed ({ex})", "WARNING")
+
+
 def resized(vp):
     if _view is not None and _view.vp is vp:
         _view.fit()
@@ -363,6 +501,7 @@ class NativeView:
         area = max(win.screen.areas, key=lambda a: a.width * a.height)
         area.type = "VIEW_3D"
         self.area_ptr = area.as_pointer()
+        self.space_ptr = area.spaces.active.as_pointer()
         self._setup_space(vp, main_sp)
         # embed
         self.qwin = QtGui.QWindow.fromWinId(self.hwnd)
@@ -477,10 +616,20 @@ class NativeView:
         with self.context():
             rv = sp.region_3d
             w, h = max(vp.width(), 2), max(vp.height(), 2)
-            vm, _pm = vp.matrices(w, h)
+            cam_view = bool(getattr(vp, "camera_view", False)) and bpy.context.scene.camera is not None
+            if cam_view:
+                vp.camera_view = False               # the view behind the camera (Blender keeps it too)
+                try:
+                    vm, _pm = vp.matrices(w, h)
+                finally:
+                    vp.camera_view = True
+            else:
+                vm, _pm = vp.matrices(w, h)
             rv.view_perspective = "ORTHO" if getattr(vp, "ortho", False) else "PERSP"
             rv.view_distance = float(getattr(vp, "dist", 10.0))
             rv.view_matrix = vm
+            if cam_view:
+                rv.view_perspective = "CAMERA"
 
     # ---- cached playback: the Qt view for a while
     def suspend(self):
@@ -537,6 +686,7 @@ class NativeView:
             e = rv.view_rotation.to_euler("XYZ")
             vp.yaw, vp.pitch = e.z, min(max(e.x, 0.0001), math.pi - 0.0001)
             vp.ortho = rv.view_perspective == "ORTHO"
+            vp.camera_view = rv.view_perspective == "CAMERA" and bpy.context.scene.camera is not None
         except Exception as ex:
             bridge.log(f"Blender's viewport: view not taken over ({ex})", "WARNING")
         main_sp = self._main_space()             # shading / overlays changed from the Qt header meanwhile
