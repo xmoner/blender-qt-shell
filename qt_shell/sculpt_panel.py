@@ -253,6 +253,13 @@ def _active_mesh_object():
 
 
 # ---------------------------------------------------------------- panel
+def _ptr(data):
+    try:
+        return data.as_pointer()
+    except Exception:
+        return 0
+
+
 class SculptPanel(QtWidgets.QScrollArea):
     def __init__(self, hub=None, parent=None):
         super().__init__(parent)
@@ -665,7 +672,10 @@ class SculptPanel(QtWidgets.QScrollArea):
                 b.blockSignals(True)
                 b.setChecked(n == name)
                 b.blockSignals(False)
-            bkey = (br.as_pointer() if br is not None else 0, id(sculpt._size_owner()), id(sculpt._strength_owner()))
+            # pointers, not id() of the Python wrappers – those are new objects on every call, so the brush
+            # section was rebuilt now and then, even under a dragged Radius field (cursor left hidden)
+            bkey = (br.as_pointer() if br is not None else 0, _ptr(sculpt._size_owner()),
+                    _ptr(sculpt._strength_owner()))
             ob = _active_mesh_object()
             okey = (ob.as_pointer() if ob is not None else 0, on,
                     bool(getattr(ob, "use_dynamic_topology_sculpting", False)) if ob else False,

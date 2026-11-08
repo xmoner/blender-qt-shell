@@ -134,6 +134,21 @@ def _autokey(data, prop_id, index=-1):
 
 
 # ---------------------------------------------------------------- draggable spinbox
+def _left_button_down():
+    """The primary mouse button's real state (Windows: asynchronous key state – Qt's own state misses a release
+    that never reached Qt)."""
+    import sys
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            u = ctypes.windll.user32
+            vk = 0x02 if u.GetSystemMetrics(23) else 0x01        # SM_SWAPBUTTON → VK_RBUTTON / VK_LBUTTON
+            return bool(u.GetAsyncKeyState(vk) & 0x8000)
+        except Exception:
+            pass
+    return bool(QtGui.QGuiApplication.mouseButtons() & QtCore.Qt.LeftButton)
+
+
 class DragSpin(QtWidgets.QDoubleSpinBox):
     """Number field like in Blender: dragging left/right changes the value, click = edit as text.
 
@@ -151,6 +166,11 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         self._accum = 0.0           # accumulated horizontal movement in pixels
         self._dragging = False
         self._editing = False       # text editing mode (after a click without dragging)
+        # the button's real state is checked while pressed: the release can get lost (Sculpt Mode on Windows –
+        # it never reaches Qt), which left the drag running with the cursor hidden
+        self._button_watch = QtCore.QTimer(self)
+        self._button_watch.setInterval(30)
+        self._button_watch.timeout.connect(self._check_button)
         self.setKeyboardTracking(False)
         self.setAlignment(QtCore.Qt.AlignCenter)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
@@ -227,7 +247,9 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         return val
 
     def _finish_drag(self):
-        QtWidgets.QApplication.restoreOverrideCursor()
+        self._button_watch.stop()
+        if self._dragging:
+            self.lineEdit().setCursor(QtCore.Qt.SizeHorCursor)
         if self._press is not None:
             QtGui.QCursor.setPos(self._press)
         self._press = None
@@ -235,6 +257,18 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         self.lineEdit().releaseMouse()
         if self.hasFocus():
             self.clearFocus()
+
+    def _check_button(self):
+        """Ends the drag when the left button is up although no release event came."""
+        if self._press is None:
+            self._button_watch.stop()
+            return
+        if _left_button_down():
+            return
+        dragged = self._dragging
+        self._finish_drag()
+        if dragged:
+            self.editingFinished.emit()
 
     def _cancel_drag(self):
         was = self._dragging
@@ -256,6 +290,7 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
             self._start_val = self.value()
             self._accum = 0.0
             self._dragging = False
+            self._button_watch.start()
             return True
         if t == QtCore.QEvent.MouseMove and self._press is not None:
             if not (ev.buttons() & QtCore.Qt.LeftButton):
@@ -267,7 +302,9 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
                     return True
                 self._dragging = True
                 self.lineEdit().grabMouse()
-                QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.BlankCursor)
+                # hidden on this field only (the grab shows its cursor everywhere): an application-wide override
+                # cursor stayed blank when the field was deleted during the drag
+                self.lineEdit().setCursor(QtCore.Qt.BlankCursor)
             if dx:
                 self._accum += dx
                 QtGui.QCursor.setPos(self._press)   # keep the hidden cursor in place
