@@ -865,7 +865,15 @@ def timeline_visible():
     st = settings()
     if st.timeline_frames == "OFF" or not st.show:
         return False
-    return st.timeline_frames == "ALWAYS" or tool_active()
+    if st.timeline_frames == "ALWAYS" or tool_active():
+        return True
+    # Blender's own viewport shown (Qt Preferences → Viewport): its drawings are shown there and the tool takes
+    # the Qt view only while drawing – keep the frames in the Timeline meanwhile
+    try:
+        from . import sculptview
+        return sculptview.covers()
+    except Exception:
+        return False
 
 
 def _tl_y(bar):

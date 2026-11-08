@@ -97,6 +97,16 @@ def _set_reason(name, on):
             v.resume()
     except Exception as ex:
         bridge.log(f"Blender's viewport: switching to the Qt view failed ({ex})", "WARNING")
+    _timeline_update()
+
+
+def _timeline_update():
+    """Blue Pencil's frame ticks in the Timeline also show while Blender's view is shown – repaint it."""
+    from . import app
+    try:
+        app._win.timeline.bar.update()
+    except Exception:
+        pass
 
 
 def bp_check(*_args):
@@ -222,6 +232,7 @@ def sync(vp=None):
         if want and not active(vp):
             if enter(vp):
                 bp_check()
+                _timeline_update()
         elif not want and _view is not None:
             leave()
         elif _view is not None and not _reasons:
@@ -258,6 +269,7 @@ def leave(camera=True):
         _reasons.clear()
     if v is not None:
         v.close(camera=camera)
+        _timeline_update()
 
 
 def _preferred():
