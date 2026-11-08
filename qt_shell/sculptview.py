@@ -28,12 +28,12 @@ KEY = "viewport/blender_view"
 CHOICES = (("sculpt", "Sculpt Mode only"), ("always", "Always (every mode)"), ("never", "Never (Qt Shell's view)"))
 TAG = "qtshell_view"     # ID property on the helper window's screen: found again after a file is loaded
 
-_view = None            # the NativeView in use
+_views = {}             # Qt view → NativeView embedded in it (one per visible view of a split layout)
 _timer = None
-_watch = None           # checks for Blender's own playback started in the embedded view
-_reasons = set()        # why Blender's view is hidden for a while (the Qt view shown): "playback", "bluepencil"
+_watch = None           # checks for Blender's own playback started in the embedded view, follows the active view
+_reasons = set()        # why Blender's views are hidden for a while (the Qt views shown): "playback", "bluepencil"
 _bp_handle = None       # draw handler showing Blue Pencil drawings in Blender's view
-_bp_tex = None          # (key, GPUTexture) of the drawings last drawn there
+_bp_tex = {}            # space pointer → (key, GPUTexture) of the drawings last drawn there
 _bp_version = 0         # bumped when drawings / Blue Pencil settings change
 _tool_state = None      # the tool state whose changes are watched (Blue Pencil tool on / off)
 
@@ -65,8 +65,28 @@ def wanted(mode=None):
 
 
 # ---------------------------------------------------------------- state
+def _all():
+    return list(_views.values())
+
+
+def _cur():
+    """The NativeView of the active Qt view (the one the header and menus act on), else any."""
+    from . import app
+    try:
+        vp = app._win.viewport
+    except Exception:
+        vp = None
+    v = _views.get(vp)
+    if v is None and _views:
+        v = next(iter(_views.values()))
+    return v
+
+
 def active(vp=None):
-    return _view is not None and not _view.stale and (vp is None or _view.vp is vp)
+    if vp is None:
+        return any(not v.stale for v in _views.values())
+    v = _views.get(vp)
+    return v is not None and not v.stale
 
 
 def covers(vp=None):
@@ -76,10 +96,9 @@ def covers(vp=None):
 
 
 def _set_reason(name, on):
-    """The Qt view for a while (cached playback, Blue Pencil drawing) – Blender's view hidden while any reason
-    holds, shown again with the Qt view's camera when none is left."""
-    v = _view
-    if v is None or v.stale:
+    """The Qt views for a while (cached playback, Blue Pencil drawing) – Blender's views hidden while any reason
+    holds, shown again with the Qt views' cameras when none is left."""
+    if not _views:
         _reasons.clear()
         return
     before = bool(_reasons)
@@ -90,14 +109,33 @@ def _set_reason(name, on):
     after = bool(_reasons)
     if before == after:
         return
-    try:
-        if after:
-            v.suspend()
-        else:
-            v.resume()
-    except Exception as ex:
-        bridge.log(f"Blender's viewport: switching to the Qt view failed ({ex})", "WARNING")
+    for v in _all():
+        if v.stale:
+            continue
+        try:
+            if after:
+                v.suspend()
+            else:
+                v.resume()
+        except Exception as ex:
+            bridge.log(f"Blender's viewport: switching to the Qt view failed ({ex})", "WARNING")
+    bridge.preferred_view3d = None if after else _preferred
+    if after:
+        _focus_qt()
     _timeline_update()
+
+
+def _focus_qt():
+    """The keyboard to the active Qt view (Space stops playback there, Blue Pencil keys …)."""
+    from . import app
+    try:
+        vp = app._win.viewport
+        vp.setFocus()
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.user32.SetFocus(int(vp.window().winId()))
+    except Exception:
+        pass
 
 
 def _timeline_update():
@@ -110,7 +148,7 @@ def _timeline_update():
 
 
 def bp_check(*_args):
-    """The Blue Pencil tool draws in the Qt view (its tools, cursor and panel work there): Blender's view is
+    """The Blue Pencil tool draws in the Qt view (its tools, cursor and panel work there): Blender's views are
     hidden while the tool is active."""
     try:
         from . import bluepencil
@@ -122,18 +160,42 @@ def bp_check(*_args):
 
 # ---------------------------------------------------------------- cached playback
 def playback(on):
-    """Timeline playback started / stopped. With the playback cache on, the Qt view plays (from the cache –
-    Blender's own view would evaluate the scene every frame): Blender's view is hidden meanwhile and comes back,
-    with the camera of the Qt view, when playback stops."""
+    """Timeline playback started / stopped. With the playback cache on, the Qt views play (from the cache –
+    Blender's own view would evaluate the scene every frame): Blender's views are hidden meanwhile and come back,
+    with the cameras of the Qt views, when playback stops."""
     from . import playcache
     _set_reason("playback", bool(on) and playcache.enabled())
+
+
+def _watch_tick():
+    _track_active()
+    _watch_playback()
+
+
+def _track_active():
+    """A click into one of Blender's views makes its Qt view the active one (no Qt event reaches Qt there)."""
+    if sys.platform != "win32" or len(_views) < 2:
+        return
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        f = u.GetFocus()
+        if not f:
+            return
+        for vp, v in list(_views.items()):
+            if f == v.hwnd or u.IsChild(v.hwnd, f):
+                area = getattr(vp, "area", None)
+                if area is not None and area.active is not vp:
+                    area.set_active(vp)
+                return
+    except Exception:
+        pass
 
 
 def _watch_playback():
     """Space pressed in Blender's view starts Blender's own playback (no cache) – with the playback cache on,
     it is handed to the Qt Timeline instead."""
-    v = _view
-    if v is None or v.stale or _reasons or bridge.op_depth:
+    if not _views or _reasons or bridge.op_depth or any(v.stale for v in _all()):
         return
     from . import app, playcache
     if not playcache.enabled() or app._win is None:
@@ -158,7 +220,7 @@ def _watch_playback():
 
 
 def start(win):
-    """Starts the check that keeps the embedded view in line with the setting, the mode, file loads."""
+    """Starts the check that keeps the embedded views in line with the setting, the mode, the layout, file loads."""
     global _timer
     if _timer is not None:
         try:
@@ -177,7 +239,7 @@ def start(win):
             pass
     _watch = QtCore.QTimer(win)
     _watch.setInterval(100)
-    _watch.timeout.connect(_watch_playback)
+    _watch.timeout.connect(_watch_tick)
     _watch.start()
     global _tool_state, _bp_handle
     try:
@@ -210,19 +272,26 @@ def stop():
             bpy.utils.unregister_class(QTSHELL_OT_view_key)
         except Exception:
             pass
-    global _bp_handle, _bp_tex
+    global _bp_handle
     if _bp_handle is not None:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(_bp_handle, "WINDOW")
         except Exception:
             pass
         _bp_handle = None
-    _bp_tex = None
-    leave()
+    _bp_tex.clear()
+
+
+def layout_changing():
+    """The Qt views are about to be moved into other splitters (Viewport Layout): Blender's windows are taken out
+    first – re-parenting a widget with an embedded native window is not safe – and embedded again afterwards."""
+    if _views:
+        leave()
+    QtCore.QTimer.singleShot(0, sync)
 
 
 def sync(vp=None):
-    """Embeds / removes Blender's view as the setting and the mode want it."""
+    """Embeds / removes Blender's views as the setting, the mode and the visible Qt views want it."""
     from . import app
     win = app._win
     if win is None:
@@ -230,58 +299,98 @@ def sync(vp=None):
     try:
         if bridge.op_depth or getattr(win, "_rendering", False) or getattr(win, "_render_win", None) is not None:
             return
-        vp = vp or win.viewport
-        if _view is not None and (_view.stale or not _view.alive() or _view.area() is None):
-            leave(camera=_view.area() is not None and not _view.stale)   # a file was loaded: start over
+        for q, v in list(_views.items()):
+            if v.stale or not v.alive() or v.area() is None:
+                leave(q, camera=v.area() is not None and not v.stale)    # a file was loaded: start over
         _close_stale_windows()
-        want = wanted() and vp is not None and vp.isVisible()
-        if want and not active(vp):
-            if enter(vp):
-                bp_check()
-                _timeline_update()
-        elif not want and _view is not None:
-            leave()
-        elif _view is not None and not _reasons:
-            _view.apply_regions()
+        area = getattr(win, "viewports", None)
+        shown = area.visible_views() if area is not None else [win.viewport]
+        targets = shown if wanted() else []
+        for q in list(_views):
+            if q not in targets:
+                leave(q)
+        new = False
+        for q in targets:
+            if q not in _views and enter(q):
+                new = True
+        if new:
+            bp_check()
+            _timeline_update()
+        if not _reasons:
+            for v in _all():
+                v.apply_regions()
+            _sync_shading()
     except Exception as ex:
         bridge.log(f"Blender's viewport: {ex}", "WARNING")
 
 
+def _sync_shading():
+    """The Qt header changes the shading of the active view – the other embedded views follow (the Qt views
+    share one shading too)."""
+    if len(_views) < 2:
+        return
+    src = _cur()
+    sp = src.space() if src is not None else None
+    if sp is None:
+        return
+    for v in _all():
+        if v is src:
+            continue
+        dst = v.space()
+        if dst is None:
+            continue
+        try:
+            with v.context():
+                _copy_props(sp.shading, dst.shading)
+                _copy_props(sp.overlay, dst.overlay)
+        except Exception:
+            pass
+
+
 def enter(vp):
     """Embeds Blender's 3D view into `vp` (Qt view). False if it can't be done."""
-    global _view
-    if _view is not None:
-        if _view.vp is vp and _view.alive() and not _view.stale:
+    v = _views.get(vp)
+    if v is not None:
+        if v.alive() and not v.stale:
             return True
-        leave()
+        leave(vp)
     try:
-        _view = NativeView(vp)
-        bridge.preferred_view3d = _preferred
-        _add_keys()
-        return True
+        v = NativeView(vp)
     except Exception as ex:
-        _view = None
         bridge.log(f"Blender's own 3D view could not be embedded ({ex}) – using the Qt view.", "WARNING")
         return False
-
-
-def leave(camera=True):
-    """The camera and the shading back to the Qt view, the Blender window closed."""
-    global _view, _bp_tex
-    v, _view = _view, None
-    bridge.preferred_view3d = None
-    _bp_tex = None
-    _remove_keys()
+    first = not _views
+    _views[vp] = v
     if _reasons:
-        camera = False                     # the Qt view already has the camera (cached playback, Blue Pencil)
-        _reasons.clear()
-    if v is not None:
+        v.suspend()                      # the Qt views are in use (playback, Blue Pencil) – shown later
+    else:
+        bridge.preferred_view3d = _preferred
+    if first:
+        _add_keys()
+    return True
+
+
+def leave(vp=None, camera=True):
+    """The camera and the shading back to the Qt view(s), Blender's window(s) closed. vp None: all."""
+    items = [(vp, _views.pop(vp))] if vp in _views else ([] if vp is not None else list(_views.items()))
+    if vp is None:
+        _views.clear()
+    if _reasons:
+        camera = False                   # the Qt views already have the cameras (cached playback, Blue Pencil)
+    for _q, v in items:
+        _bp_tex.pop(getattr(v, "space_ptr", None), None)
         v.close(camera=camera)
+    if not _views:
+        bridge.preferred_view3d = None
+        _remove_keys()
+        _reasons.clear()
+        _bp_tex.clear()
+    if items:
         _timeline_update()
 
 
 def _preferred():
-    v = _view
+    v = _cur()
     if v is None or v.stale or not v.alive():
         return None
     area = v.area()
@@ -296,9 +405,9 @@ def _close_stale_windows():
     from . import app
     wm = bpy.context.window_manager
     wins = list(wm.windows)
-    mine = _view.ptr if _view is not None else None
+    mine = {v.ptr for v in _all()}
     for i, w in enumerate(wins):
-        if i == 0 or w.as_pointer() == mine:
+        if i == 0 or w.as_pointer() in mine:
             continue
         try:
             tagged = w.screen is not None and w.screen.get(TAG)
@@ -310,8 +419,8 @@ def _close_stale_windows():
 
 @bpy.app.handlers.persistent
 def _on_load_pre(*_args):
-    if _view is not None:
-        _view.stale = True                 # its area / window may be freed – touched again only by sync()
+    for v in _all():
+        v.stale = True                   # its area / window may be freed – touched again only by sync()
     bridge.preferred_view3d = None
 
 
@@ -431,10 +540,9 @@ def _remove_keys():
 
 # ---------------------------------------------------------------- input
 def qt_pressed(obj):
-    """A mouse press on a Qt widget: Windows keeps the keyboard focus on the embedded Blender window (a
+    """A mouse press on a Qt widget: Windows keeps the keyboard focus on an embedded Blender window (a
     native child) even when a Qt widget gets Qt's focus – give the Win32 focus back to the Qt window."""
-    v = _view
-    if v is None or sys.platform != "win32":
+    if not _views or sys.platform != "win32":
         return
     try:
         w = obj.window() if isinstance(obj, QtWidgets.QWidget) else None
@@ -446,15 +554,15 @@ def qt_pressed(obj):
     user32 = ctypes.windll.user32
     try:
         f = user32.GetFocus()
-        if f and (f == v.hwnd or user32.IsChild(v.hwnd, f)):
+        if f and any(f == v.hwnd or user32.IsChild(v.hwnd, f) for v in _all()):
             user32.SetFocus(int(w.winId()))
     except Exception:
         pass
 
 
 def focus_view():
-    """Keyboard focus to the embedded Blender window (its modal operators read keys from there)."""
-    v = _view
+    """Keyboard focus to the active embedded Blender window (its modal operators read keys from there)."""
+    v = _cur()
     if v is None:
         return
     try:
@@ -468,7 +576,7 @@ def focus_view():
 
 def invoke(idname, props):
     """Runs an interactive operator (G / R / S, extrude, bevel …) as Blender's own modal operator in the
-    embedded view. False when it couldn't be started (the caller then uses Qt Shell's version)."""
+    active embedded view. False when it couldn't be started (the caller then uses Qt Shell's version)."""
     ctx = _preferred()
     if ctx is None:
         return False
@@ -489,8 +597,9 @@ def invoke(idname, props):
 def _bp_changed(*_args):
     global _bp_version
     _bp_version += 1
-    v = _view
-    if v is not None and not v.stale:
+    for v in _all():
+        if v.stale:
+            continue
         try:
             a = v.area()
             if a is not None:
@@ -524,13 +633,14 @@ def _bp_rect(region, rv, w, h):
 def _bp_draw():
     """POST_PIXEL draw handler: the Blue Pencil layers of the view / camera drawn over Blender's view (painted
     by Qt into an image – the same drawing as in the Qt view – shown as a texture)."""
-    global _bp_tex
-    v = _view
-    if v is None or v.stale or _reasons:
+    if not _views or _reasons:
         return
     ctx = bpy.context
     sp = ctx.space_data
-    if sp is None or sp.as_pointer() != v.space_ptr:
+    if sp is None:
+        return
+    sptr = sp.as_pointer()
+    if not any(v.space_ptr == sptr and not v.stale for v in _all()):
         return
     try:
         from . import bluepencil as bp
@@ -548,7 +658,8 @@ def _bp_draw():
         key = (w, h, cam, round(rect.x(), 1), round(rect.y(), 1), round(rect.width(), 1), round(rect.height(), 1),
                f, _bp_version, hash(raw) if isinstance(raw, str) else 0,
                bool(getattr(bp._hub(), "playing", False)))
-        if _bp_tex is None or _bp_tex[0] != key:
+        got = _bp_tex.get(sptr)
+        if got is None or got[0] != key:
             img = QtGui.QImage(w, h, QtGui.QImage.Format_RGBA8888_Premultiplied)
             img.fill(0)
             p = QtGui.QPainter(img)
@@ -562,20 +673,22 @@ def _bp_draw():
             arr = np.frombuffer(img.constBits(), dtype=np.uint8, count=w * h * 4).astype(np.float32)
             arr *= 1.0 / 255.0
             buf = gpu.types.Buffer("FLOAT", w * h * 4, arr)
-            _bp_tex = (key, gpu.types.GPUTexture((w, h), format="RGBA8", data=buf))
+            got = (key, gpu.types.GPUTexture((w, h), format="RGBA8", data=buf))
+            _bp_tex[sptr] = got
         import gpu
         from gpu_extras.presets import draw_texture_2d
         gpu.state.blend_set("ALPHA_PREMULT")
-        draw_texture_2d(_bp_tex[1], (0, 0), w, h)
+        draw_texture_2d(got[1], (0, 0), w, h)
         gpu.state.blend_set("NONE")
     except Exception as ex:
-        _bp_tex = None
+        _bp_tex.pop(sptr, None)
         bridge.log(f"Blender's viewport: Blue Pencil drawing failed ({ex})", "WARNING")
 
 
 def resized(vp):
-    if _view is not None and _view.vp is vp:
-        _view.fit()
+    v = _views.get(vp)
+    if v is not None:
+        v.fit()
 
 
 def _copy_props(src, dst):

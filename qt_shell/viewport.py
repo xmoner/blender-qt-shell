@@ -2463,6 +2463,8 @@ class ViewportArea(QtWidgets.QWidget):
         if mode not in self.LAYOUTS:
             raise ValueError(f"layout must be one of {sorted(self.LAYOUTS)}")
         new_quad = mode == "quad" and self.mode != "quad"
+        from . import sculptview              # Blender's embedded views: out before the views are re-parented
+        sculptview.layout_changing()
         if mode != self.mode:
             self._prev_mode = self.mode
         self.mode = mode

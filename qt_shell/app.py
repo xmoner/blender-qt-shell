@@ -167,7 +167,7 @@ def _notify_with_context(app, obj, ev):
     if et == QtCore.QEvent.MouseButtonPress:
         # a click into Qt takes the keyboard back from the embedded Blender 3D view (Sculpt Mode)
         sv = sys.modules.get(__name__.rsplit(".", 1)[0] + ".sculptview")
-        if sv is not None and sv._view is not None:
+        if sv is not None and sv._views:
             sv.qt_pressed(obj)
     if et == QtCore.QEvent.MouseButtonPress and ev.button() == QtCore.Qt.MiddleButton \
             and ev.modifiers() & QtCore.Qt.ShiftModifier:
