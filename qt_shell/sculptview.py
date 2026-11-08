@@ -204,6 +204,12 @@ def stop():
             except RuntimeError:
                 pass
     _timer = _watch = None
+    leave()
+    if hasattr(bpy.types, "QTSHELL_OT_view_key"):
+        try:
+            bpy.utils.unregister_class(QTSHELL_OT_view_key)
+        except Exception:
+            pass
     global _bp_handle, _bp_tex
     if _bp_handle is not None:
         try:
@@ -251,6 +257,7 @@ def enter(vp):
     try:
         _view = NativeView(vp)
         bridge.preferred_view3d = _preferred
+        _add_keys()
         return True
     except Exception as ex:
         _view = None
@@ -264,6 +271,7 @@ def leave(camera=True):
     v, _view = _view, None
     bridge.preferred_view3d = None
     _bp_tex = None
+    _remove_keys()
     if _reasons:
         camera = False                     # the Qt view already has the camera (cached playback, Blue Pencil)
         _reasons.clear()
@@ -320,6 +328,105 @@ def unregister_handlers():
     for old in [f for f in lst if getattr(f, "__name__", "") == "_on_load_pre"
                 and getattr(f, "__module__", "") == __name__]:
         lst.remove(old)
+
+
+# ---------------------------------------------------------------- Qt Shell keys inside Blender's view
+# Blender's view has the keyboard while the mouse works in it, so Qt Shell's own shortcuts never reach Qt
+# there. These actions get temporary keymap items (the keys set in Qt Shell) that hand them back to Qt.
+FORWARD = ("view3d.mode_object", "view3d.mode_edit", "view3d.mode_pose", "view3d.mode_sculpt",
+           "view3d.mode_weight_paint", "view3d.mode_vertex_paint", "view3d.mode_texture_paint", "view3d.mode_menu")
+_km_items = []          # (keymap, keymap item) added while Blender's view is embedded
+
+_KEY_NAMES = {"0": "ZERO", "1": "ONE", "2": "TWO", "3": "THREE", "4": "FOUR", "5": "FIVE", "6": "SIX",
+              "7": "SEVEN", "8": "EIGHT", "9": "NINE", "TAB": "TAB", "SPACE": "SPACE", "`": "ACCENT_GRAVE",
+              "-": "MINUS", "=": "EQUAL", "HOME": "HOME", "END": "END", "DEL": "DEL", "DELETE": "DEL",
+              "INS": "INSERT", "INSERT": "INSERT", "PGUP": "PAGE_UP", "PGDOWN": "PAGE_DOWN",
+              "BACKSPACE": "BACK_SPACE", "RETURN": "RET", "ENTER": "RET", ",": "COMMA", ".": "PERIOD",
+              "/": "SLASH", ";": "SEMI_COLON", "'": "QUOTE", "[": "LEFT_BRACKET", "]": "RIGHT_BRACKET",
+              "\\": "BACK_SLASH"}
+
+
+def _blender_key(qt_key):
+    """'Alt+1' → ('ONE', ctrl, shift, alt) for a keymap item; None for keys Blender's keymap can't take."""
+    parts = [p for p in str(qt_key).replace(" ", "").split("+") if p]
+    if not parts:
+        return None
+    mods = {p.lower() for p in parts[:-1]}
+    k = parts[-1].upper()
+    if k in _KEY_NAMES:
+        t = _KEY_NAMES[k]
+    elif len(k) == 1 and "A" <= k <= "Z":
+        t = k
+    elif k.startswith("F") and k[1:].isdigit() and 1 <= int(k[1:]) <= 24:
+        t = k
+    else:
+        return None
+    if mods - {"ctrl", "shift", "alt"}:
+        return None
+    return t, "ctrl" in mods, "shift" in mods, "alt" in mods
+
+
+class QTSHELL_OT_view_key(bpy.types.Operator):
+    """A Qt Shell shortcut pressed in Blender's own 3D view"""
+    bl_idname = "qtshell.view_key"
+    bl_label = "Qt Shell Shortcut"
+    bl_options = {"INTERNAL"}
+
+    action: bpy.props.StringProperty()
+
+    def execute(self, context):
+        # later, from Qt: switching the mode may close this very window (Blender's view of Sculpt Mode)
+        QtCore.QTimer.singleShot(0, lambda a=self.action: _run_action(a))
+        return {"FINISHED"}
+
+
+def _run_action(aid):
+    from . import app
+    mw = app._win
+    if mw is None:
+        return
+    try:
+        if aid == "view3d.mode_menu":
+            mw.mode_menu()
+        elif aid.startswith("view3d.mode_"):
+            from .viewport import _MODE_KEYS
+            mode = _MODE_KEYS.get(aid[len("view3d.mode_"):])
+            if mode:
+                mw.switch_mode(mode)
+    except Exception as ex:
+        bridge.log(f"{aid}: {ex}", "WARNING")
+
+
+def _add_keys():
+    _remove_keys()
+    from . import keymap
+    try:
+        if not hasattr(bpy.types, "QTSHELL_OT_view_key"):
+            bpy.utils.register_class(QTSHELL_OT_view_key)
+        kc = bpy.context.window_manager.keyconfigs.addon
+        if kc is None:
+            return
+        km = kc.keymaps.new(name="3D View", space_type="VIEW_3D")
+        for aid in FORWARD:
+            for k in keymap.keys(aid):
+                bk = _blender_key(k)
+                if bk is None:
+                    continue
+                t, ctrl, shift, alt = bk
+                kmi = km.keymap_items.new("qtshell.view_key", t, "PRESS", ctrl=ctrl, shift=shift, alt=alt)
+                kmi.properties.action = aid
+                _km_items.append((km, kmi))
+    except Exception as ex:
+        bridge.log(f"Blender's viewport: Qt Shell keys not added ({ex})", "WARNING")
+
+
+def _remove_keys():
+    while _km_items:
+        km, kmi = _km_items.pop()
+        try:
+            km.keymap_items.remove(kmi)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------- input
