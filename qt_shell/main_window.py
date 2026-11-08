@@ -672,6 +672,9 @@ class MainWindow(QtWidgets.QMainWindow):
         hub.render_done.connect(self._on_render_done)
         hub.render_frame.connect(self._on_render_frame)
         hub.file_loaded.connect(self._on_file_loaded)
+        from . import sculptview                  # Blender's own viewport in the Qt view (Qt Preferences)
+        sculptview.register_handlers()
+        QtCore.QTimer.singleShot(1500, lambda: sculptview.start(self))
         self.viewports.status.connect(lambda s: self.statusBar().showMessage(s, 4000))
         self._rendering = False
         self._render_win = None             # hidden Blender window the running render was started from
@@ -1233,11 +1236,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 vp._set_modal_orient("NORMAL")
         return True
 
+    def _interactive_op(self, idname, props):
+        """Operators that follow the mouse (Qt Shell runs its own version of them in the Qt view)."""
+        from . import valuemodal
+        if idname.startswith("transform.") or idname.startswith("view3d.edit_mesh_extrude"):
+            return True
+        if idname in valuemodal.UNSUPPORTED or valuemodal.spec_for(idname, props) is not None:
+            return True
+        if self._macro_parts(idname) is not None:
+            return True
+        return idname.endswith("_move") and bridge.op_exists(idname[:-5])
+
     def special_op(self, idname, props, ctx=None):
         vp = self.viewport
         if idname == "wm.properties_edit":          # Blender's dialog can't open from Qt – our own one
             from . import propedit
             return propedit.edit_property(self, props, ctx)
+        from . import sculptview, valuemodal
+        if sculptview.active() and self._interactive_op(idname, props) and sculptview.invoke(idname, props):
+            return True                            # Blender's viewport shown: Blender's own modal operator there
         if idname in ("transform.translate", "transform.rotate", "transform.resize"):
             vp.start_modal({"transform.translate": "G", "transform.rotate": "R", "transform.resize": "S"}[idname])
             return True
@@ -2074,12 +2091,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_mode(self, mode):
         from . import sculpt, sculptview
         sculpt.forget()                      # undo groups of strokes belong to one Sculpt Mode session
-        # Sculpt Mode: Blender's own 3D view embedded in the Qt view (Blender's speed); deferred – the mode
-        # may have been switched from inside that Blender window
-        if mode == "SCULPT":
-            QtCore.QTimer.singleShot(0, lambda: bpy.context.mode == "SCULPT" and sculptview.enter(self.viewport))
-        elif sculptview.active():
-            QtCore.QTimer.singleShot(0, sculptview.leave)
+        # Blender's own 3D view embedded in the Qt view (Sculpt Mode / always – Qt Preferences → Viewport);
+        # deferred – the mode may have been switched from inside that Blender window
+        QtCore.QTimer.singleShot(0, sculptview.sync)
         if mode == "SCULPT" and not getattr(self, "_sculpt_panel_shown", False) and "sculpt" in self.docks:
             self._sculpt_panel_shown = True  # the Sculpt panel opens the first time Sculpt Mode is entered
             self.docks["sculpt"].show()
@@ -2382,6 +2396,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def shutdown(self):
+        try:
+            from . import sculptview              # Blender's embedded view closed while the Qt window still exists
+            sculptview.stop()
+            sculptview.unregister_handlers()
+        except Exception:
+            pass
         try:
             self.image_editor.shutdown()          # gives Blender's borrowed area its old type back
         except Exception:

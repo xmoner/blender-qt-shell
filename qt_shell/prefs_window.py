@@ -232,6 +232,28 @@ class QtPreferences(QtWidgets.QDialog):
             api.status(f"Reset failed: {ex}")
 
     def _page_viewport(self, page, lay):
+        from . import sculptview
+        _section(lay, "3D view", page)
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Blender's viewport", page))
+        bv = QtWidgets.QComboBox(page)
+        for key, label in sculptview.CHOICES:
+            bv.addItem(label, key)
+        bv.setCurrentIndex(max(0, bv.findData(sculptview.setting())))
+        bv.setToolTip("Which 3D view the main view shows:\n"
+                      "Blender's own viewport embedded in Qt Shell, or Qt Shell's view")
+        bv.activated.connect(lambda _i: sculptview.set_setting(bv.currentData()))
+        row.addWidget(bv)
+        row.addStretch(1)
+        lay.addLayout(row)
+        _hint(lay, "Blender's viewport: Blender draws the view and handles it itself – as fast as in Blender "
+                   "(sculpting, Multires, Dynamic Topology), with Blender's tools, gizmos, selection and "
+                   "navigation (Blender's keymap, not Qt Shell's shortcuts). The Qt header, menus and panels "
+                   "act on it; G / R / S and other interactive tools from the menus run as Blender's own.\n"
+                   "Qt Shell's view: Qt Shell's navigation scheme, shortcuts, gizmos, Blue Pencil and "
+                   "annotations; Sculpt Mode then sculpts through Qt Shell (slower, no Multires / Dyntopo "
+                   "display).\n"
+                   "Sculpt Mode only: Blender's viewport while sculpting, Qt Shell's view otherwise.", page)
         _section(lay, "Rendering", page)
         p = self._prefs()
         row = QtWidgets.QHBoxLayout()

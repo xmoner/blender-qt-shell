@@ -76,7 +76,17 @@ def tr(text):
 
 
 # ---------------------------------------------------------------- context
+preferred_view3d = None     # callable → (window, area, region) or None: Blender's view embedded in Qt (sculptview)
+
+
 def find_view3d():
+    if preferred_view3d is not None:
+        try:
+            found = preferred_view3d()
+        except Exception:
+            found = None
+        if found:
+            return found
     wm = bpy.context.window_manager
     if wm is None:
         return None
