@@ -400,7 +400,7 @@ class Viewport(QtWidgets.QWidget):
 
     def render_frame(self):
         from . import sculptview
-        if sculptview.active(self):         # Sculpt Mode: Blender's own 3D view covers this one
+        if sculptview.covers(self):         # Blender's own 3D view covers this one
             return
         if bridge.gpu_held():               # no GPU context right now (a Blender window was just closed)
             self._dirty = True

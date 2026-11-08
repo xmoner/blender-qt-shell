@@ -30,6 +30,8 @@ TAG = "qtshell_view"     # ID property on the helper window's screen: found agai
 
 _view = None            # the NativeView in use
 _timer = None
+_watch = None           # checks for Blender's own playback started in the embedded view
+_suspended = False      # cached playback: the Qt view shows the cache, Blender's view is hidden meanwhile
 
 
 # ---------------------------------------------------------------- setting
@@ -63,6 +65,61 @@ def active(vp=None):
     return _view is not None and not _view.stale and (vp is None or _view.vp is vp)
 
 
+def covers(vp=None):
+    """Blender's view is embedded and shown over the Qt view (not while cached playback uses the Qt view)."""
+    return active(vp) and not _suspended
+
+
+# ---------------------------------------------------------------- cached playback
+def playback(on):
+    """Timeline playback started / stopped. With the playback cache on, the Qt view plays (from the cache –
+    Blender's own view would evaluate the scene every frame): Blender's view is hidden meanwhile and comes back,
+    with the camera of the Qt view, when playback stops."""
+    global _suspended
+    v = _view
+    if v is None or v.stale:
+        _suspended = False
+        return
+    from . import playcache
+    try:
+        if on and not _suspended and playcache.enabled():
+            _suspended = True
+            v.suspend()
+        elif not on and _suspended:
+            _suspended = False
+            v.resume()
+    except Exception as ex:
+        bridge.log(f"Blender's viewport: playback switch failed ({ex})", "WARNING")
+
+
+def _watch_playback():
+    """Space pressed in Blender's view starts Blender's own playback (no cache) – with the playback cache on,
+    it is handed to the Qt Timeline instead."""
+    v = _view
+    if v is None or v.stale or _suspended or bridge.op_depth:
+        return
+    from . import app, playcache
+    if not playcache.enabled() or app._win is None:
+        return
+    try:
+        playing = [w for w in bpy.context.window_manager.windows
+                   if w.screen is not None and w.screen.is_animation_playing]
+    except Exception:
+        return
+    if not playing:
+        return
+    w = playing[0]
+    try:
+        with bpy.context.temp_override(window=w, screen=w.screen):
+            bpy.ops.screen.animation_cancel(restore_frame=False)
+    except Exception as ex:
+        bridge.log(f"Blender's viewport: stopping Blender's playback failed ({ex})", "WARNING")
+        return
+    tl = getattr(app._win, "timeline", None)
+    if tl is not None and not tl.is_playing():
+        tl.play()
+
+
 def start(win):
     """Starts the check that keeps the embedded view in line with the setting, the mode, file loads."""
     global _timer
@@ -75,17 +132,28 @@ def start(win):
     _timer.setInterval(1000)
     _timer.timeout.connect(sync)
     _timer.start()
+    global _watch
+    if _watch is not None:
+        try:
+            _watch.stop()
+        except RuntimeError:
+            pass
+    _watch = QtCore.QTimer(win)
+    _watch.setInterval(100)
+    _watch.timeout.connect(_watch_playback)
+    _watch.start()
     QtCore.QTimer.singleShot(0, sync)
 
 
 def stop():
-    global _timer
-    if _timer is not None:
-        try:
-            _timer.stop()
-        except RuntimeError:
-            pass
-        _timer = None
+    global _timer, _watch
+    for t in (_timer, _watch):
+        if t is not None:
+            try:
+                t.stop()
+            except RuntimeError:
+                pass
+    _timer = _watch = None
     leave()
 
 
@@ -107,7 +175,7 @@ def sync(vp=None):
             enter(vp)
         elif not want and _view is not None:
             leave()
-        elif _view is not None:
+        elif _view is not None and not _suspended:
             _view.apply_regions()
     except Exception as ex:
         bridge.log(f"Blender's viewport: {ex}", "WARNING")
@@ -132,9 +200,12 @@ def enter(vp):
 
 def leave(camera=True):
     """The camera and the shading back to the Qt view, the Blender window closed."""
-    global _view
+    global _view, _suspended
     v, _view = _view, None
     bridge.preferred_view3d = None
+    if _suspended:
+        camera = False                     # the Qt view already has the camera (cached playback)
+        _suspended = False
     if v is not None:
         v.close(camera=camera)
 
@@ -396,13 +467,55 @@ class NativeView:
                 sp.clip_end = main_sp.clip_end
             if hasattr(sp.overlay, "show_text"):
                 sp.overlay.show_text = True
-            # the camera of the Qt view
+        self._camera_in()
+
+    def _camera_in(self):
+        """The camera of the Qt view → Blender's view."""
+        sp, vp = self.space(), self.vp
+        if sp is None:
+            return
+        with self.context():
             rv = sp.region_3d
             w, h = max(vp.width(), 2), max(vp.height(), 2)
             vm, _pm = vp.matrices(w, h)
             rv.view_perspective = "ORTHO" if getattr(vp, "ortho", False) else "PERSP"
             rv.view_distance = float(getattr(vp, "dist", 10.0))
             rv.view_matrix = vm
+
+    # ---- cached playback: the Qt view for a while
+    def suspend(self):
+        self._back()                             # camera + shading → the Qt view
+        bridge.preferred_view3d = None
+        try:
+            self.container.hide()
+        except Exception:
+            pass
+        vp = self.vp
+        try:
+            vp.setFocus()                        # Space stops playback in Qt now
+            if sys.platform == "win32":
+                import ctypes
+                ctypes.windll.user32.SetFocus(int(vp.window().winId()))
+        except Exception:
+            pass
+        vp.request_redraw()
+
+    def resume(self):
+        if not self.alive() or self.area() is None:
+            return
+        main_sp, sp = self._main_space(), self.space()
+        if main_sp is not None:                  # shading changed from the Qt header during playback
+            with self.context():
+                _copy_props(main_sp.shading, sp.shading)
+                _copy_props(main_sp.overlay, sp.overlay)
+        self._camera_in()                        # the view may have been moved while playing
+        bridge.preferred_view3d = _preferred
+        self.fit()
+        try:
+            self.container.show()
+        except Exception:
+            pass
+        self.apply_regions()
 
     def fit(self):
         try:

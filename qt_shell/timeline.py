@@ -1785,6 +1785,9 @@ class Timeline(QtWidgets.QWidget):
     def _set_playing(self, on):
         was = bool(getattr(self.hub, "playing", False))
         self.hub.playing = on
+        if was != bool(on):
+            from . import sculptview     # Blender's embedded view: cached playback uses the Qt view
+            sculptview.playback(bool(on))
         vp = getattr(self.hub, "viewport_area", None)
         if vp is None:
             vp = getattr(self.hub, "viewport", None)

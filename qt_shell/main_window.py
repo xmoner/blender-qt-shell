@@ -1253,7 +1253,7 @@ class MainWindow(QtWidgets.QMainWindow):
             from . import propedit
             return propedit.edit_property(self, props, ctx)
         from . import sculptview, valuemodal
-        if sculptview.active() and self._interactive_op(idname, props) and sculptview.invoke(idname, props):
+        if sculptview.covers() and self._interactive_op(idname, props) and sculptview.invoke(idname, props):
             return True                            # Blender's viewport shown: Blender's own modal operator there
         if idname in ("transform.translate", "transform.rotate", "transform.resize"):
             vp.start_modal({"transform.translate": "G", "transform.rotate": "R", "transform.resize": "S"}[idname])
