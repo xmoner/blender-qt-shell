@@ -34,6 +34,15 @@ NAV_SCALE = 1.0   # default resolution factor while orbiting / panning / zooming
 NAV_IDLE = 0.2    # seconds after the last interactive change before the full-quality frame is drawn
 
 
+def _visible_objects():
+    """The visible objects of the view layer – bpy.context.visible_objects exists only in a context with a
+    3D view (not e.g. right after Blender's embedded views were closed for a layout change)."""
+    try:
+        return list(bpy.context.visible_objects)
+    except AttributeError:
+        return [o for o in bpy.context.view_layer.objects if o.visible_get()]
+
+
 @contextmanager
 def eevee_samples(n):
     """with eevee_samples(1): draw_view3d renders EEVEE with n viewport samples (None = unchanged).
@@ -1042,14 +1051,15 @@ class Viewport(QtWidgets.QWidget):
             if pts:
                 self.frame_points(pts)
                 return
-        sel = list(bpy.context.selected_objects)
-        self.frame_objects(sel or list(bpy.context.visible_objects))
+        sel = list(getattr(bpy.context, "selected_objects", None) or
+                   [o for o in bpy.context.view_layer.objects if o.select_get()])
+        self.frame_objects(sel or _visible_objects())
 
     def frame_all(self):
         if self.camera_view and bpy.context.scene.camera is not None:
             self.camera_view_reset()             # Home in the camera view: Frame Camera Bounds
             return
-        self.frame_objects(list(bpy.context.visible_objects))
+        self.frame_objects(_visible_objects())
 
     def set_view(self, name):
         self.leave_camera()

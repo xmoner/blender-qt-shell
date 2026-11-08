@@ -168,8 +168,58 @@ def playback(on):
 
 
 def _watch_tick():
+    _hover_focus()
     _track_active()
     _watch_playback()
+
+
+_hovered = None         # the NativeView under the mouse at the last tick
+
+
+def _hover_focus():
+    """Like Qt Shell's own views (and Blender): the keyboard goes to the view under the mouse – Blender's view
+    gets the Win32 focus when the mouse enters it (no Qt event tells Qt about that), unless text is being
+    typed in a Qt field, a popup / dialog is open or a button is held."""
+    global _hovered
+    if sys.platform != "win32" or not _views or _reasons:
+        _hovered = None
+        return
+    try:
+        pos = QtGui.QCursor.pos()
+        hit = None
+        for v in _all():
+            c = v.container
+            if not v.stale and c.isVisible() and c.rect().contains(c.mapFromGlobal(pos)):
+                hit = v
+                break
+        if hit is _hovered:
+            return
+        _hovered = hit
+        if hit is None:
+            return
+        if QtWidgets.QApplication.activePopupWidget() is not None or \
+                QtWidgets.QApplication.activeModalWidget() is not None:
+            return
+        if QtGui.QGuiApplication.mouseButtons() != QtCore.Qt.NoButton:
+            return
+        fw = QtWidgets.QApplication.focusWidget()
+        typing = isinstance(fw, QtWidgets.QLineEdit) and fw.text() and not isinstance(
+            fw.parent(), QtWidgets.QAbstractSpinBox)
+        if typing or isinstance(fw, (QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit)):
+            return
+        import ctypes
+        u = ctypes.windll.user32
+        top = int(hit.vp.window().winId())
+        if u.GetForegroundWindow() != top:
+            return                       # another program / window in front – leave it
+        f = u.GetFocus()
+        if f != hit.hwnd and not u.IsChild(hit.hwnd, f):
+            u.SetFocus(hit.hwnd)
+        # Blender sends key events to its active window only – a child window gets no WM_ACTIVATE of its own
+        # (a click activates it inside Blender, hovering doesn't): tell it, like the click would
+        u.SendMessageW(hit.hwnd, 0x0006, 1, 0)          # WM_ACTIVATE, WA_ACTIVE
+    except Exception:
+        pass
 
 
 def _track_active():
