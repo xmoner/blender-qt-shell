@@ -628,6 +628,7 @@ class SculptPanel(QtWidgets.QScrollArea):
             pass
         if s is not None:
             self._toggle(self.disp_sec, "Brush Circle", s, "show_brush", "CURSOR")
+        self._asset_shelf_button()
         ov = getattr(sp, "overlay", None) if sp is not None else None
         if ov is not None:
             for text, prop, op in (("Mask", "show_sculpt_mask", "sculpt_mode_mask_opacity"),
@@ -638,6 +639,19 @@ class SculptPanel(QtWidgets.QScrollArea):
                     if op in ov.bl_rna.properties:
                         self._row_into(r, "", ov, op)
                     self.disp_sec.addLayout(r)
+
+    def _asset_shelf_button(self):
+        """Blender's asset shelf at the bottom of Blender's viewport (brushes) – shown / hidden."""
+        from . import sculptview, keymap
+        b = QtWidgets.QPushButton("Asset Shelf", self.widget())
+        b.setCheckable(True)
+        b.setChecked(sculptview.asset_shelf_on())
+        if blicons.has("ASSET_MANAGER"):
+            b.setIcon(blicons.icon("ASSET_MANAGER"))
+        keymap.tip(b, "Brushes / assets shelf at the bottom of Blender's viewport ({view3d.asset_shelf})")
+        b.toggled.connect(lambda on: sculptview.set_asset_shelf(on))
+        sculptview.signals.asset_shelf.connect(b.setChecked)   # bound method: dropped with the button
+        self.disp_sec.addWidget(b)
 
     # ---- sync
     def pick_brush(self, name):

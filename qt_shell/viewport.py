@@ -2200,6 +2200,9 @@ class Viewport(QtWidgets.QWidget):
             self._mode_op("hide", mode, "object.hide_view_set", {"unselected": True})
         elif H("view3d.edit_toggle"):
             bridge.run_op("object.editmode_toggle")
+        elif H("view3d.asset_shelf"):
+            from . import sculptview
+            sculptview.toggle_asset_shelf()
         elif H("view3d.mode_menu"):
             from . import api
             mw = api.main_window()

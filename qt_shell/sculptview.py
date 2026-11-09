@@ -18,6 +18,7 @@ visible view; interactive operators (G / R / S, extrude …) run as Blender's ow
 """
 import math
 import sys
+import time
 
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -27,6 +28,14 @@ from . import bridge
 KEY = "viewport/blender_view"
 CHOICES = (("sculpt", "Sculpt Mode only"), ("always", "Always (every mode)"), ("never", "Never (Qt Shell's view)"))
 TAG = "qtshell_view"     # ID property on the helper window's screen: found again after a file is loaded
+SHELF_KEY = "viewport/asset_shelf"   # Blender's asset shelf (bottom of the view: brushes in Sculpt Mode …) shown
+
+
+class _Signals(QtCore.QObject):
+    asset_shelf = QtCore.Signal(bool)
+
+
+signals = _Signals()
 
 _views = {}             # Qt view → NativeView embedded in it (one per visible view of a split layout)
 _timer = None
@@ -62,6 +71,32 @@ def wanted(mode=None):
     except Exception:
         return False
     return mode == "SCULPT"
+
+
+# ---------------------------------------------------------------- asset shelf
+def asset_shelf_on():
+    v = QtCore.QSettings("QtShell", "QtShell").value(SHELF_KEY, True)
+    return v not in (False, "false", "0", 0)
+
+
+def set_asset_shelf(on, apply=True):
+    on = bool(on)
+    if on == asset_shelf_on():
+        return
+    QtCore.QSettings("QtShell", "QtShell").setValue(SHELF_KEY, on)
+    if apply:
+        for v in _all():
+            v.apply_regions()
+    signals.asset_shelf.emit(on)
+
+
+def toggle_asset_shelf():
+    set_asset_shelf(not asset_shelf_on())
+    from . import app
+    try:
+        app._win.statusBar().showMessage(f"Asset Shelf {'shown' if asset_shelf_on() else 'hidden'}.", 2500)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- state
@@ -493,7 +528,8 @@ def unregister_handlers():
 # Blender's view has the keyboard while the mouse works in it, so Qt Shell's own shortcuts never reach Qt
 # there. These actions get temporary keymap items (the keys set in Qt Shell) that hand them back to Qt.
 FORWARD = ("view3d.mode_object", "view3d.mode_edit", "view3d.mode_pose", "view3d.mode_sculpt",
-           "view3d.mode_weight_paint", "view3d.mode_vertex_paint", "view3d.mode_texture_paint", "view3d.mode_menu")
+           "view3d.mode_weight_paint", "view3d.mode_vertex_paint", "view3d.mode_texture_paint", "view3d.mode_menu",
+           "view3d.asset_shelf")
 _km_items = []          # (keymap, keymap item) added while Blender's view is embedded
 
 _KEY_NAMES = {"0": "ZERO", "1": "ONE", "2": "TWO", "3": "THREE", "4": "FOUR", "5": "FIVE", "6": "SIX",
@@ -547,6 +583,8 @@ def _run_action(aid):
     try:
         if aid == "view3d.mode_menu":
             mw.mode_menu()
+        elif aid == "view3d.asset_shelf":
+            toggle_asset_shelf()
         elif aid.startswith("view3d.mode_"):
             from .viewport import _MODE_KEYS
             mode = _MODE_KEYS.get(aid[len("view3d.mode_"):])
@@ -759,6 +797,10 @@ class NativeView:
         from . import native, app
         self.vp = vp
         self.stale = False
+        self._born = time.monotonic()
+        self._shelf_applied = None
+        self._shelf_mode = None
+        self._shelf_set_at = 0.0
         wm = bpy.context.window_manager
         before = {w.as_pointer() for w in wm.windows}
         native_before = set(native.ghost_windows())
@@ -845,26 +887,42 @@ class NativeView:
 
     # ---- setup
     def apply_regions(self):
-        """Blender's header, sidebar, HUD, asset shelf hidden (Qt Shell has them); its toolbar shown outside
-        Sculpt Mode (Blender's tools work there), hidden in Sculpt Mode (the Sculpt panel has the brushes)."""
+        """Blender's header, sidebar, HUD hidden (Qt Shell has them); its toolbar shown outside Sculpt Mode
+        (Blender's tools work there), hidden in Sculpt Mode (the Sculpt panel has the brushes); the asset shelf
+        as set (its shortcut / the Sculpt panel) – collapsing or expanding it in Blender itself
+        changes that setting."""
         sp = self.space()
         if sp is None:
             return
         try:
-            sculpt = bpy.context.mode == "SCULPT"
+            mode = bpy.context.mode
         except Exception:
-            sculpt = False
+            mode = ""
+        sculpt = mode == "SCULPT"
+        cur = getattr(sp, "show_region_asset_shelf", None)
+        if cur is not None and getattr(self, "_shelf_applied", None) is not None and self._shelf_mode == mode \
+                and cur != self._shelf_applied and time.monotonic() - self._born > 3.0 \
+                and time.monotonic() - self._shelf_set_at > 1.5:   # Blender applies our own change on a redraw
+            set_asset_shelf(cur, apply=False)              # changed in Blender's view by hand
+        shelf = asset_shelf_on()
         want = {"show_region_header": False, "show_region_tool_header": False, "show_region_ui": False,
-                "show_region_hud": False, "show_region_asset_shelf": False, "show_region_toolbar": not sculpt}
+                "show_region_hud": False, "show_region_asset_shelf": shelf, "show_region_toolbar": not sculpt}
+        self._shelf_applied, self._shelf_mode = shelf, mode
         todo = {a: on for a, on in want.items() if hasattr(sp, a) and getattr(sp, a) != on}
         if not todo:
             return
+        if "show_region_asset_shelf" in todo:
+            self._shelf_set_at = time.monotonic()
         with self.context():               # region updates use the context window (NULL → crash, 2026-11-08)
             for attr, on in todo.items():
                 try:
                     setattr(sp, attr, on)
                 except Exception:
                     pass
+        try:
+            self.area().tag_redraw()        # a region shown / hidden takes effect (and reads back) on a redraw
+        except Exception:
+            pass
 
     def context(self):
         """temp_override onto the embedded window / area – RNA updates of its space need a context window."""
