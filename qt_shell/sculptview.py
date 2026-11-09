@@ -174,10 +174,15 @@ def _focus_qt():
 
 
 def _timeline_update():
-    """Blue Pencil's frame ticks in the Timeline also show while Blender's view is shown – repaint it."""
+    """Blue Pencil's frame ticks in the Timeline also show while Blender's view is shown – repaint it; the 3D
+    header's Brushes (asset shelf) button shows only then."""
     from . import app
     try:
         app._win.timeline.bar.update()
+    except Exception:
+        pass
+    try:
+        app._win._sync_header()
     except Exception:
         pass
 
@@ -901,7 +906,7 @@ class NativeView:
         sculpt = mode == "SCULPT"
         cur = getattr(sp, "show_region_asset_shelf", None)
         if cur is not None and getattr(self, "_shelf_applied", None) is not None and self._shelf_mode == mode \
-                and cur != self._shelf_applied and time.monotonic() - self._born > 3.0 \
+                and cur != self._shelf_applied and time.monotonic() - self._born > 6.0 \
                 and time.monotonic() - self._shelf_set_at > 1.5:   # Blender applies our own change on a redraw
             set_asset_shelf(cur, apply=False)              # changed in Blender's view by hand
         shelf = asset_shelf_on()

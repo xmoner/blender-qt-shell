@@ -254,6 +254,13 @@ class QtPreferences(QtWidgets.QDialog):
                    "annotations; Sculpt Mode then sculpts through Qt Shell (slower, no Multires / Dyntopo "
                    "display).\n"
                    "Sculpt Mode only: Blender's viewport while sculpting, Qt Shell's view otherwise.", page)
+        shelf = QtWidgets.QCheckBox("Asset shelf in Blender's viewport (brushes at the bottom in Sculpt Mode)", page)
+        shelf.setChecked(sculptview.asset_shelf_on())
+        shelf.toggled.connect(lambda on: sculptview.set_asset_shelf(on))
+        sculptview.signals.asset_shelf.connect(shelf.setChecked)
+        keymap.tip(shelf, "Also: the Brushes button in the 3D header, {view3d.asset_shelf}, the Sculpt panel, "
+                          "or collapse it right in Blender's viewport")
+        lay.addWidget(shelf)
         _section(lay, "Rendering", page)
         p = self._prefs()
         row = QtWidgets.QHBoxLayout()

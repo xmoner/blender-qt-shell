@@ -995,6 +995,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self._hdr_toggle(bar, lay, "▣", "Toggle X-Ray (Alt+Z)", lambda: getattr(sp().shading, xray_attr()),
                          lambda on: setattr(sp().shading, xray_attr(), on),
                          "bpy.ops.view3d.toggle_xray()   # bpy.context.space_data.shading.show_xray = True")
+        # Blender's viewport: its asset shelf (brushes at the bottom in Sculpt Mode …) shown / hidden
+        from . import sculptview, blicons
+        lay.addSpacing(theme.px(4))
+        sb = self._hdr_toggle(bar, lay, "Brushes", "Asset Shelf: brushes / assets at the bottom of Blender's viewport",
+                              sculptview.asset_shelf_on, sculptview.set_asset_shelf,
+                              "# Qt Shell setting: viewport/asset_shelf")
+        if blicons.has("ASSET_MANAGER"):
+            sb.setIcon(blicons.icon("ASSET_MANAGER"))
+            sb.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        keymap.tip(sb, "Asset Shelf: brushes / assets at the bottom of Blender's viewport ({view3d.asset_shelf})")
+        self._hdr_syncs.append(lambda b=sb: b.setVisible(sculptview.active()))
+        try:
+            sculptview.signals.asset_shelf.connect(self._sync_header, QtCore.Qt.UniqueConnection)
+        except (RuntimeError, TypeError):
+            pass                                           # already connected (header rebuilt)
 
     def _fill_enum_menu(self, menu, data, prop):
         menu.clear()
@@ -1009,7 +1024,7 @@ class MainWindow(QtWidgets.QMainWindow):
             grp.addAction(a)
             a.triggered.connect(lambda _c=False, i=ident: (setattr(data, prop, i), self._after_header_change()))
 
-    def _sync_header(self):
+    def _sync_header(self, *_args):
         for fn in getattr(self, "_hdr_syncs", []):
             try:
                 fn()
