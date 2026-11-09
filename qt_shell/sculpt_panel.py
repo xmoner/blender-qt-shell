@@ -218,7 +218,7 @@ def brush_icon(kind, group, size=None):
         return ic
     ic = QtGui.QIcon()
     base = QtGui.QColor(GROUP_COLORS.get(group, "#888888"))
-    for px in (24, 32, 48, 64):
+    for px in (24, 32, 48, 64, 96, 128):
         img = QtGui.QImage(px, px, QtGui.QImage.Format_ARGB32_Premultiplied)
         img.fill(QtCore.Qt.transparent)
         p = QtGui.QPainter(img)
@@ -303,6 +303,22 @@ class SculptPanel(QtWidgets.QScrollArea):
         grp = QtWidgets.QButtonGroup(body)
         grp.setExclusive(True)
         bsec = self._section("Brushes", "brushes")
+        # icon size (QSettings sculpt/brush_icon_size) – the grids re-flow to the panel width
+        srow = QtWidgets.QHBoxLayout()
+        slab = QtWidgets.QLabel("Icon Size", body)
+        slab.setStyleSheet("color:#9a9a9a;")
+        srow.addWidget(slab)
+        self.icon_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, body)
+        self.icon_slider.setRange(16, 96)
+        self.icon_slider.setValue(self._icon_size())
+        self.icon_slider.setToolTip("Size of the brush icons")
+        self.icon_slider.valueChanged.connect(self._set_icon_size)
+        srow.addWidget(self.icon_slider, 1)
+        self.icon_size_lab = QtWidgets.QLabel(f"{self._icon_size()} px", body)
+        self.icon_size_lab.setMinimumWidth(theme.px(40))
+        srow.addWidget(self.icon_size_lab)
+        bsec.addLayout(srow)
+        self._brush_grids = []                  # (grid, [buttons])
         for group in (ADD, CONTRAST, TRANSFORM, GENERAL):
             lab = QtWidgets.QLabel(group, body)
             lab.setStyleSheet(f"color:{GROUP_COLORS[group]}; font-weight:bold;")
@@ -313,7 +329,7 @@ class SculptPanel(QtWidgets.QScrollArea):
             for i, (name, glyph, g, note) in enumerate(items):
                 b = QtWidgets.QToolButton(body)
                 b.setIcon(brush_icon(glyph, g))
-                b.setIconSize(QtCore.QSize(theme.px(26), theme.px(26)))
+                b.setIconSize(QtCore.QSize(theme.px(self._icon_size()), theme.px(self._icon_size())))
                 b.setCheckable(True)
                 b.setAutoRaise(True)
                 b.setToolTip(f"<b>{name}</b><br>{note}")
@@ -321,10 +337,11 @@ class SculptPanel(QtWidgets.QScrollArea):
                                 f"border:1px solid {theme.HOVER['border']}; border-radius:4px;}}")
                 b.clicked.connect(lambda _=False, n=name: self.pick_brush(n))
                 grp.addButton(b)
-                grid.addWidget(b, i // 6, i % 6)
                 self.brush_btns[name] = b
-            grid.setColumnStretch(6, 1)
+            self._brush_grids.append((grid, [self.brush_btns[e[0]] for e in items]))
             bsec.addLayout(grid)
+        self._cols = 0
+        self._flow_brushes()
 
         # sections rebuilt with the brush / object
         self.brush_sec = self._section("Brush", "brush")
@@ -376,6 +393,51 @@ class SculptPanel(QtWidgets.QScrollArea):
         self._timer.timeout.connect(self.sync)
         sculpt.on_change(self.sync)
         self.sync()
+
+    # ---- brush icon size
+    @staticmethod
+    def _icon_size():
+        try:
+            v = int(QtCore.QSettings("QtShell", "QtShell").value("sculpt/brush_icon_size", 26))
+        except (TypeError, ValueError):
+            v = 26
+        return max(16, min(96, v))
+
+    def _set_icon_size(self, v):
+        QtCore.QSettings("QtShell", "QtShell").setValue("sculpt/brush_icon_size", int(v))
+        self.icon_size_lab.setText(f"{int(v)} px")
+        sz = QtCore.QSize(theme.px(v), theme.px(v))
+        for _grid, btns in self._brush_grids:
+            for b in btns:
+                b.setIconSize(sz)
+        self._cols = 0
+        self._flow_brushes()
+
+    def _flow_brushes(self):
+        """As many brush icons per row as fit the panel's width."""
+        grids = getattr(self, "_brush_grids", None)
+        if not grids:
+            return
+        grid0, btns0 = grids[0]
+        # the button's real width (icon + its frame) + the grid spacing; the sections' frames / margins take ~40 px
+        cell = btns0[0].sizeHint().width() + max(grid0.horizontalSpacing(), 0)
+        avail = self.viewport().width() - theme.px(40)
+        cols = max(1, avail // max(cell, 1))
+        if cols == self._cols:
+            return
+        self._cols = cols
+        for grid, btns in grids:
+            for b in btns:
+                grid.removeWidget(b)
+            for c in range(grid.columnCount()):
+                grid.setColumnStretch(c, 0)
+            for i, b in enumerate(btns):
+                grid.addWidget(b, i // cols, i % cols)
+            grid.setColumnStretch(cols, 1)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._flow_brushes()
 
     # ---- building blocks
     def _section(self, title, key, closed=False):
