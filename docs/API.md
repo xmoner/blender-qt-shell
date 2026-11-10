@@ -903,6 +903,7 @@ ie = qt_shell.api.image_editor()
 ie.set_source("COMPOSITOR")           # COMPOSITOR (result), VIEWER, RENDER, ANIMATION or an image name
 ie.set_live(True)                     # re-read the Viewer whenever the compositor ran (False = freeze the picture)
 ie.refresh()                          # Reload: the compositor's current result
+ie.set_auto_reload(True)              # Auto: an image shown follows Texture Paint live (default on)
 ie.reload(); ie.fit(); ie.zoom(1)     # 1 = 1:1
 ie.set_channel("ALPHA")               # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE
 ie.export_image("C:/renders/comp.exr")              # .png .jpg .exr .tif .webp .bmp

@@ -226,6 +226,44 @@ def read_blender_image(img, name="qtshell_image_editor.png"):
     return q if q is not None and not q.isNull() else None
 
 
+def pixels_to_qimage(img, max_size=4096):
+    """QImage of a Blender image's pixels in memory – what a painted (not yet saved) texture looks like now.
+    Byte images keep their stored values (sRGB); float images are converted from linear to sRGB. Unlike
+    read_blender_image (save_render) the scene's view transform is not applied (Blender shows textures so)."""
+    try:
+        w, h = img.size
+    except Exception:
+        return None
+    if not w or not h or not getattr(img, "has_data", True):
+        try:
+            img.pixels[0]                    # loads the buffer of an image not shown yet
+            w, h = img.size
+        except Exception:
+            return None
+    if not w or not h:
+        return None
+    px = np.empty(w * h * 4, dtype=np.float32)
+    try:
+        img.pixels.foreach_get(px)
+    except Exception:
+        return None
+    a = px.reshape(h, w, 4)[::-1]
+    step = max(1, int(np.ceil(max(w, h) / float(max_size))))
+    if step > 1:
+        a = a[::step, ::step]
+    a = a.copy()
+    try:
+        cs = img.colorspace_settings.name
+    except Exception:
+        cs = ""
+    if img.is_float and cs not in ("Non-Color", "Raw"):
+        rgb = np.clip(a[..., :3], 0, None)
+        a[..., :3] = np.where(rgb <= 0.0031308, rgb * 12.92, 1.055 * np.power(rgb, 1 / 2.4) - 0.055)
+    b = np.ascontiguousarray((np.clip(a, 0, 1) * 255 + 0.5).astype(np.uint8))
+    hh, ww = b.shape[:2]
+    return QtGui.QImage(b.data, ww, hh, ww * 4, QtGui.QImage.Format_RGBA8888).copy()
+
+
 def apply_channel(base, ch):
     """Display channels like Blender's (Color & Alpha, Color, Alpha, Red, Green, Blue)."""
     if base is None or ch == "COLOR_ALPHA":
@@ -908,6 +946,12 @@ class ImageEditor(QtWidgets.QWidget):
         self._cache_timer = QtCore.QTimer(self)
         self._cache_timer.setInterval(30)
         self._cache_timer.timeout.connect(self._cache_tick)
+        self._img_version = None       # (image name, bridge.image_version) of the picture shown
+        self._img_cost = 0.0
+        self._img_loaded_at = 0.0
+        self._auto_timer = QtCore.QTimer(self)
+        self._auto_timer.setInterval(120)
+        self._auto_timer.timeout.connect(self._auto_tick)
         hub.data_changed.connect(self._on_data_changed)
         hub.render_done.connect(self._on_render_done)
         hub.file_loaded.connect(self._on_file_loaded)
@@ -965,6 +1009,13 @@ class ImageEditor(QtWidgets.QWidget):
         self.reload_btn.clicked.connect(lambda _c=False: self.refresh())
         pytips.tag(self.reload_btn, _api("refresh()"))
         bl.addWidget(self.reload_btn)
+        self.auto_btn = self._tool("Auto", "Auto Reload (blue = on): an image follows Texture Paint (and any other "
+                                           "change of its pixels) live – no Reload needed", checkable=True)
+        self.auto_btn.setChecked(QtCore.QSettings("QtShell", "QtShell").value("image/auto_reload", True)
+                                 not in (False, "false", "0", 0))
+        self.auto_btn.toggled.connect(self.set_auto_reload)
+        pytips.tag(self.auto_btn, _api("set_auto_reload(True)"))
+        bl.addWidget(self.auto_btn)
         # animation controls
         self.anim_box = QtWidgets.QWidget(bar)
         al = QtWidgets.QHBoxLayout(self.anim_box)
@@ -1329,12 +1380,19 @@ class ImageEditor(QtWidgets.QWidget):
             self._set_hint(f"The image '{name}' is gone.")
             return
         q = None
-        if img.source in ("FILE", "SEQUENCE", "MOVIE") and img.packed_file is None:
+        t0 = time.monotonic()
+        # the file only while it is what Blender has – a painted (dirty) image is newer than its file
+        if img.source in ("FILE", "SEQUENCE", "MOVIE") and img.packed_file is None and not img.is_dirty:
             path = bpy.path.abspath(img.filepath_from_user() if hasattr(img, "filepath_from_user") else img.filepath)
             if path and os.path.isfile(path):
                 q = load_image(path)
+        if q is None and img.source in ("FILE", "GENERATED", "TILED") or (q is None and img.packed_file):
+            q = pixels_to_qimage(img)        # the pixels in memory (painted, generated, packed)
         if q is None:
             q = read_blender_image(img, "qtshell_image_other.png")
+        self._img_cost = time.monotonic() - t0
+        self._img_version = (name, bridge.image_version(name))
+        self._img_loaded_at = time.monotonic()
         if q is None:
             self._set_picture(None)
             self._set_hint(f"'{name}' has no pixels to show.")
@@ -1896,8 +1954,41 @@ class ImageEditor(QtWidgets.QWidget):
                     except Exception as ex:
                         bridge.log(f"Image Editor: {ex}", "WARNING")
             self._comp_changed()
-        elif self.source.startswith("IMAGE:") and self.isVisible():
-            pass
+        elif self.source.startswith("IMAGE:") and self.isVisible() and self.auto_btn.isChecked():
+            if not self._auto_timer.isActive():
+                self._auto_timer.start()
+
+    # --- Auto Reload (Texture Paint): an image shown follows changes of its pixels
+    def set_auto_reload(self, on=True):
+        on = bool(on)
+        QtCore.QSettings("QtShell", "QtShell").setValue("image/auto_reload", on)
+        if self.auto_btn.isChecked() != on:
+            self.auto_btn.blockSignals(True)
+            self.auto_btn.setChecked(on)
+            self.auto_btn.blockSignals(False)
+        if on and self.source.startswith("IMAGE:") and self.isVisible():
+            self._auto_timer.start()
+        elif not on:
+            self._auto_timer.stop()
+
+    def _auto_tick(self):
+        """Reloads the image when its depsgraph version moved (a paint stroke …) – not more often than every
+        0.12 s / 3× the time one reload takes (big textures), stops when nothing changes for a while."""
+        if not (self.source.startswith("IMAGE:") and self.isVisible() and self.auto_btn.isChecked()):
+            self._auto_timer.stop()
+            return
+        if bridge.op_depth:
+            return
+        name = self.source[6:]
+        cur = (name, bridge.image_version(name))
+        now = time.monotonic()
+        if cur == self._img_version:
+            if now - self._img_loaded_at > 3.0:
+                self._auto_timer.stop()          # data_changed starts it again
+            return
+        if now - self._img_loaded_at < max(0.12, 3.0 * self._img_cost):
+            return
+        self.reload(keep_view=True)
 
     def _comp_changed(self):
         """Something changed: watch Blender's COMPOSITE job and show the Viewer when it has finished."""
