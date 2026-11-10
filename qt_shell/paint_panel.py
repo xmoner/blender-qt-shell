@@ -630,8 +630,15 @@ class TexturePaintPanel(VertexPaintPanel):
         slots = tuple(getattr(s, "name", "") for s in getattr(mat, "texture_paint_slots", ()) or ()) if mat else ()
         return (getattr(ip, "mode", ""), _ptr(getattr(ip, "canvas", None)), _ptr(mat), slots,
                 bool(getattr(ip, "use_stencil_layer", False)), _ptr(getattr(ip, "stencil_image", None)),
+                self._image_key(),
                 getattr(mat, "paint_active_slot", 0) if mat else 0, len(bpy.data.images),
                 len(ob.material_slots) if ob is not None else 0)
+
+    def _image_key(self):
+        img = self.current_image()
+        if img is None:
+            return None
+        return (img.name, img.filepath, bool(img.packed_file), bool(img.is_dirty), img.source)
 
     def _brush_key_extra(self):
         ip = self.settings()
@@ -700,13 +707,7 @@ class TexturePaintPanel(VertexPaintPanel):
             nb.clicked.connect(lambda _=False: self._new_canvas())
             r.addWidget(nb)
             lay.addLayout(r)
-        sb = QtWidgets.QPushButton("Save All Images", self.widget())
-        if blicons.has("FILE_TICK"):
-            sb.setIcon(blicons.icon("FILE_TICK"))
-        sb.setToolTip("Save every painted (modified) image to its file – new images need a file first "
-                      "(Image editor → Save As)")
-        sb.clicked.connect(lambda _=False: self._save_images())
-        lay.addWidget(sb)
+        self._texture_rows(lay)
         # projection
         for text, prop, icon, tip in (
                 ("Occlude", "use_occlude", "HIDE_OFF", "Only paint the surface you see (not through the mesh)"),
@@ -742,6 +743,133 @@ class TexturePaintPanel(VertexPaintPanel):
                 nb.setToolTip("New black stencil image (1024 × 1024)")
                 nb.clicked.connect(lambda _=False: self._new_stencil())
                 self.mask_sec.addWidget(nb)
+
+    # ---- the texture painted on: name, file, save
+    def current_image(self):
+        """The image painted on now: the material's active paint slot, or the Single Image canvas."""
+        ip = self.settings()
+        if ip is None:
+            return None
+        if getattr(ip, "mode", "") == "IMAGE":
+            return ip.canvas
+        ob = _active_mesh_object()
+        mat = ob.active_material if ob is not None else None
+        if mat is None:
+            return None
+        imgs = getattr(mat, "texture_paint_images", None)
+        i = getattr(mat, "paint_active_slot", 0)
+        if imgs is not None and 0 <= i < len(imgs):
+            return imgs[i]
+        return None
+
+    def _texture_rows(self, lay):
+        img = self.current_image()
+        if img is not None:
+            r = QtWidgets.QHBoxLayout()
+            lab = QtWidgets.QLabel("Name", self.widget())
+            lab.setMinimumWidth(theme.px(78))
+            r.addWidget(lab)
+            ed = QtWidgets.QLineEdit(img.name, self.widget())
+            ed.setToolTip("Rename the texture (the image data-block) – Enter to apply")
+            ed.editingFinished.connect(lambda e=ed, n=img.name: self._rename_image(n, e.text()))
+            r.addWidget(ed, 1)
+            lay.addLayout(r)
+            if img.filepath and not img.packed_file:
+                where = bpy.path.abspath(img.filepath)
+            elif img.packed_file:
+                where = "packed in the .blend" + (f" (from {img.filepath})" if img.filepath else "")
+            else:
+                where = "not saved yet – Save As writes it to a file"
+            info = QtWidgets.QLabel(("● " if img.is_dirty else "") + where, self.widget())
+            info.setWordWrap(True)
+            info.setStyleSheet("color:#c9a85b;" if img.is_dirty else "color:#8a8a8a;")
+            info.setToolTip("● = painted since the last save")
+            lay.addWidget(info)
+        r = QtWidgets.QHBoxLayout()
+        for text, icon, tip, fn in (
+                ("Save", "FILE_TICK", "Save this texture to its file (asks for one when it has none)",
+                 lambda: self._save_current()),
+                ("Save As…", "FILE_NEW", "Save this texture to a new file (PNG, JPEG, EXR, TIFF …) – the "
+                                         "texture uses that file from now on", lambda: self._save_as()),
+                ("Save All", "FILE_BACKUP", "Save every painted image that has a file; new images are packed "
+                                            "into the .blend", lambda: self._save_images())):
+            b = QtWidgets.QPushButton(text, self.widget())
+            if blicons.has(icon):
+                b.setIcon(blicons.icon(icon))
+            b.setToolTip(tip)
+            b.setEnabled(img is not None or text == "Save All")
+            b.clicked.connect(lambda _=False, f=fn: f())
+            r.addWidget(b)
+        lay.addLayout(r)
+
+    def _rename_image(self, old, new):
+        new = (new or "").strip()
+        img = bpy.data.images.get(old)
+        if img is None or not new or new == old:
+            return
+        img.name = new
+        if img.name != new:
+            bridge.log(f"Texture renamed to {img.name} ({new} is taken).", "INFO")
+        bridge.undo_push("Rename Texture")
+        self._redraw()
+        QtCore.QTimer.singleShot(0, lambda: self.sync(force=True))   # not inside the line edit's own signal
+
+    def _save_current(self):
+        img = self.current_image()
+        if img is None:
+            return
+        if img.filepath and not img.packed_file and img.source == "FILE":
+            try:
+                img.save()
+                bridge.log(f"Saved {img.name} → {bpy.path.abspath(img.filepath)}", "INFO")
+            except Exception as ex:
+                bridge.log(f"Save {img.name}: {ex}", "WARNING")
+            self.sync(force=True)
+        else:
+            self._save_as(img)
+
+    def _save_as(self, img=None, path=None):
+        """Writes the texture to a file and links it to that file (like Blender's Image → Save As)."""
+        import os
+        from .image_editor import IMAGE_FORMATS
+        img = img or self.current_image()
+        if img is None:
+            return False
+        if not path:
+            if img.filepath:
+                start = bpy.path.abspath(img.filepath)
+            else:
+                base = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else os.path.expanduser("~")
+                start = os.path.join(base, bpy.path.clean_name(img.name) + ".png")
+            path, flt = QtWidgets.QFileDialog.getSaveFileName(self, "Save Texture As", start,
+                                                              ";;".join(f[0] for f in IMAGE_FORMATS))
+            if not path:
+                return False
+            fmt = next((f for f in IMAGE_FORMATS if f[0] == flt), None)
+            if fmt is not None and not os.path.splitext(path)[1]:
+                path += fmt[3]
+        ext = os.path.splitext(path)[1].lower()
+        fmt = next((f[2] for f in IMAGE_FORMATS if f[3] == ext or (ext == ".jpeg" and f[2] == "JPEG")
+                    or (ext == ".tiff" and f[2] == "TIFF")), "PNG")
+        try:
+            if os.path.dirname(path):
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+            img.file_format = fmt
+            img.filepath_raw = path
+            img.save(filepath=path)
+            if img.packed_file:                      # from now on the file is the texture, not the packed copy
+                img.unpack(method="REMOVE")
+            if img.source != "FILE":
+                img.source = "FILE"                  # generated → file (loads what was just written)
+            bridge.log(f"Saved {img.name} → {path}", "INFO")
+            ok = True
+        except Exception as ex:
+            bridge.log(f"Save {img.name} as {path}: {ex}", "WARNING")
+            ok = False
+        bridge.undo_push("Save Texture")
+        self._redraw()
+        self.sync(force=True)
+        return ok
 
     def _save_images(self):
         """Saves the painted images that have a file; new (generated) ones are packed into the .blend – Blender's
