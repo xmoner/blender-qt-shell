@@ -11,8 +11,8 @@
   brightness / contrast, hue / saturation / value, levels, from weights – values in Adjust Last Operation),
   Display (brush circle, asset shelf).
 
-Painting itself happens in Blender's own viewport, embedded in the Qt view in the paint modes (sculptview –
-Blender's brush cursor, strokes, pen pressure and undo). The panel opens the first time Vertex Paint is
+Painting happens in the Qt view (sculpt.py strokes run `paint.vertex_paint`) or – with Qt Preferences →
+Viewport → Sculpt and Paint modes – in Blender's own embedded viewport (sculptview). The panel opens the first time Vertex Paint is
 entered (Window menu: Vertex Paint).
 """
 import bpy
@@ -352,8 +352,11 @@ class VertexPaintPanel(SculptPanel):
             self._toggle(None, "Same Radius for All Brushes", u, "use_unified_size", "LINKED", row=r)
             self._toggle(None, "Same Strength", u, "use_unified_strength", "LINKED", row=r)
             lay.addLayout(r)
-        tip = QtWidgets.QLabel("Drag in the view to paint – Blender's own brush: its cursor, pen pressure and "
-                               "keys (radius / strength / sample colour) as in Blender.", self.widget())
+        from . import keymap
+        tip = QtWidgets.QLabel(keymap.render(
+            "Drag in the view to paint · Ctrl: secondary colour · Shift: blur · {sculpt.radius}: radius · "
+            "{sculpt.strength}: strength · {sculpt.radius_down} / {sculpt.radius_up}: smaller / bigger. "
+            "In Blender's viewport (Qt Preferences → Viewport) Blender's own brush keys apply."), self.widget())
         tip.setWordWrap(True)
         tip.setStyleSheet("color:#8a8a8a;")
         lay.addWidget(tip)

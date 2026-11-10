@@ -2022,7 +2022,7 @@ class Viewport(QtWidgets.QWidget):
         ev.ignore()
 
     def leaveEvent(self, ev):
-        if bpy.context.mode == "SCULPT":
+        if bpy.context.mode in ("SCULPT", "PAINT_VERTEX", "PAINT_WEIGHT", "PAINT_TEXTURE"):
             self.update()                   # hide the brush circle
         super().leaveEvent(ev)
 

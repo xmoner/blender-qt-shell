@@ -1,4 +1,6 @@
-"""Sculpt Mode in the Qt 3D view: brush strokes, brush cursor, radius / strength keys, undo per stroke.
+"""Sculpt Mode (and Vertex / Weight / Texture Paint) in the Qt 3D view: brush strokes, brush cursor, radius /
+strength keys, undo per stroke. The paint modes run their stroke operator (`paint.vertex_paint` …) the same way
+– STROKE_MODES; `sculpt_settings()` / `brush()` / `radius()` follow the current mode.
 
 Blender's sculpt stroke is a modal operator that reads the mouse of its own 3D view – that view is hidden in
 Qt Shell. The stroke runs instead as `sculpt.brush_stroke` in EXEC mode with the path of the mouse:
@@ -33,15 +35,38 @@ _redo_groups = []
 
 
 # ---------------------------------------------------------------- settings
+# modes the Qt view strokes in: tool settings attribute, stroke operator
+STROKE_MODES = {"SCULPT": ("sculpt", "sculpt.brush_stroke"),
+                "PAINT_VERTEX": ("vertex_paint", "paint.vertex_paint"),
+                "PAINT_WEIGHT": ("weight_paint", "paint.weight_paint"),
+                "PAINT_TEXTURE": ("image_paint", "paint.image_paint")}
+
+
 def active():
+    """Sculpt Mode (the sculpt-only parts: Sculpt panel, mask / remesh keys)."""
     try:
         return bpy.context.mode == "SCULPT"
     except Exception:
         return False
 
 
+def stroke_mode():
+    """The current mode when the Qt view paints brush strokes in it (Sculpt, Vertex / Weight / Texture Paint)."""
+    try:
+        m = bpy.context.mode
+    except Exception:
+        return None
+    return m if m in STROKE_MODES else None
+
+
+def stroke_active():
+    return stroke_mode() is not None
+
+
 def sculpt_settings():
-    return getattr(bpy.context.scene.tool_settings, "sculpt", None)
+    """Paint settings of the current stroke mode (Sculpt's outside them) – brush, radius, strength."""
+    attr = STROKE_MODES[stroke_mode() or "SCULPT"][0]
+    return getattr(bpy.context.scene.tool_settings, attr, None)
 
 
 def brush():
@@ -112,7 +137,7 @@ def stroke_blocker():
 # ---------------------------------------------------------------- undo of whole strokes
 def undo_steps():
     """How many Blender undo steps the next Undo should take back (1, or all chunks of the last stroke)."""
-    if active() and _undo_groups:
+    if stroke_active() and _undo_groups:
         n = _undo_groups.pop()
         _redo_groups.append(n)
         return n
@@ -121,7 +146,7 @@ def undo_steps():
 
 
 def redo_steps():
-    if active() and _redo_groups:
+    if stroke_active() and _redo_groups:
         n = _redo_groups.pop()
         _undo_groups.append(n)
         return n
@@ -184,8 +209,12 @@ def _scale(vp, region, rv, x, y, depth):
 class Stroke:
     def __init__(self, vp, pos, mods, pressure):
         self.vp = vp
+        self.kind = stroke_mode() or "SCULPT"
         self.mode = "INVERT" if mods & QtCore.Qt.ControlModifier else "NORMAL"
-        self.toggle = "SMOOTH" if mods & QtCore.Qt.ShiftModifier else "None"
+        # Shift: sculpt smooths (brush toggle); the paint modes blur with mode SMOOTH
+        self.toggle = "SMOOTH" if (mods & QtCore.Qt.ShiftModifier and self.kind == "SCULPT") else "None"
+        if mods & QtCore.Qt.ShiftModifier and self.kind != "SCULPT":
+            self.mode = "SMOOTH"
         self.pending = []            # (x, y, pressure, t)
         self.last = None
         self.started = False
@@ -227,11 +256,19 @@ class Stroke:
         depth = float(getattr(vp, "dist", 10.0)) or 10.0
         k = _scale(vp, region, rv, pts[0][0], pts[0][1], depth)
         els = []
+        hit = _surface_hit if self.kind != "SCULPT" else None
         for (x, y, pr, t) in pts:
             m = _to_hidden(vp, region, rv, x, y, depth)
             if m is None:
                 continue
-            els.append({"name": "", "location": (0.0, 0.0, 0.0), "mouse": m, "mouse_event": m,
+            loc = (0.0, 0.0, 0.0)
+            if hit is not None:
+                # the paint operators take the dab position from the element (no override_location like
+                # sculpt) – (0, 0, 0) painted nothing; off the mesh there is no dab (like Blender)
+                loc = hit(vp, x, y)
+                if loc is None:
+                    continue
+            els.append({"name": "", "location": loc, "mouse": m, "mouse_event": m,
                         "pressure": float(pr), "size": float(radius() * k), "x_tilt": 0.0, "y_tilt": 0.0,
                         "time": float(t), "is_start": not self.started and not els})
         if not els:
@@ -244,19 +281,38 @@ class Stroke:
             with bridge.blender_context():
                 # undo=True: called "like from the UI" – a Python call suppresses the sculpt undo push
                 # (wm.op_undo_depth), so the chunk would not be undoable at all
-                r = bpy.ops.sculpt.brush_stroke("EXEC_DEFAULT", True, stroke=els, mode=self.mode,
-                                                brush_toggle=self.toggle, override_location=True)
+                if self.kind == "SCULPT":
+                    r = bpy.ops.sculpt.brush_stroke("EXEC_DEFAULT", True, stroke=els, mode=self.mode,
+                                                    brush_toggle=self.toggle, override_location=True)
+                else:                    # Vertex / Weight / Texture Paint: Blender projects from the mouse
+                    mod, name = STROKE_MODES[self.kind][1].split(".")
+                    r = getattr(getattr(bpy.ops, mod), name)("EXEC_DEFAULT", True, stroke=els, mode=self.mode)
             if "FINISHED" in r:
                 self.started = True
                 self.chunks += 1
                 _show_changes()
         except Exception as ex:
-            bridge.log(f"Sculpt stroke: {ex}", "WARNING")
+            bridge.log(f"{'Sculpt' if self.kind == 'SCULPT' else 'Paint'} stroke: {ex}", "WARNING")
         finally:
             if owner is not None and old is not None:
                 owner.size = old
         vp.request_redraw()
         return True
+
+
+def _surface_hit(vp, x, y):
+    """World position where the Qt view's ray through (x, y) meets the active object (evaluated), or None."""
+    ob = bpy.context.active_object
+    if ob is None:
+        return None
+    try:
+        o, d = vp.ray(x, y)
+        ev = ob.evaluated_get(bpy.context.evaluated_depsgraph_get())
+        inv = ob.matrix_world.inverted()
+        ok, loc, _n, _i = ev.ray_cast(inv @ o, (inv.to_3x3() @ d).normalized())
+    except Exception:
+        return None
+    return tuple(ob.matrix_world @ loc) if ok else None
 
 
 def _show_changes():
@@ -350,13 +406,13 @@ class ViewSculpt:
                 self.modal = None
             self.vp.update()
             return True
-        if not active() or ev.button() != QtCore.Qt.LeftButton:
+        if not stroke_active() or ev.button() != QtCore.Qt.LeftButton:
             return False
         if ev.modifiers() & QtCore.Qt.AltModifier:          # Alt + LMB: navigation
             return False
         if bpy.context.active_object is None or bpy.context.active_object.type != "MESH":
             return False
-        msg = stroke_blocker()
+        msg = stroke_blocker() if active() else None
         if msg:
             bridge.log(msg, "INFO")
             return True                      # eaten: no stroke, no selection click
@@ -375,7 +431,7 @@ class ViewSculpt:
             self.stroke.add(pos.x(), pos.y(), self.pressure if self.tablet else 1.0)
             self.vp.update()
             return True
-        if active():
+        if stroke_active():
             self.vp.update()                       # the brush circle follows the mouse
         return False
 
@@ -420,7 +476,7 @@ class ViewSculpt:
                 self.modal = None
             self.vp.update()
             return True
-        if not active():
+        if not stroke_active():
             return False
         if H("sculpt.radius"):
             self.modal = SizeModal(self.vp, "RADIUS", ev.key())
@@ -430,6 +486,8 @@ class ViewSculpt:
             set_radius(radius() / 1.1)
         elif H("sculpt.radius_up"):
             set_radius(max(radius() + 1, radius() * 1.1))
+        elif not active():                   # the rest are Sculpt Mode keys
+            return False
         elif H("sculpt.mask_invert"):
             bridge.run_op("paint.mask_flood_fill", {"mode": "INVERT"})
         elif H("sculpt.mask_clear"):
@@ -462,7 +520,7 @@ class ViewSculpt:
             return
         # the cursor position, not underMouse(): after a popup (the right-click menu's Radius / Strength)
         # Qt keeps underMouse() False until the mouse leaves and re-enters – the circle vanished
-        if not active() or self.mouse is None or getattr(self.vp, "_nav", None):
+        if not stroke_active() or self.mouse is None or getattr(self.vp, "_nav", None):
             return
         cur = self.vp.mapFromGlobal(QtGui.QCursor.pos())
         if not self.vp.rect().contains(cur):
@@ -477,7 +535,7 @@ class ViewSculpt:
         mods = QtGui.QGuiApplication.keyboardModifiers()
         if self.stroke is not None:
             sub = self.stroke.mode == "INVERT"
-            smooth = self.stroke.toggle == "SMOOTH"
+            smooth = "SMOOTH" in (self.stroke.toggle, self.stroke.mode)
         else:
             sub = bool(mods & QtCore.Qt.ControlModifier)
             smooth = bool(mods & QtCore.Qt.ShiftModifier)
