@@ -22,7 +22,8 @@ from . import rna_widgets as rw
 
 ADD, CONTRAST, TRANSFORM, GENERAL = "Add / Subtract", "Contrast", "Transform", "Mask · Face Sets"
 GROUP_COLORS = {ADD: "#5b8fd6", CONTRAST: "#d6995b", TRANSFORM: "#62b072", GENERAL: "#a07ad0",
-                "Paint": "#c9566f", "Blend": "#4fa3a8"}      # the last two: Vertex Paint panel (paint_panel.py)
+                "Paint": "#c9566f", "Blend": "#4fa3a8",      # the paint panels (paint_panel.py)
+                "Erase": "#7d8696", "Tools": "#c08a32"}
 
 # (Blender brush asset name, glyph, group, Maya equivalent / note)
 BRUSHES = [
@@ -250,6 +251,49 @@ def _glyph(p, kind, fg):
         p.setPen(pen)
         p.setBrush(QtCore.Qt.NoBrush)
         arrow(15, 12, 21, 12, 2.5)
+    elif k in ("pixel", "erase_pixel"):
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(fg)
+        for (x, y) in ((8, 5), (12, 5), (4, 9), (8, 9), (12, 9), (16, 9), (4, 13), (8, 13), (12, 13),
+                       (16, 13), (8, 17), (12, 17)):
+            p.drawRect(QtCore.QRectF(x, y, 3.4, 3.4))
+        if k == "erase_pixel":
+            p.setPen(QtGui.QPen(QtGui.QColor(30, 30, 30, 230), 2.2))
+            p.drawLine(QtCore.QPointF(4, 20), QtCore.QPointF(20, 4))
+    elif k in ("erase_hard", "erase_soft", "erase_hard_p"):
+        p.save()
+        p.translate(12, 12)
+        p.rotate(-35)
+        if k == "erase_soft":
+            g = QtGui.QLinearGradient(-8, 0, 8, 0)
+            g.setColorAt(0, QtGui.QColor(fg.red(), fg.green(), fg.blue(), 60))
+            g.setColorAt(1, fg)
+            p.setBrush(g)
+        else:
+            p.setBrush(QtGui.QColor(fg.red(), fg.green(), fg.blue(), 70))
+        p.drawRoundedRect(QtCore.QRectF(-8, -4.5, 16, 9), 1.8, 1.8)
+        p.drawLine(QtCore.QPointF(-1, -4.5), QtCore.QPointF(-1, 4.5))
+        p.restore()
+    elif k == "bucket":
+        p.save()
+        p.translate(11, 13)
+        p.rotate(-25)
+        p.setBrush(QtGui.QColor(fg.red(), fg.green(), fg.blue(), 70))
+        p.drawRoundedRect(QtCore.QRectF(-6, -5, 12, 11), 1.5, 1.5)
+        p.restore()
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(fg)
+        path = P()
+        path.moveTo(19, 13)
+        path.cubicTo(17, 17, 17.5, 20, 19, 20)
+        path.cubicTo(20.5, 20, 21, 17, 19, 13)
+        p.drawPath(path)
+    elif k == "clone":
+        p.drawEllipse(QtCore.QPointF(8, 9), 4.5, 4.5)
+        p.setPen(QtGui.QPen(fg, 1.4, QtCore.Qt.DashLine))
+        p.drawEllipse(QtCore.QPointF(16, 15), 4.5, 4.5)
+        p.setPen(pen)
+        arrow(10.5, 11.5, 14, 13.5, 2.2)
     else:
         p.drawEllipse(QtCore.QRectF(6, 6, 12, 12))
     if k.endswith("_p"):                      # pen pressure: a small pen in the corner

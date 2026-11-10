@@ -631,6 +631,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vpaint_panel = VertexPaintPanel(hub)
         self._dock("vpaint", "Vertex Paint", self.vpaint_panel, QtCore.Qt.RightDockWidgetArea)
         self.docks["vpaint"].hide()          # opens the first time Vertex Paint is entered (_on_mode)
+        from .paint_panel import TexturePaintPanel
+        self.tpaint_panel = TexturePaintPanel(hub)
+        self._dock("tpaint", "Texture Paint", self.tpaint_panel, QtCore.Qt.RightDockWidgetArea)
+        self.docks["tpaint"].hide()          # opens the first time Texture Paint is entered (_on_mode)
         from . import gizmo as _gz
         _gz.tool_state(hub).changed.connect(self._bp_tool_changed)
 
@@ -2122,6 +2126,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._vpaint_panel_shown = True  # the Vertex Paint panel opens the first time Vertex Paint is entered
             self.docks["vpaint"].show()
             self.docks["vpaint"].raise_()
+        if mode == "PAINT_TEXTURE" and not getattr(self, "_tpaint_panel_shown", False) and "tpaint" in self.docks:
+            self._tpaint_panel_shown = True  # the Texture Paint panel opens the first time Texture Paint is entered
+            self.docks["tpaint"].show()
+            self.docks["tpaint"].raise_()
         ob = bpy.context.view_layer.objects.active
         cur = ob.mode if ob else "OBJECT"
         self.mode_combo.blockSignals(True)
