@@ -253,7 +253,8 @@ class QtPreferences(QtWidgets.QDialog):
                    "Qt Shell's view: Qt Shell's navigation scheme, shortcuts, gizmos, Blue Pencil and "
                    "annotations; Sculpt Mode then sculpts through Qt Shell (slower, no Multires / Dyntopo "
                    "display).\n"
-                   "Sculpt Mode only: Blender's viewport while sculpting, Qt Shell's view otherwise.", page)
+                   "Sculpt and Paint modes: Blender's viewport while sculpting or painting (Vertex / Weight / "
+                   "Texture Paint), Qt Shell's view otherwise.", page)
         shelf = QtWidgets.QCheckBox("Asset shelf in Blender's viewport (brushes at the bottom in Sculpt Mode)", page)
         shelf.setChecked(sculptview.asset_shelf_on())
         shelf.toggled.connect(lambda on: sculptview.set_asset_shelf(on))

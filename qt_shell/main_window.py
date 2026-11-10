@@ -31,7 +31,8 @@ MODE_MENUS = {
             "EDIT_CURVE": "VIEW3D_MT_curve_add", "EDIT_ARMATURE": "VIEW3D_MT_armature_add"},
     "object": {"OBJECT": "VIEW3D_MT_object", "EDIT_MESH": "VIEW3D_MT_edit_mesh",
                "EDIT_CURVE": "VIEW3D_MT_edit_curve", "POSE": "VIEW3D_MT_pose",
-               "SCULPT": "VIEW3D_MT_sculpt", "EDIT_ARMATURE": "VIEW3D_MT_edit_armature"},
+               "SCULPT": "VIEW3D_MT_sculpt", "EDIT_ARMATURE": "VIEW3D_MT_edit_armature",
+               "PAINT_VERTEX": "VIEW3D_MT_paint_vertex"},
     "select": {"OBJECT": "VIEW3D_MT_select_object", "EDIT_MESH": "VIEW3D_MT_select_edit_mesh",
                "EDIT_CURVE": "VIEW3D_MT_select_edit_curve", "POSE": "VIEW3D_MT_select_pose",
                "EDIT_ARMATURE": "VIEW3D_MT_select_edit_armature"},
@@ -626,6 +627,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.sculpt_panel = SculptPanel(hub)
         self._dock("sculpt", "Sculpt", self.sculpt_panel, QtCore.Qt.RightDockWidgetArea)
         self.docks["sculpt"].hide()          # opens the first time Sculpt Mode is entered (_on_mode)
+        from .paint_panel import VertexPaintPanel
+        self.vpaint_panel = VertexPaintPanel(hub)
+        self._dock("vpaint", "Vertex Paint", self.vpaint_panel, QtCore.Qt.RightDockWidgetArea)
+        self.docks["vpaint"].hide()          # opens the first time Vertex Paint is entered (_on_mode)
         from . import gizmo as _gz
         _gz.tool_state(hub).changed.connect(self._bp_tool_changed)
 
@@ -2113,6 +2118,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._sculpt_panel_shown = True  # the Sculpt panel opens the first time Sculpt Mode is entered
             self.docks["sculpt"].show()
             self.docks["sculpt"].raise_()
+        if mode == "PAINT_VERTEX" and not getattr(self, "_vpaint_panel_shown", False) and "vpaint" in self.docks:
+            self._vpaint_panel_shown = True  # the Vertex Paint panel opens the first time Vertex Paint is entered
+            self.docks["vpaint"].show()
+            self.docks["vpaint"].raise_()
         ob = bpy.context.view_layer.objects.active
         cur = ob.mode if ob else "OBJECT"
         self.mode_combo.blockSignals(True)

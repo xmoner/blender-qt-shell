@@ -21,7 +21,8 @@ from . import blicons, bridge, sculpt, theme
 from . import rna_widgets as rw
 
 ADD, CONTRAST, TRANSFORM, GENERAL = "Add / Subtract", "Contrast", "Transform", "Mask · Face Sets"
-GROUP_COLORS = {ADD: "#5b8fd6", CONTRAST: "#d6995b", TRANSFORM: "#62b072", GENERAL: "#a07ad0"}
+GROUP_COLORS = {ADD: "#5b8fd6", CONTRAST: "#d6995b", TRANSFORM: "#62b072", GENERAL: "#a07ad0",
+                "Paint": "#c9566f", "Blend": "#4fa3a8"}      # the last two: Vertex Paint panel (paint_panel.py)
 
 # (Blender brush asset name, glyph, group, Maya equivalent / note)
 BRUSHES = [
@@ -204,8 +205,59 @@ def _glyph(p, kind, fg):
         p.drawRoundedRect(QtCore.QRectF(-6, -3.5, 12, 7), 1.5, 1.5)
         p.drawLine(QtCore.QPointF(0, -3.5), QtCore.QPointF(0, 3.5))
         p.restore()
+    elif k in ("paint_hard", "paint_hard_p"):
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(fg)
+        p.drawEllipse(QtCore.QRectF(5, 5, 14, 14))
+    elif k in ("paint_soft", "paint_soft_p"):
+        g = QtGui.QRadialGradient(QtCore.QPointF(12, 12), 8.5)
+        g.setColorAt(0.0, fg)
+        g.setColorAt(0.45, QtGui.QColor(fg.red(), fg.green(), fg.blue(), 200))
+        g.setColorAt(1.0, QtGui.QColor(fg.red(), fg.green(), fg.blue(), 0))
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(g)
+        p.drawEllipse(QtCore.QRectF(3, 3, 18, 18))
+    elif k == "airbrush":
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(fg)
+        for (x, y, r) in ((12, 12, 1.6), (8, 9, 1.2), (15.5, 8, 1.1), (16, 14.5, 1.3), (9, 15.5, 1.2),
+                          (12, 6, 0.9), (5.5, 12.5, 0.9), (18.5, 11, 0.9), (12.5, 18, 1.0), (6.5, 6.5, 0.7),
+                          (17.5, 18, 0.8), (6, 18, 0.7), (18, 5.5, 0.7)):
+            p.drawEllipse(QtCore.QPointF(x, y), r, r)
+    elif k == "blur":
+        p.setPen(QtCore.Qt.NoPen)
+        for (x, a) in ((8, 110), (12, 150), (16, 110)):
+            g = QtGui.QRadialGradient(QtCore.QPointF(x, 12), 6)
+            g.setColorAt(0.0, QtGui.QColor(fg.red(), fg.green(), fg.blue(), a))
+            g.setColorAt(1.0, QtGui.QColor(fg.red(), fg.green(), fg.blue(), 0))
+            p.setBrush(g)
+            p.drawEllipse(QtCore.QPointF(x, 12), 6, 6)
+    elif k == "average":
+        p.setBrush(fg)
+        p.drawEllipse(QtCore.QPointF(12, 12), 2.2, 2.2)
+        p.setBrush(QtCore.Qt.NoBrush)
+        arrow(4, 4, 9, 9, 2.5)
+        arrow(20, 4, 15, 9, 2.5)
+        arrow(4, 20, 9, 15, 2.5)
+        arrow(20, 20, 15, 15, 2.5)
+    elif k == "smear":
+        p.setPen(QtCore.Qt.NoPen)
+        g = QtGui.QLinearGradient(3, 12, 17, 12)
+        g.setColorAt(0.0, QtGui.QColor(fg.red(), fg.green(), fg.blue(), 0))
+        g.setColorAt(1.0, fg)
+        p.setBrush(g)
+        p.drawRoundedRect(QtCore.QRectF(3, 8, 14, 8), 4, 4)
+        p.setPen(pen)
+        p.setBrush(QtCore.Qt.NoBrush)
+        arrow(15, 12, 21, 12, 2.5)
     else:
         p.drawEllipse(QtCore.QRectF(6, 6, 12, 12))
+    if k.endswith("_p"):                      # pen pressure: a small pen in the corner
+        p.setPen(QtGui.QPen(QtGui.QColor(30, 30, 30, 220), 1.0))
+        p.setBrush(QtGui.QColor(255, 255, 255))
+        p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(14.5, 22.5), QtCore.QPointF(15.5, 18.5),
+                                       QtCore.QPointF(22, 12), QtCore.QPointF(23.5, 13.5),
+                                       QtCore.QPointF(17, 20)]))
 
 
 _icon_cache = {}
@@ -393,10 +445,13 @@ class SculptPanel(QtWidgets.QScrollArea):
         self.sync()
 
     # ---- brush icon size
-    @staticmethod
-    def _icon_size():
+    ICON_KEY = "sculpt/brush_icon_size"     # QSettings key of the brush icon size
+    STATE_PREFIX = "sculpt"                # QSettings prefix of the sections' open / closed state
+
+    @classmethod
+    def _icon_size(cls):
         try:
-            v = int(QtCore.QSettings("QtShell", "QtShell").value("sculpt/brush_icon_size", 26))
+            v = int(QtCore.QSettings("QtShell", "QtShell").value(cls.ICON_KEY, 26))
         except (TypeError, ValueError):
             v = 26
         return max(16, min(96, v))
@@ -413,7 +468,7 @@ class SculptPanel(QtWidgets.QScrollArea):
         b.setIconSize(QtCore.QSize(px, px))
 
     def _set_icon_size(self, v):
-        QtCore.QSettings("QtShell", "QtShell").setValue("sculpt/brush_icon_size", int(v))
+        QtCore.QSettings("QtShell", "QtShell").setValue(self.ICON_KEY, int(v))
         self.icon_size_lab.setText(f"{int(v)} px")
         for _grid, btns in self._brush_grids:
             for b in btns:
@@ -450,7 +505,7 @@ class SculptPanel(QtWidgets.QScrollArea):
     # ---- building blocks
     def _section(self, title, key, closed=False):
         from .qt_ui import CollapsiblePanel
-        panel = CollapsiblePanel(title, f"sculpt/{key}", self._state, closed)
+        panel = CollapsiblePanel(title, f"{self.STATE_PREFIX}/{key}", self._state, closed)
         self.lay.addWidget(panel)
         return panel.body_lay
 

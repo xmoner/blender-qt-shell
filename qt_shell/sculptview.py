@@ -9,7 +9,8 @@ navigation of the active keyconfig, undo). The camera goes over when entering an
 then the window is closed.
 
 When it is used – QSettings `viewport/blender_view`:
-  "sculpt" (default)  in Sculpt Mode only
+  "sculpt" (default)  in Sculpt Mode and the paint modes (Vertex / Weight / Texture Paint – Blender paints there
+                      with its own brush cursor; the Qt view can't paint)
   "always"            in every mode
   "never"             never (Sculpt Mode then uses sculpt.py's Qt strokes)
 
@@ -26,8 +27,10 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import bridge
 
 KEY = "viewport/blender_view"
-CHOICES = (("sculpt", "Sculpt Mode only"), ("always", "Always (every mode)"), ("never", "Never (Qt Shell's view)"))
+CHOICES = (("sculpt", "Sculpt and Paint modes"), ("always", "Always (every mode)"), ("never", "Never (Qt Shell's view)"))
 TAG = "qtshell_view"     # ID property on the helper window's screen: found again after a file is loaded
+# modes that use Blender's view with the default setting: sculpting and painting (strokes, brush cursor)
+NATIVE_MODES = ("SCULPT", "PAINT_VERTEX", "PAINT_WEIGHT", "PAINT_TEXTURE")
 SHELF_KEY = "viewport/asset_shelf"   # Blender's asset shelf (bottom of the view: brushes in Sculpt Mode …) shown
 
 
@@ -70,7 +73,7 @@ def wanted(mode=None):
         mode = mode or bpy.context.mode
     except Exception:
         return False
-    return mode == "SCULPT"
+    return mode in NATIVE_MODES
 
 
 # ---------------------------------------------------------------- asset shelf
