@@ -19,6 +19,7 @@ Blender-like:
 In Object mode the view shows all UVs read-only (any tool switches to Edit mode first).
 """
 import math
+import time
 import traceback
 from contextlib import contextmanager
 
@@ -104,19 +105,32 @@ def find_image(ob):
     return None
 
 
-_img_cache = {}
+_img_cache = {}          # image name → (key, QImage, converted at, seconds it took)
+image_stale = False      # the last image_to_qimage returned an older picture (painting goes on) – repaint later
 
 
 def image_to_qimage(img, max_size=1024):
+    """The image as a QImage (downscaled to max_size). Painted images change without a property changing –
+    bridge.image_version (depsgraph updates of the image) is part of the key. While a big image is painted,
+    the conversion runs at most every few times its own cost (`image_stale` asks for a later repaint)."""
+    global image_stale
+    image_stale = False
     try:
         w, h = img.size
     except Exception:
         return None
     if not w or not h:
         return None
-    key = (img.name, w, h, img.is_dirty, getattr(img, "generated_type", ""))
-    if key in _img_cache:
-        return _img_cache[key]
+    key = (img.name, w, h, img.is_dirty, getattr(img, "generated_type", ""), bridge.image_version(img.name))
+    old = _img_cache.get(img.name)
+    if old is not None and old[0] == key:
+        return old[1]
+    if old is not None and old[0][:3] == key[:3]:
+        # the same image painted again: not more often than every 0.1 s / 3× the last conversion time
+        if time.monotonic() - old[2] < max(0.1, 3.0 * old[3]):
+            image_stale = True
+            return old[1]
+    t0 = time.monotonic()
     px = np.empty(w * h * 4, dtype=np.float32)
     try:
         img.pixels.foreach_get(px)
@@ -132,7 +146,8 @@ def image_to_qimage(img, max_size=1024):
     hh, ww = b.shape[:2]
     q = QtGui.QImage(b.data, ww, hh, ww * 4, QtGui.QImage.Format_RGBA8888).copy()
     _img_cache.clear()
-    _img_cache[key] = q
+    now = time.monotonic()
+    _img_cache[img.name] = (key, q, now, now - t0)
     return q
 
 
@@ -644,6 +659,8 @@ class UVCanvas(QtWidgets.QWidget):
             p.drawImage(tile, checker_image())
         elif img is not None and self.flag("image", True):
             q = image_to_qimage(img)
+            if image_stale:                 # being painted: the newer picture comes with a later repaint
+                QtCore.QTimer.singleShot(120, self.update)
             if q is not None:
                 p.drawImage(tile, q)
                 if self.flag("dim", False):

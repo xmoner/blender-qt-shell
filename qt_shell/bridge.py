@@ -359,9 +359,24 @@ def _on_depsgraph(*_args):
     Flags.depsgraph = True
 
 
+image_versions = {}     # image name → bumped on every depsgraph update of that image (painting, reload …)
+
+
+def image_version(name):
+    return image_versions.get(name, 0)
+
+
 @bpy.app.handlers.persistent
-def _on_depsgraph_edit(*_args):
+def _on_depsgraph_edit(*args):
     # depsgraph_update_post runs for edits, not for frame changes (those run frame_change_post)
+    try:
+        dg = args[1] if len(args) > 1 else None
+        for u in (dg.updates if dg is not None else ()):
+            if isinstance(u.id, bpy.types.Image):   # Texture Paint strokes – Blender's view or the Qt one
+                n = u.id.name
+                image_versions[n] = image_versions.get(n, 0) + 1
+    except Exception:
+        pass
     if _quiet:
         return
     Flags.depsgraph = True
