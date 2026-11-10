@@ -29,6 +29,7 @@ All keys live in keymap.py (area "Image Editor").
 """
 import math
 import os
+import sys
 import shutil
 import tempfile
 import time
@@ -224,6 +225,17 @@ def read_blender_image(img, name="qtshell_image_editor.png"):
         return None
     q = load_image(path)
     return q if q is not None and not q.isNull() else None
+
+
+def _mouse_down():
+    """Left mouse button held – also over Blender's own (native) viewport, where Qt gets no mouse events."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            return bool(ctypes.windll.user32.GetAsyncKeyState(0x01) & 0x8000)
+        except Exception:
+            pass
+    return bool(QtGui.QGuiApplication.mouseButtons() & QtCore.Qt.LeftButton)
 
 
 def pixels_to_qimage(img, max_size=4096):
@@ -1393,6 +1405,8 @@ class ImageEditor(QtWidgets.QWidget):
         self._img_cost = time.monotonic() - t0
         self._img_version = (name, bridge.image_version(name))
         self._img_loaded_at = time.monotonic()
+        if self.auto_btn.isChecked() and self.isVisible() and not self._auto_timer.isActive():
+            self._auto_timer.start()             # Auto Reload watches the image shown
         if q is None:
             self._set_picture(None)
             self._set_hint(f"'{name}' has no pixels to show.")
@@ -1982,8 +1996,23 @@ class ImageEditor(QtWidgets.QWidget):
         name = self.source[6:]
         cur = (name, bridge.image_version(name))
         now = time.monotonic()
+        # a stroke in Blender's own viewport tags the image only when it ends – while the mouse button is held
+        # in Texture Paint the painted image is read again and again (throttled like below)
+        try:
+            painting = bpy.context.mode == "PAINT_TEXTURE" and _mouse_down()
+        except Exception:
+            painting = False
+        if painting:
+            img = bpy.data.images.get(name)
+            if img is not None and img.is_dirty and now - self._img_loaded_at >= max(0.15, 3.0 * self._img_cost):
+                self.reload(keep_view=True)
+            return
         if cur == self._img_version:
-            if now - self._img_loaded_at > 3.0:
+            try:
+                keep = bpy.context.mode == "PAINT_TEXTURE"     # a stroke may start any moment
+            except Exception:
+                keep = False
+            if not keep and now - self._img_loaded_at > 3.0:
                 self._auto_timer.stop()          # data_changed starts it again
             return
         if now - self._img_loaded_at < max(0.12, 3.0 * self._img_cost):
