@@ -5,6 +5,8 @@ The texts are placeholders – fill in AUTHOR and DONATE below (no other code ne
   AUTHOR["name"], AUTHOR["text"] (plain text or simple HTML, paragraphs separated by blank lines),
   DONATE = [(label, url, note), …] – each becomes a button that opens the link in the browser.
 """
+import os
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import theme
@@ -35,8 +37,41 @@ def _heart_path(size):
     return p
 
 
+HEART_SVG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "heart.svg")   # colour-wheel heart
+_svg_renderer = None
+
+
+def _svg():
+    global _svg_renderer
+    if _svg_renderer is None:
+        try:
+            from PySide6 import QtSvg
+            r = QtSvg.QSvgRenderer(HEART_SVG)
+            _svg_renderer = r if r.isValid() else False
+        except Exception:
+            _svg_renderer = False
+    return _svg_renderer or None
+
+
 def heart_pixmap(size=16, dpr=2.0):
+    """The heart (heart.svg – vector, sharp at any size); the painted rainbow heart if QtSvg is missing."""
     px = max(8, int(round(size * dpr)))
+    r = _svg()
+    if r is not None:
+        img = QtGui.QImage(px, px, QtGui.QImage.Format_ARGB32_Premultiplied)
+        img.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(img)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        r.render(p, QtCore.QRectF(0, 0, px, px))
+        p.end()
+        pm = QtGui.QPixmap.fromImage(img)
+        pm.setDevicePixelRatio(dpr)
+        return pm
+    return _painted_heart(px, dpr)
+
+
+def _painted_heart(px, dpr):
     img = QtGui.QImage(px, px, QtGui.QImage.Format_ARGB32_Premultiplied)
     img.fill(QtCore.Qt.transparent)
     p = QtGui.QPainter(img)
