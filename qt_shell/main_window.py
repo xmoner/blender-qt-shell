@@ -661,6 +661,10 @@ class MainWindow(QtWidgets.QMainWindow):
         hist_btn.setToolTip("Status history (or click the status bar)")
         hist_btn.clicked.connect(self.show_status_history)
         self.statusBar().addPermanentWidget(hist_btn)
+        # bottom right: "Do not touch it." with a colourful heart → About the Author / Donate (about.py)
+        from . import about
+        self.about_btn = about.make_button(self.statusBar(), lambda: about.show(self))
+        self.statusBar().addPermanentWidget(self.about_btn)
         self.statusBar().messageChanged.connect(self._on_status_message)
         self.statusBar().installEventFilter(self)
         self._status_dialog = None
@@ -2004,6 +2008,10 @@ class MainWindow(QtWidgets.QMainWindow):
                        "Install, Open Release Page)")
         pytips.tag(act, "import qt_shell; qt_shell.api.check_for_updates()")
         act.triggered.connect(lambda: QtCore.QTimer.singleShot(0, self.check_for_updates))
+        from . import about
+        a = menu.addAction(about.heart_icon(16), "About the Author…")
+        a.setToolTip("Who makes Qt Shell – and how to support it")
+        a.triggered.connect(lambda: about.show(self))
         # links to the project on the web (opened in the default browser)
         menu.addSeparator()
         try:
