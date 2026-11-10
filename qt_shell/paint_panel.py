@@ -521,7 +521,8 @@ class VertexPaintPanel(SculptPanel):
                 b.setChecked(n == name)
                 b.blockSignals(False)
             bkey = (_ptr(br), _ptr(self.size_owner()) if on else 0, _ptr(self.strength_owner()) if on else 0,
-                    _ptr(self.color_owner()) if on else 0, str(getattr(br, self.TYPE_PROP, "")) if br else "")
+                    _ptr(self.color_owner()) if on else 0, str(getattr(br, self.TYPE_PROP, "")) if br else "") \
+                + self._brush_key_extra()
             ob = _active_mesh_object()
             okey = (_ptr(ob), on) + self._object_key(ob)
             if force or bkey != self._brush_key:
@@ -555,6 +556,10 @@ class VertexPaintPanel(SculptPanel):
     def _mode_hint(self):
         """A warning while the mode is on (e.g. nothing to paint on), or None."""
         return None
+
+    def _brush_key_extra(self):
+        """More state the brush section is built from."""
+        return ()
 
     def _mode_key(self):
         from . import keymap
@@ -624,8 +629,13 @@ class TexturePaintPanel(VertexPaintPanel):
         mat = ob.active_material if ob is not None else None
         slots = tuple(getattr(s, "name", "") for s in getattr(mat, "texture_paint_slots", ()) or ()) if mat else ()
         return (getattr(ip, "mode", ""), _ptr(getattr(ip, "canvas", None)), _ptr(mat), slots,
+                bool(getattr(ip, "use_stencil_layer", False)), _ptr(getattr(ip, "stencil_image", None)),
                 getattr(mat, "paint_active_slot", 0) if mat else 0, len(bpy.data.images),
                 len(ob.material_slots) if ob is not None else 0)
+
+    def _brush_key_extra(self):
+        ip = self.settings()
+        return (bool(getattr(ip, "use_clone_layer", False)), _ptr(getattr(ip, "clone_image", None)))
 
     def _mode_hint(self):
         ip = self.settings()
@@ -695,7 +705,7 @@ class TexturePaintPanel(VertexPaintPanel):
             sb.setIcon(blicons.icon("FILE_TICK"))
         sb.setToolTip("Save every painted (modified) image to its file – new images need a file first "
                       "(Image editor → Save As)")
-        sb.clicked.connect(lambda _=False: self._run("image.save_all_modified", {}))
+        sb.clicked.connect(lambda _=False: self._save_images())
         lay.addWidget(sb)
         # projection
         for text, prop, icon, tip in (
@@ -717,6 +727,108 @@ class TexturePaintPanel(VertexPaintPanel):
             self._toggle(None, "Faces", me, "use_paint_mask", "FACESEL", row=r).widget.setToolTip(
                 "Paint only the selected faces")
         self.mask_sec.addLayout(r)
+        if "use_stencil_layer" in ip.bl_rna.properties:
+            r = QtWidgets.QHBoxLayout()
+            self._toggle(None, "Stencil Mask", ip, "use_stencil_layer", "MOD_MASK", row=r).widget.setToolTip(
+                "Paint only where a stencil image (on a UV map) allows – the Mask brush paints it")
+            if ip.use_stencil_layer and "invert_stencil" in ip.bl_rna.properties:
+                self._toggle(None, "Invert", ip, "invert_stencil", "ARROW_LEFTRIGHT", row=r)
+            self.mask_sec.addLayout(r)
+            if ip.use_stencil_layer:
+                self._image_combo(self.mask_sec, "Stencil", ip, "stencil_image", "The stencil (mask) image")
+                nb = QtWidgets.QPushButton("New Stencil", self.widget())
+                if blicons.has("ADD"):
+                    nb.setIcon(blicons.icon("ADD"))
+                nb.setToolTip("New black stencil image (1024 × 1024)")
+                nb.clicked.connect(lambda _=False: self._new_stencil())
+                self.mask_sec.addWidget(nb)
+
+    def _save_images(self):
+        """Saves the painted images that have a file; new (generated) ones are packed into the .blend – Blender's
+        image.save_all_modified only polls in an Image editor and refuses images without a file."""
+        saved, packed, failed = [], [], []
+        for im in bpy.data.images:
+            if not im.is_dirty or im.type not in ("IMAGE", "UV_TEST"):
+                continue
+            try:
+                if im.filepath and not im.packed_file and im.source == "FILE":
+                    im.save()
+                    saved.append(im.name)
+                else:
+                    im.pack()
+                    packed.append(im.name)
+            except Exception as ex:
+                failed.append(f"{im.name}: {ex}")
+        parts = []
+        if saved:
+            parts.append(f"saved {len(saved)} image(s)")
+        if packed:
+            parts.append(f"packed {len(packed)} new image(s) into the .blend – save the file to keep them")
+        if failed:
+            parts.append("failed: " + "; ".join(failed))
+        bridge.log("Images: " + (", ".join(parts) if parts else "nothing painted to save") + ".",
+                   "WARNING" if failed else "INFO")
+        self.sync(force=True)
+
+    def _image_combo(self, lay, label, data, prop, tip):
+        """A row: label + combo of the images (— = none) for an image pointer property."""
+        r = QtWidgets.QHBoxLayout()
+        lab = QtWidgets.QLabel(label, self.widget())
+        lab.setMinimumWidth(theme.px(78))
+        r.addWidget(lab)
+        combo = QtWidgets.QComboBox(self.widget())
+        combo.addItem("—", None)
+        for im in bpy.data.images:
+            if im.type not in ("RENDER_RESULT", "COMPOSITING"):
+                combo.addItem(im.name, im.name)
+        cur = getattr(getattr(data, prop, None), "name", None)
+        combo.setCurrentIndex(max(0, combo.findData(cur)))
+        combo.setToolTip(tip)
+
+        def chosen(i, c=combo):
+            try:
+                n = c.itemData(i)
+                setattr(data, prop, bpy.data.images.get(n) if n else None)
+            except Exception as ex:
+                bridge.log(f"{label}: {ex}", "WARNING")
+            self._redraw()
+            self.sync(force=True)
+        combo.activated.connect(chosen)
+        r.addWidget(combo, 1)
+        lay.addLayout(r)
+        return combo
+
+    def _build_brush(self):
+        super()._build_brush()
+        br, ip = self.brush(), self.settings()
+        if br is None or ip is None:
+            return
+        kind = getattr(br, self.TYPE_PROP, "")
+        lay = self.brush_sec
+        if kind == "CLONE":
+            note = QtWidgets.QLabel("Clone source: the 3D cursor (put it where to copy from), or another image / "
+                                    "UV map with Clone from Image below.", self.widget())
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#c9a85b;")
+            lay.addWidget(note)
+            if "use_clone_layer" in ip.bl_rna.properties:
+                self._toggle(lay, "Clone from Image", ip, "use_clone_layer", "IMAGE_DATA")
+                if ip.use_clone_layer and "clone_image" in ip.bl_rna.properties:
+                    self._image_combo(lay, "Source", ip, "clone_image", "The image copied from")
+                    if "clone_alpha" in ip.bl_rna.properties:
+                        self._row(lay, "Source Alpha", ip, "clone_alpha")
+        elif kind == "MASK":
+            note = QtWidgets.QLabel("The Mask brush paints the stencil image (Masking → Stencil Mask): white = "
+                                    "masked. Turn the stencil on and pick or make an image first.", self.widget())
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#c9a85b;")
+            lay.addWidget(note)
+        elif kind == "FILL":
+            note = QtWidgets.QLabel("Click in the view: fills the area with the colour (Fill Threshold in Blender's "
+                                    "brush settings).", self.widget())
+            note.setWordWrap(True)
+            note.setStyleSheet("color:#8a8a8a;")
+            lay.addWidget(note)
 
     def _set_slot(self, mat, i):
         if mat is not None:
@@ -743,6 +855,20 @@ class TexturePaintPanel(VertexPaintPanel):
         img.generated_color = (1.0, 1.0, 1.0, 1.0)
         self._set_canvas(img.name)
         bridge.undo_push("New Image")
+
+    def _new_stencil(self):
+        ip = self.settings()
+        n, name = 1, "Stencil"
+        while name in bpy.data.images:
+            n += 1
+            name = f"Stencil.{n:03d}"
+        img = bpy.data.images.new(name, 1024, 1024)
+        img.generated_color = (0.0, 0.0, 0.0, 1.0)
+        if ip is not None:
+            ip.stencil_image = img
+        bridge.undo_push("New Stencil")
+        self._redraw()
+        self.sync(force=True)
 
     def _add_slot(self):
         if not self._ensure_sculpt():

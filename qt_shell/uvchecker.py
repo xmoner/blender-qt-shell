@@ -115,7 +115,7 @@ def _arrays(ob_eval):
     try:
         if me is None or me.uv_layers.active is None or not len(me.loops):
             return None
-        pos, _nor, tris, _cmat = geocache._corner_data(me)
+        pos, _nor, tris = geocache._corner_data(me)[:3]     # (+ materials, edges since the wire cache)
         uv = geocache._corner_uv(me)
         if uv is None:
             return None

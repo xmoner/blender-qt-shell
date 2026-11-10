@@ -355,12 +355,25 @@ class Binding:
     def refresh(self):
         pass
 
-    def alive(self):
+    def data_ok(self):
         try:
             self.data.bl_rna  # ReferenceError if the data was deleted
-            return self.widget is not None
+            return True
         except Exception:
             return False
+
+    def widget_ok(self):
+        """False once Qt deleted the widget (its panel was rebuilt) – the Python wrapper outlives it."""
+        if self.widget is None:
+            return False
+        try:
+            import shiboken6
+            return shiboken6.isValid(self.widget)
+        except Exception:
+            return True
+
+    def alive(self):
+        return self.data_ok() and self.widget_ok()
 
 
 class BoolBinding(Binding):
@@ -489,8 +502,10 @@ class ColorBinding(Binding):
         except Exception:
             return
 
+        # the panel with this button may be rebuilt while the colour tool is open (Qt deletes the button):
+        # the colour keeps following the tool, only the button is no longer refreshed
         def live(col):
-            if not self.alive():
+            if not self.data_ok():
                 return
             rgb = [col.redF(), col.greenF(), col.blueF()]
             if self.linear:
@@ -501,7 +516,7 @@ class ColorBinding(Binding):
                 self.refresh()
 
         def done(ok):
-            if not ok and self.alive():
+            if not ok and self.data_ok():
                 if _safe_set(self.data, self.prop_id, before[: self.size]):
                     self.changed()
                     self.refresh()
@@ -509,6 +524,8 @@ class ColorBinding(Binding):
                          linear=self.linear, on_done=done)
 
     def refresh(self):
+        if not self.widget_ok():
+            return
         c = self._qcolor()
         txt = "#000" if c.lightnessF() > 0.55 else "#fff"
         # keeps its colour; under the mouse only the frame lights up
