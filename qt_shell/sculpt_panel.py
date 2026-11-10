@@ -329,12 +329,10 @@ class SculptPanel(QtWidgets.QScrollArea):
             for i, (name, glyph, g, note) in enumerate(items):
                 b = QtWidgets.QToolButton(body)
                 b.setIcon(brush_icon(glyph, g))
-                b.setIconSize(QtCore.QSize(theme.px(self._icon_size()), theme.px(self._icon_size())))
                 b.setCheckable(True)
                 b.setAutoRaise(True)
                 b.setToolTip(f"<b>{name}</b><br>{note}")
-                b.setStyleSheet(f"QToolButton:checked{{background:{theme.HOVER['bg']}; "
-                                f"border:1px solid {theme.HOVER['border']}; border-radius:4px;}}")
+                self._style_brush_btn(b, self._icon_size())
                 b.clicked.connect(lambda _=False, n=name: self.pick_brush(n))
                 grp.addButton(b)
                 self.brush_btns[name] = b
@@ -403,13 +401,23 @@ class SculptPanel(QtWidgets.QScrollArea):
             v = 26
         return max(16, min(96, v))
 
+    @staticmethod
+    def _style_brush_btn(b, size):
+        """Icon size of a brush button. The app stylesheet sets qproperty-iconSize on every button when it is
+        polished (first show), which undid setIconSize – the saved size was lost after a restart. The button's
+        own stylesheet wins over the app one."""
+        px = theme.px(int(size))
+        b.setStyleSheet(f"QToolButton {{ qproperty-iconSize: {px}px {px}px; }}"
+                        f"QToolButton:checked{{background:{theme.HOVER['bg']}; "
+                        f"border:1px solid {theme.HOVER['border']}; border-radius:4px;}}")
+        b.setIconSize(QtCore.QSize(px, px))
+
     def _set_icon_size(self, v):
         QtCore.QSettings("QtShell", "QtShell").setValue("sculpt/brush_icon_size", int(v))
         self.icon_size_lab.setText(f"{int(v)} px")
-        sz = QtCore.QSize(theme.px(v), theme.px(v))
         for _grid, btns in self._brush_grids:
             for b in btns:
-                b.setIconSize(sz)
+                self._style_brush_btn(b, v)
         self._cols = 0
         self._flow_brushes()
 

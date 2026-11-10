@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.92.0 on 2026-11-09; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.92.1 on 2026-11-10; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -147,6 +147,7 @@ Don't dig through old chat history.
 - Never change the scene frame behind the user's back while animated values are unkeyed (frame_set
   re-evaluates F-curves and drops the change) – see `playcache.pending_edits`.
 - Never key a rebuild check on `id()` of a bpy wrapper (new object every call) – use `as_pointer()`; drag widgets hide the cursor on themselves, not with `QApplication.setOverrideCursor` (stays blank if the widget is deleted mid-drag).
+- The app stylesheet sets `qproperty-iconSize` on every button at polish – a custom icon size goes into the button's own stylesheet (`setIconSize` alone is undone at first show).
 - Qt `clicked(bool)` lands in the first optional parameter of a connected method – connect via `lambda _=False: obj.method()`.
 - Qt SVG Tiny: no `dominant-baseline`, no `hsl()`, `<defs>` before use.
 - Operators clicked in Blender's Preferences window can't `temp_override` (temporary screen) – start Qt work from a timer.
