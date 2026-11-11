@@ -122,7 +122,7 @@ Don't dig through old chat history.
 - `about.py` – About the Author window (status bar button "Do not touch it." with the heart `heart.svg` – regenerate with `tools/make_heart_svg.py`, Help → About the Author…) and the Sponsor window (status bar button "Sponsors" with a palm holding coins `coins.svg` – `tools/make_sponsor_svg.py`, Help → Sponsors…); the owner fills in `AUTHOR` / `DONATE` / `SPONSOR_CONTACT` later.
 - `splash.py` – startup banner (`banner.png` – all banners are rendered from HTML by `node tools/banner/make_banners.js`, then `site/img/og.jpg` = the 1280×640 PNG as JPEG; the owner keeps copies in `Documents\QT_SHELL_GUI_PROJECT\logo_a_baner`) in the middle of the screen, gone when the cursor moves (polled, no event filter); once per Blender process; QSettings `splash/show` (Qt Preferences → Window); Help → Show Qt Shell Banner shows it again (`show(win, force=True)`).
 - `api.py` – public API (`docs/API.md`). `devreload.py` – dev reload.
-- `site/` – project web page https://xmoner.github.io/blender-qt-shell/ (single `index.html`, screenshots in `img/`);
+- `site/` – project web page https://xmoner.github.io/blender-qt-shell/ (single `index.html`: hero, facts, feature cards in 5 colour groups like the banner – new features get a card (+ `NEW` badge), Sculpt & Paint panel pictures, screenshots, What's new = the latest 6 GitHub releases fetched live by JS, Install, FAQ, Support; pictures in `img/` – `og.jpg` = the banner; redesigned 2026-11-11);
   publish: `git branch -D gh-pages; git subtree split --prefix site -b gh-pages && git push -f origin gh-pages`.
 
 ## Rules learned the hard way (details in DEVELOPMENT.md §2)
