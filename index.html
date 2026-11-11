@@ -165,7 +165,7 @@
 
   @media (max-width: 900px) {
     .hero .wrap.top-grid { grid-template-columns: 1fr; }
-    .hero .turtle { display: none; }
+    .hero .turtle { order: -1; justify-self: center; width: 150px; margin-bottom: -6px; }
     .facts { grid-template-columns: repeat(2, 1fr); }
     .panels { grid-template-columns: 1fr 1fr; }
     .panels figure:last-child { display: none; }
@@ -213,7 +213,7 @@
         <div class="meta"><span id="latest">Latest release on <a href="https://github.com/xmoner/blender-qt-shell/releases">GitHub Releases</a></span>
           · Blender 4.2+ · developed and tested on Blender 5.2 LTS (Windows 11)</div>
       </div>
-      <img class="turtle" src="img/logo.png" alt="Qt Shell logo – a turtle with a hexagon shell">
+      <img class="turtle" src="img/logo.png" srcset="img/logo.png 256w, img/logo-512.png 512w" sizes="(max-width: 900px) 150px, 340px" alt="Qt Shell logo – a turtle with a hexagon shell">
     </div>
 
     <div class="wrap">
