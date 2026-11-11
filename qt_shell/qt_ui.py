@@ -236,6 +236,7 @@ class Builder:
         self.bindings = []
         self.on_change = on_change
         self.state = panel_state if panel_state is not None else {}
+        self.toggle_text = False        # icon toggles also show a short name (popovers / context menus)
 
     def refresh(self):
         """Refreshes values; returns False if some data no longer exists."""
@@ -486,8 +487,15 @@ class Builder:
         self.bindings.append(b)
         if a.get("icon_only") and isinstance(b, rw.BoolBinding):
             label = ""
-        if blicons.has(a.get("icon")) and isinstance(getattr(b, "widget", None), QtWidgets.QAbstractButton):
-            b.widget.setIcon(blicons.icon(a["icon"]))
+        icon = a.get("icon")
+        if isinstance(b, rw.BoolBinding) and not label and not blicons.has(icon):
+            icon = getattr(rp, "icon", "NONE")          # e.g. use_pressure_size → STYLUS_PRESSURE
+        if isinstance(b, rw.BoolBinding) and not label and b.index < 0:
+            if blicons.has(icon):
+                # like Blender: a boolean with an icon and no text is an icon toggle button
+                return self._icon_toggle(b, rp, icon)
+        if blicons.has(icon) and isinstance(getattr(b, "widget", None), QtWidgets.QAbstractButton):
+            b.widget.setIcon(blicons.icon(icon))
         split = f.get("use_property_split", False) and bool(label)
         if isinstance(b, rw.BoolBinding):
             if label:
@@ -514,6 +522,28 @@ class Builder:
         if isinstance(b, rw.EnumBinding) and b.expand and not split:
             return b.widget
         return self._wrap_label(b.widget, label, f, parent_kind)
+
+    def _icon_toggle(self, b, rp, icon):
+        """A checkable icon button in place of the binding's checkbox (Blender's icon toggles, e.g. the
+        pressure / unified toggles next to Size and Strength in the sculpt and paint context menus)."""
+        old = b.widget
+        btn = QtWidgets.QToolButton()
+        btn.setCheckable(True)
+        btn.setAutoRaise(True)
+        btn.setIcon(blicons.icon(icon))
+        if self.toggle_text:
+            btn.setText(short_name(b.prop_id, rp))
+            btn.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        btn.setToolTip(rw_tip(rp))
+        btn.setFocusPolicy(QtCore.Qt.NoFocus)
+        btn.toggled.connect(b._set)
+        b.widget = btn
+        b.refresh()
+        try:
+            old.deleteLater()
+        except Exception:
+            pass
+        return btn
 
     def _operator_button(self, node):
         a = node.args
@@ -840,6 +870,22 @@ QT_MENUS = {"TOPBAR_MT_file_open_recent": fill_recent_menu}
 QT_MENU_LABELS = {"TOPBAR_MT_file_open_recent": "Open Recent"}
 
 
+def short_name(prop_id, rp):
+    """A short visible name for an icon toggle: use_unified_size → Unified, use_pressure_size → Pressure."""
+    for pre, name in (("use_unified_", "Unified"), ("use_pressure_", "Pressure")):
+        if prop_id.startswith(pre):
+            return name
+    name = tr(getattr(rp, "name", "") or prop_id)
+    return name[4:] if name.startswith("Use ") else name
+
+
+def rw_tip(rp):
+    """Tooltip of a property: its name, then its description."""
+    name = tr(getattr(rp, "name", "") or "")
+    desc = tr(getattr(rp, "description", "") or "")
+    return f"{name}\n{desc}" if desc and desc != name else name
+
+
 class PopoverMenu(QtWidgets.QMenu):
     """Blender popover panel shown as a widget inside a QMenu."""
 
@@ -881,6 +927,7 @@ class PopoverMenu(QtWidgets.QMenu):
             return
         _header, body = rec
         builder = Builder(self.on_change)
+        builder.toggle_text = True              # Unified / Pressure … next to the icons
         self._builder = builder                 # keeps the bindings alive while the popover is open
         box = QtWidgets.QWidget(self)
         lay = QtWidgets.QVBoxLayout(box)

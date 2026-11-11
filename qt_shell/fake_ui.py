@@ -197,6 +197,14 @@ class FakeLayout:
     prop_with_popover = prop
     prop_with_menu = prop
 
+    def template_color_picker(self, data, property, value_slider=False, lock=False,
+                              lock_luminosity=False, cubic=False, **_kw):
+        """Blender's colour wheel → a colour button (it opens the Qt colour tool)."""
+        if data is None:
+            return
+        self._item("prop", data=data, prop=property, text="", expand=False, slider=False, toggle=-1,
+                   icon_only=False, index=-1, icon="NONE", invert=False, color_picker=True)
+
     def props_enum(self, data, property):
         self.prop(data, property, expand=True)
 
