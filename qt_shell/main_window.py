@@ -662,7 +662,10 @@ class MainWindow(QtWidgets.QMainWindow):
         hist_btn.clicked.connect(self.show_status_history)
         self.statusBar().addPermanentWidget(hist_btn)
         # bottom right: "Do not touch it." with a colourful heart → About the Author / Donate (about.py)
+        # "Sponsors" (palm holding coins) next to it → the Sponsor window
         from . import about
+        self.sponsor_btn = about.make_sponsor_button(self.statusBar(), lambda: about.show_sponsor(self))
+        self.statusBar().addPermanentWidget(self.sponsor_btn)
         self.about_btn = about.make_button(self.statusBar(), lambda: about.show(self))
         self.statusBar().addPermanentWidget(self.about_btn)
         self.statusBar().messageChanged.connect(self._on_status_message)
@@ -2012,6 +2015,9 @@ class MainWindow(QtWidgets.QMainWindow):
         a = menu.addAction(about.heart_icon(16), "About the Author…")
         a.setToolTip("Who makes Qt Shell – and how to support it")
         a.triggered.connect(lambda: about.show(self))
+        a = menu.addAction(about.coins_icon(16), "Sponsors…")
+        a.setToolTip("Become a sponsor of Qt Shell")
+        a.triggered.connect(lambda: about.show_sponsor(self))
         # links to the project on the web (opened in the default browser)
         menu.addSeparator()
         try:
