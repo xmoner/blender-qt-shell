@@ -1,5 +1,5 @@
 """Startup banner: when Qt Shell starts, the Qt Shell banner (banner.png) appears in the middle of the screen
-and goes away as soon as the mouse moves (or on a click / key, at the latest after TIMEOUT seconds).
+and goes away as soon as the mouse moves (or on a click / key, at the latest after TIMEOUT seconds). Help → Show Qt Shell Banner shows it again.
 
 Shown once per Blender session (not again after a dev reload or when the window is reopened).
 QSettings "splash/show" (Qt Preferences → Window → Startup) switches it off.
@@ -12,6 +12,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import theme
 
 BANNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "banner.png")
+ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qt_shell_icon.png")   # Help menu item
 WIDTH = 720              # logical width of the banner on screen (smaller on small screens)
 MOVE_PX = 4              # cursor movement (logical px) that dismisses it
 POLL_MS = 40

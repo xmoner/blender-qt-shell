@@ -2018,6 +2018,10 @@ class MainWindow(QtWidgets.QMainWindow):
         a = menu.addAction(about.coins_icon(16), "Sponsors…")
         a.setToolTip("Become a sponsor of Qt Shell")
         a.triggered.connect(lambda: about.show_sponsor(self))
+        from . import splash
+        a = menu.addAction(QtGui.QIcon(splash.ICON), "Show Qt Shell Banner")
+        a.setToolTip("Shows the startup banner again – it goes away when the mouse moves")
+        a.triggered.connect(lambda: QtCore.QTimer.singleShot(120, lambda: splash.show(self, force=True)))
         # links to the project on the web (opened in the default browser)
         menu.addSeparator()
         try:
