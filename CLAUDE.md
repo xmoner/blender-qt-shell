@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.101.1 on 2026-11-11; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.101.2 on 2026-11-11; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -48,7 +48,7 @@ Don't dig through old chat history.
 - Add-on folder on the PC:
   `C:\Users\uzivatel\AppData\Roaming\Blender Foundation\Blender\5.2\scripts\addons\qt_shell\`
 - Copy changed files to a **new unique folder** `/mnt/user-data/outputs/<name>_<n>/` and send them with
-  `device_commit_files` (`force: true`). **Never reuse a staging folder** – it can deliver an older copy.
+  `device_commit_files` (`force: true`). **Never reuse a staging folder** – it can deliver an older copy; short names like `ctx_6` may already exist from older sessions (that delivered a stale qt_ui.py on 2026-11-11) – put date + time in the name (`<name>_20261111_1910`). Check the size on the PC with `device_list_dir` after committing.
   If behaviour looks unchanged, check the file on the PC (e.g. `'<new name>' in open(module.__file__).read()`).
 - Start a test Blender: `computer_open_application` with
   `c:\program files\blender foundation\blender 5.2\blender.exe` (this always starts a **new** instance).

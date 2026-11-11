@@ -252,12 +252,34 @@ class Builder:
 
     # --- containers
     def build(self, node, parent_kind="column"):
-        k = node.kind
-        if k in ("column", "row", "box", "split", "flow", "unsupported_layout"):
-            return self._container(node)
-        if k == "lpanel":
-            return self._layout_panel(node)
-        return self._item(node, parent_kind)
+        top = not getattr(self, "_building", False)
+        if top:                                 # one panel body: note its plain property fields
+            self._building = True
+            self._plain_props = set()
+            self._collect_props(node)
+        try:
+            k = node.kind
+            if k in ("column", "row", "box", "split", "flow", "unsupported_layout"):
+                return self._container(node)
+            if k == "lpanel":
+                return self._layout_panel(node)
+            return self._item(node, parent_kind)
+        finally:
+            if top:
+                self._building = False
+
+    @staticmethod
+    def _prop_key(data, prop):
+        try:
+            return data.as_pointer(), prop
+        except Exception:
+            return id(data), prop
+
+    def _collect_props(self, node):
+        if node.kind == "prop" and not node.args.get("color_picker"):
+            self._plain_props.add(self._prop_key(node.args.get("data"), node.args.get("prop")))
+        for ch in getattr(node, "children", None) or ():
+            self._collect_props(ch)
 
     def _container(self, node):
         k = node.kind
@@ -476,6 +498,10 @@ class Builder:
         a = node.args
         f = node.flags
         data, pid = a["data"], a["prop"]
+        if a.get("color_picker") and self._prop_key(data, pid) in getattr(self, "_plain_props", ()):
+            # Blender's colour wheel + the colour field of the same colour below it: in Qt both would be
+            # the same colour button – keep one (the field)
+            return None
         rp = rw.rna_prop(data, pid)
         if rp is None:
             return None
