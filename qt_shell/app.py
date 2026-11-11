@@ -358,6 +358,11 @@ def start(addon_prefs=None):
             _win.show()
         bridge.later(_started, 3.0)
         try:
+            from . import splash            # the Qt Shell banner in the middle; gone when the mouse moves
+            QtCore.QTimer.singleShot(150, lambda w=_win: splash.show(w))
+        except Exception:
+            bridge.log("Splash: " + traceback.format_exc(), "WARNING")
+        try:
             from . import errorwin          # program errors → a window with "Report on GitHub"
             errorwin.install(_win)
         except Exception:

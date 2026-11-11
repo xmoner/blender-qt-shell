@@ -196,6 +196,9 @@ class QtPreferences(QtWidgets.QDialog):
         p = self._prefs()
         self._check(page, lay, "Start Qt Shell when Blender starts", getattr(p, "auto_start", False),
                     lambda on: self._set_pref("auto_start", on))
+        from . import splash
+        self._check(page, lay, "Show the Qt Shell banner at startup (it goes away when the mouse moves)",
+                    splash.enabled(), splash.set_enabled, "# Qt Shell setting: splash/show")
         _section(lay, "Blender window", page)
         self._check(page, lay, "Hide the Blender window while Qt Shell is running",
                     getattr(p, "hide_blender", True), lambda on: self._set_pref("hide_blender", on))
