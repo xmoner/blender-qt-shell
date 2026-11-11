@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.101.2 on 2026-11-11; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.101.3 on 2026-11-11; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -120,7 +120,7 @@ Don't dig through old chat history.
 - `updates.py` – Help → Check for Qt Shell Updates (GitHub releases in a thread, Install via `addon_install` – never run a real install in tests: it replaces the add-on folder; the owner has Blender's online access off).
 - `errorwin.py` – error window (program errors from the log with a traceback + `sys.excepthook`; usage errors like poll() failed filtered out) with Report on GitHub (prefilled issue URL), Copy Details, Open Log; QSettings `errors/popup`.
 - `about.py` – About the Author window (status bar button "Do not touch it." with the heart `heart.svg` – regenerate with `tools/make_heart_svg.py`, Help → About the Author…) and the Sponsor window (status bar button "Sponsors" with a palm holding coins `coins.svg` – `tools/make_sponsor_svg.py`, Help → Sponsors…); the owner fills in `AUTHOR` / `DONATE` / `SPONSOR_CONTACT` later.
-- `splash.py` – startup banner (`banner.png`) in the middle of the screen, gone when the cursor moves (polled, no event filter); once per Blender process; QSettings `splash/show` (Qt Preferences → Window); Help → Show Qt Shell Banner shows it again (`show(win, force=True)`).
+- `splash.py` – startup banner (`banner.png` – all banners are rendered from HTML by `node tools/banner/make_banners.js`, then `site/img/og.jpg` = the 1280×640 PNG as JPEG; the owner keeps copies in `Documents\QT_SHELL_GUI_PROJECT\logo_a_baner`) in the middle of the screen, gone when the cursor moves (polled, no event filter); once per Blender process; QSettings `splash/show` (Qt Preferences → Window); Help → Show Qt Shell Banner shows it again (`show(win, force=True)`).
 - `api.py` – public API (`docs/API.md`). `devreload.py` – dev reload.
 - `site/` – project web page https://xmoner.github.io/blender-qt-shell/ (single `index.html`, screenshots in `img/`);
   publish: `git branch -D gh-pages; git subtree split --prefix site -b gh-pages && git push -f origin gh-pages`.
