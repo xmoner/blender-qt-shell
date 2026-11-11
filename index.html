@@ -4,111 +4,179 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Qt Shell – Blender UI in PySide6</title>
-<meta name="description" content="Qt Shell is a Blender add-on that replaces Blender's interface with a PySide6 (Qt) window – viewport, outliner, properties, timeline, node, UV, graph and image editors, shelves and Maya-style shortcuts.">
+<meta name="description" content="Qt Shell is a free Blender add-on that replaces Blender's interface with a PySide6 (Qt) window – viewport, sculpt and paint panels, Blue Pencil, outliner, properties, timeline, node, UV, graph and image editors, shelves and Maya-style shortcuts.">
 <meta property="og:title" content="Qt Shell – Blender UI in PySide6">
-<meta property="og:description" content="A Blender add-on that replaces Blender's interface with a Qt window.">
-<meta property="og:image" content="img/og.jpg">
+<meta property="og:description" content="A free Blender add-on that replaces Blender's interface with a Qt window – with Maya-style shelves, panels and shortcuts.">
+<meta property="og:image" content="https://xmoner.github.io/blender-qt-shell/img/og.jpg">
+<meta property="og:url" content="https://xmoner.github.io/blender-qt-shell/">
 <meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#14201c">
 <link rel="icon" type="image/png" href="img/favicon.png">
 <style>
   :root {
-    --bg: #17181b;
-    --panel: #212226;
-    --panel-2: #2a2c31;
-    --line: #34363c;
-    --text: #e4e5e8;
-    --muted: #9a9ca3;
-    --accent: #4772b3;
-    --accent-2: #5d8ad6;
-    --orange: #e87d0d;
-    --radius: 10px;
-    --max: 1120px;
+    --bg: #111615;
+    --bg-2: #14201c;
+    --panel: #1b2321;
+    --panel-2: #232d2a;
+    --line: #2d3936;
+    --text: #e6ebe9;
+    --muted: #9aa6a1;
+    --green: #9be08f;
+    --teal: #2fbf9f;
+    --blue: #3a8cff;
+    --violet: #7b5cff;
+    --gold: #ffc35a;
+    --radius: 12px;
+    --max: 1140px;
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+    margin: 0; color: var(--text); background: var(--bg);
+    font: 16px/1.6 Inter, "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   }
-  a { color: var(--accent-2); text-decoration: none; }
+  a { color: var(--green); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; font-size: .92em; }
+  img { max-width: 100%; }
   .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
 
+  /* header */
   header.top {
     position: sticky; top: 0; z-index: 10;
-    background: rgba(23, 24, 27, .92); backdrop-filter: blur(6px);
+    background: rgba(17, 22, 21, .9); backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
   }
-  header.top .wrap { display: flex; align-items: center; gap: 12px; height: 56px; }
-  header.top img { width: 28px; height: 28px; }
-  header.top .name { font-weight: 600; letter-spacing: .2px; }
+  header.top .wrap { display: flex; align-items: center; gap: 10px; height: 58px; }
+  header.top img { width: 30px; height: 30px; }
+  header.top .name { font-weight: 700; letter-spacing: .2px; color: var(--text); }
   header.top nav { margin-left: auto; display: flex; gap: 20px; font-size: 15px; }
   header.top nav a { color: var(--muted); }
   header.top nav a:hover { color: var(--text); text-decoration: none; }
+  header.top nav a.gh { color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 3px 10px; }
 
-  .hero { padding: 64px 0 40px; text-align: center; }
-  .hero img.logo { width: 112px; height: 112px; }
-  .hero h1 { font-size: clamp(32px, 5vw, 48px); margin: 16px 0 8px; line-height: 1.15; }
-  .hero p.lead { color: var(--muted); font-size: 19px; max-width: 720px; margin: 0 auto 28px; }
-  .buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  /* hero */
+  .hero {
+    background: radial-gradient(ellipse 900px 520px at 20% 10%, #1f3a30 0%, rgba(20, 32, 28, .6) 45%, transparent 100%);
+    padding: 64px 0 36px;
+  }
+  .hero .wrap.top-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 40px; align-items: center; }
+  .eyebrow { display: inline-flex; gap: 8px; align-items: center; color: var(--green); font-size: 14px; font-weight: 600;
+    background: rgba(155, 224, 143, .08); border: 1px solid rgba(155, 224, 143, .25); border-radius: 20px; padding: 4px 12px; }
+  .hero h1 { font-size: clamp(36px, 5.4vw, 60px); margin: 18px 0 12px; line-height: 1.06; letter-spacing: -1.5px; }
+  .hero h1 span { color: var(--green); }
+  .hero p.lead { color: var(--muted); font-size: 19px; margin: 0 0 26px; max-width: 620px; }
+  .buttons { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn {
-    display: inline-block; padding: 12px 22px; border-radius: 8px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; border-radius: 9px; font-weight: 600;
     border: 1px solid var(--line); color: var(--text); background: var(--panel);
   }
   .btn:hover { text-decoration: none; background: var(--panel-2); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .btn.primary:hover { background: var(--accent-2); }
-  .hero .meta { margin-top: 14px; color: var(--muted); font-size: 14px; }
+  .btn.primary { background: var(--green); border-color: var(--green); color: #0f1614; }
+  .btn.primary:hover { background: #b4ebab; }
+  .meta { margin-top: 16px; color: var(--muted); font-size: 14px; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .hero .turtle { justify-self: center; width: min(340px, 80%); filter: drop-shadow(0 22px 50px rgba(0, 0, 0, .5)); }
+
+  .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 44px; }
+  .fact { background: rgba(255, 255, 255, .03); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+  .fact b { display: block; font-size: 20px; }
+  .fact span { color: var(--muted); font-size: 14px; }
 
   figure { margin: 0; }
   .shot {
     border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
-    background: var(--panel); box-shadow: 0 18px 50px rgba(0, 0, 0, .45);
+    background: var(--panel); box-shadow: 0 22px 60px rgba(0, 0, 0, .5);
   }
   .shot img { display: block; width: 100%; height: auto; }
   figcaption { color: var(--muted); font-size: 14px; padding: 10px 14px; border-top: 1px solid var(--line); }
 
-  section { padding: 56px 0; }
-  section h2 { font-size: 28px; margin: 0 0 8px; }
-  section p.sub { color: var(--muted); margin: 0 0 28px; }
+  section { padding: 64px 0; }
+  section.alt { background: var(--bg-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  section h2 { font-size: 32px; margin: 0 0 8px; letter-spacing: -.5px; }
+  section p.sub { color: var(--muted); margin: 0 0 30px; max-width: 760px; }
 
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+  /* feature groups */
+  .group { margin-top: 34px; }
+  .group:first-of-type { margin-top: 0; }
+  .group h3 { display: flex; align-items: center; gap: 10px; font-size: 15px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--muted); margin: 0 0 12px; }
+  .group h3 i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 14px; }
   .card {
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-    padding: 18px 18px 16px;
+    padding: 16px 18px 15px; transition: border-color .15s, transform .15s;
   }
-  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card:hover { border-color: #41524d; transform: translateY(-2px); }
+  .card h4 { margin: 0 0 6px; font-size: 16.5px; }
   .card p { margin: 0; color: var(--muted); font-size: 15px; }
-  .card .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--orange); margin-right: 8px; vertical-align: middle; }
+  .new { font-size: 11px; font-weight: 700; color: #0f1614; background: var(--green); border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
 
-  .split { display: grid; grid-template-columns: 1.6fr 1fr; gap: 28px; align-items: center; }
+  /* sculpt & paint */
+  .panels { display: grid; grid-template-columns: 1fr 1.25fr .8fr; gap: 18px; align-items: start; }
+  .panels .shot { box-shadow: 0 14px 40px rgba(0, 0, 0, .45); }
+  .bullets { columns: 2; column-gap: 32px; color: var(--muted); padding-left: 20px; margin: 26px 0 0; }
+  .bullets li { margin-bottom: 6px; break-inside: avoid; }
+  .bullets b { color: var(--text); font-weight: 600; }
+
+  .split { display: grid; grid-template-columns: 1.6fr 1fr; gap: 30px; align-items: center; }
   .split.rev { grid-template-columns: 1fr 1.6fr; }
   .split h3 { font-size: 22px; margin: 0 0 8px; }
   .split p { color: var(--muted); margin: 0 0 10px; }
   .split ul { color: var(--muted); padding-left: 20px; margin: 0; }
-  .split + .split { margin-top: 48px; }
+  .split + .split { margin-top: 52px; }
+
+  /* releases */
+  .releases { display: grid; gap: 10px; }
+  .rel { display: grid; grid-template-columns: 120px 1fr auto; gap: 16px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; }
+  .rel .tag { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; }
+  .rel .title { color: var(--text); }
+  .rel .date { color: var(--muted); font-size: 14px; white-space: nowrap; }
+  .rel:hover { border-color: #41524d; text-decoration: none; }
 
   ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
   ol.steps li {
-    counter-increment: s; position: relative; padding: 14px 16px 14px 56px;
+    counter-increment: s; position: relative; padding: 14px 16px 14px 58px;
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   }
   ol.steps li::before {
-    content: counter(s); position: absolute; left: 16px; top: 13px; width: 26px; height: 26px;
-    border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; font-size: 14px;
+    content: counter(s); position: absolute; left: 16px; top: 13px; width: 28px; height: 28px;
+    border-radius: 50%; background: var(--green); color: #0f1614; font-weight: 800; font-size: 14px;
     display: flex; align-items: center; justify-content: center;
   }
   .note { color: var(--muted); font-size: 14px; margin-top: 14px; }
 
+  /* faq */
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 18px; margin-bottom: 10px; }
+  summary { cursor: pointer; padding: 14px 0; font-weight: 600; list-style: none; position: relative; padding-right: 28px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; position: absolute; right: 0; top: 10px; font-size: 22px; color: var(--muted); }
+  details[open] summary::after { content: "–"; }
+  details p { color: var(--muted); margin: 0 0 16px; }
+
+  .support { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .support .card h4 { font-size: 18px; }
+  .support .card a { display: inline-block; margin-top: 10px; font-weight: 600; }
+
   footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
   footer .wrap { display: flex; gap: 20px; flex-wrap: wrap; justify-content: space-between; }
 
-  @media (max-width: 820px) {
+  @media (max-width: 900px) {
+    .hero .wrap.top-grid { grid-template-columns: 1fr; }
+    .hero .turtle { display: none; }
+    .facts { grid-template-columns: repeat(2, 1fr); }
+    .panels { grid-template-columns: 1fr 1fr; }
+    .panels figure:last-child { display: none; }
     .split, .split.rev { grid-template-columns: 1fr; }
     .split.rev figure { order: -1; }
+    .support { grid-template-columns: 1fr; }
+    .bullets { columns: 1; }
     header.top nav { gap: 14px; font-size: 14px; }
     header.top nav a.hide-sm { display: none; }
+    .rel { grid-template-columns: 90px 1fr; }
+    .rel .date { display: none; }
   }
 </style>
 </head>
@@ -120,26 +188,42 @@
     <span class="name">Qt Shell</span>
     <nav>
       <a href="#features">Features</a>
-      <a href="#screens" class="hide-sm">Screenshots</a>
+      <a href="#sculpt" class="hide-sm">Sculpt &amp; Paint</a>
+      <a href="#news" class="hide-sm">What's new</a>
       <a href="#install">Install</a>
-      <a href="https://github.com/xmoner/blender-qt-shell">GitHub</a>
+      <a href="#faq" class="hide-sm">FAQ</a>
+      <a class="gh" href="https://github.com/xmoner/blender-qt-shell">GitHub</a>
     </nav>
   </div>
 </header>
 
 <main>
-  <div class="hero wrap">
-    <img class="logo" src="img/logo.png" alt="Qt Shell logo">
-    <h1>Blender, with a Qt interface</h1>
-    <p class="lead">Qt Shell is a Blender add-on that replaces Blender's UI with a PySide6 window –
-      viewport, outliner, properties, timeline and editors, with shelves and Maya-style shortcuts.
-      Your scenes, operators and add-ons stay pure Blender.</p>
-    <div class="buttons">
-      <a class="btn primary" href="https://github.com/xmoner/blender-qt-shell/releases/latest/download/qt_shell.zip">Download qt_shell.zip</a>
-      <a class="btn" href="https://github.com/xmoner/blender-qt-shell/releases">All releases</a>
-      <a class="btn" href="https://github.com/xmoner/blender-qt-shell">Source on GitHub</a>
+  <div class="hero">
+    <div class="wrap top-grid">
+      <div>
+        <span class="eyebrow">🐢 Free Blender add-on · GPL-3.0</span>
+        <h1>Blender, with a <span>Qt interface</span></h1>
+        <p class="lead">Qt Shell replaces Blender's UI with a PySide6 window – viewport, panels, editors,
+          shelves and Maya-style shortcuts. Your scenes, operators and add-ons stay pure Blender.</p>
+        <div class="buttons">
+          <a class="btn primary" href="https://github.com/xmoner/blender-qt-shell/releases/latest/download/qt_shell.zip">⬇ Download qt_shell.zip</a>
+          <a class="btn" href="#install">How to install</a>
+          <a class="btn" href="https://github.com/xmoner/blender-qt-shell">Source on GitHub</a>
+        </div>
+        <div class="meta"><span id="latest">Latest release on <a href="https://github.com/xmoner/blender-qt-shell/releases">GitHub Releases</a></span>
+          · Blender 4.2+ · developed and tested on Blender 5.2 LTS (Windows 11)</div>
+      </div>
+      <img class="turtle" src="img/logo.png" alt="Qt Shell logo – a turtle with a hexagon shell">
     </div>
-    <div class="meta">Blender 4.2+ · developed and tested on Blender 5.2 LTS · Windows, Linux, macOS</div>
+
+    <div class="wrap">
+      <div class="facts">
+        <div class="fact"><b>15+ editors &amp; panels</b><span>viewport, outliner, properties, node, graph, UV, image…</span></div>
+        <div class="fact"><b>Maya &amp; Blender keys</b><span>navigation and shortcuts, all editable</span></div>
+        <div class="fact"><b>Blender's own menus</b><span>add-on menus and panels keep working</span></div>
+        <div class="fact"><b>Python API</b><span>script the Qt window from your own tools</span></div>
+      </div>
+    </div>
   </div>
 
   <div class="wrap">
@@ -152,24 +236,93 @@
   <section id="features">
     <div class="wrap">
       <h2>What runs in Qt</h2>
-      <p class="sub">Blender keeps doing the work – Qt Shell draws the interface around it.</p>
-      <div class="grid">
-        <div class="card"><h3><span class="dot"></span>3D viewport</h3><p>Blender renders the scene off-screen and Qt shows it. Orbit, pan, zoom, numpad views, selection, G / R / S with axes and numeric input, transform gizmos and snapping.</p></div>
-        <div class="card"><h3><span class="dot"></span>Blender's own menus</h3><p>File, Edit, Add, Object, Select and Render are built from Blender's original menus – including entries added by other add-ons.</p></div>
-        <div class="card"><h3><span class="dot"></span>Maya &amp; Blender keys</h3><p>Switch between Maya and Blender key sets and navigation, edit every shortcut in the Keyboard Shortcuts window.</p></div>
-        <div class="card"><h3><span class="dot"></span>Outliner &amp; Properties</h3><p>Collections, restriction columns, drag &amp; drop; all property tabs, modifiers and constraints as native Qt widgets.</p></div>
-        <div class="card"><h3><span class="dot"></span>Timeline &amp; playback</h3><p>Keys, markers, preview range, loop modes and cached playback that plays heavy scenes in real time.</p></div>
-        <div class="card"><h3><span class="dot"></span>Graph &amp; Node editors</h3><p>F-curve editing, shader, geometry and compositor node trees with node search and a property panel.</p></div>
-        <div class="card"><h3><span class="dot"></span>UV editor</h3><p>Maya- and Blender-style UV editing with a UV Toolkit: select, pin, align, unwrap, cut and sew, texel density, checker map.</p></div>
-        <div class="card"><h3><span class="dot"></span>Image editor</h3><p>Live compositor result, Render Result and rendered animations with a cached timeline; export images and MP4.</p></div>
-        <div class="card"><h3><span class="dot"></span>Render View</h3><p>Render slots, channels, sampling and annotations, F12 / F11, plus an Animation Player for rendered frames.</p></div>
-        <div class="card"><h3><span class="dot"></span>Shelf</h3><p>Maya-style shelves with built-in sets for modeling, UV, rigging, animation and rendering – or your own buttons and scripts.</p></div>
-        <div class="card"><h3><span class="dot"></span>Blue Pencil</h3><p>2D drawings keyed on frames over the viewport, retiming on the Timeline, burnt into renders and playblasts.</p></div>
-        <div class="card"><h3><span class="dot"></span>Text editor &amp; Console</h3><p>Python editor with tabs, live checks, outline and find / replace; console tracebacks link to the source line.</p></div>
-        <div class="card"><h3><span class="dot"></span>Workspaces</h3><p>Layout, Modeling, Shading, Animation, Scripting, UV Editing and Compositing – dockable panels you can rearrange.</p></div>
-        <div class="card"><h3><span class="dot"></span>Help → Search</h3><p>Find any menu item, tab, button or operator in the whole window, like Maya's search.</p></div>
-        <div class="card"><h3><span class="dot"></span>Python API</h3><p>A small public API for scripts and other add-ons – see <a href="https://github.com/xmoner/blender-qt-shell/blob/main/docs/API.md">API.md</a>.</p></div>
+      <p class="sub">Blender keeps doing the work – Qt Shell draws the interface around it, with the conveniences of Maya.</p>
+
+      <div class="group">
+        <h3><i style="background:var(--blue)"></i>Viewport &amp; window</h3>
+        <div class="grid">
+          <div class="card"><h4>3D viewport</h4><p>Blender renders off-screen, Qt shows it. Orbit, pan, zoom, numpad views, selection, G / R / S with axes and numeric input, transform gizmos and snapping.</p></div>
+          <div class="card"><h4>Split viewports</h4><p>Single, two side by side or stacked, or Four Views like Blender's Quad View – each view with its own camera.</p></div>
+          <div class="card"><h4>Blender's own menus</h4><p>File, Edit, Add, Object, Select and the 3D header menus come from Blender's original menus – with icons, and entries added by other add-ons.</p></div>
+          <div class="card"><h4>Workspaces</h4><p>Layout, Modeling, Shading, Animation, Scripting and UV Editing – dockable panels you can rearrange and float.</p></div>
+          <div class="card"><h4>Shelf</h4><p>Maya-style shelves with built-in sets for polygons, modeling, modifiers, UV, rigging, animation and rendering – or your own scripts.</p></div>
+          <div class="card"><h4>Outliner &amp; Properties</h4><p>Collections, restriction columns, drag &amp; drop; every property tab, modifiers and constraints as native Qt widgets.</p></div>
+          <div class="card"><h4>Maya &amp; Blender keys</h4><p>Switch key sets and mouse navigation; change every shortcut in the Keyboard Shortcuts window.</p></div>
+          <div class="card"><h4>Interface size</h4><p>Scale buttons, icons and text separately with a live preview – sharp on high-DPI screens.</p></div>
+        </div>
       </div>
+
+      <div class="group">
+        <h3><i style="background:var(--violet)"></i>Modeling, sculpting &amp; painting</h3>
+        <div class="grid">
+          <div class="card"><h4>Sculpt Mode<span class="new">NEW</span></h4><p>A Sculpt panel with brushes grouped like Maya, and Blender's own viewport embedded for Multires and Dyntopo.</p></div>
+          <div class="card"><h4>Vertex, Weight &amp; Texture Paint<span class="new">NEW</span></h4><p>Paint panels in Maya's 3D Paint style: brushes, colours, falloff, texture slots, rename and save textures.</p></div>
+          <div class="card"><h4>Colour tool<span class="new">NEW</span></h4><p>One colour picker everywhere: disc, RGB / HSV, hex, eyedropper, recent colours and palettes.</p></div>
+          <div class="card"><h4>Edit Mode</h4><p>Meshes, curves, armatures and lattices: selection, G / R / S, extrude and Blender's own keymap items.</p></div>
+          <div class="card"><h4>UV editor</h4><p>The best of Maya and Blender: several objects at once, UV Toolkit, cut and sew, unfold, texel density, checker map.</p></div>
+          <div class="card"><h4>Annotate &amp; Measure</h4><p>Draw notes in the 3D view, measure distances and add objects where you click.</p></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3><i style="background:var(--teal)"></i>Animation</h3>
+        <div class="grid">
+          <div class="card"><h4>Timeline &amp; cached playback</h4><p>Keys, markers, preview range and loop modes; a geometry cache plays heavy rigs in real time while the camera moves freely.</p></div>
+          <div class="card"><h4>Graph editor</h4><p>Like Maya's Graph Editor: channels in axis colours, F-curve editing, keys and framing.</p></div>
+          <div class="card"><h4>Blue Pencil</h4><p>2D drawings keyed on frames over the camera – thumbnails, arcs, review notes – retimed on the Timeline.</p></div>
+          <div class="card"><h4>Rigs &amp; Pose mode</h4><p>Click a rig control to pose it (like Maya), pick bones and controls by their lines, key the selection.</p></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3><i style="background:var(--gold)"></i>Rendering &amp; compositing</h3>
+        <div class="grid">
+          <div class="card"><h4>Render View</h4><p>Render slots, channels, sampling and annotations, F12 / F11 – as a window or docked.</p></div>
+          <div class="card"><h4>Animation Player</h4><p>Play rendered frames with a timeline and save them as a video, with or without the drawings burnt in.</p></div>
+          <div class="card"><h4>Image editor</h4><p>Live compositor result, Render Result, painted textures with Auto Reload; export images, sequences and MP4.</p></div>
+          <div class="card"><h4>Node editor</h4><p>Shader, world, Geometry Nodes and compositor trees with node search and a property panel.</p></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3><i style="background:var(--green)"></i>Scripting &amp; help</h3>
+        <div class="grid">
+          <div class="card"><h4>Text editor &amp; Console</h4><p>Python editor with tabs, live checks, outline and find / replace; console tracebacks link to the line.</p></div>
+          <div class="card"><h4>Python tooltips &amp; API</h4><p>See the Python command behind any button; drive Qt Shell from scripts – see <a href="https://github.com/xmoner/blender-qt-shell/blob/main/docs/API.md">API.md</a>.</p></div>
+          <div class="card"><h4>Help → Search</h4><p>Find any menu item, tab, button or operator in the whole window, like Maya's search.</p></div>
+          <div class="card"><h4>Updates &amp; error reports</h4><p>Check for new versions from the Help menu; program errors open a window with <i>Report on GitHub</i>.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sculpt" class="alt">
+    <div class="wrap">
+      <h2>Sculpt &amp; Paint panels</h2>
+      <p class="sub">Blender's sculpt and paint tools laid out like Maya: big brush icons in coloured groups, the settings you use most right below –
+        and one colour tool for every colour field.</p>
+      <div class="panels">
+        <figure class="shot">
+          <img src="img/sculpt-panel.png" width="425" height="586" loading="lazy" alt="Sculpt panel with brush icons grouped into Add / Subtract, Contrast, Transform and Mask · Face Sets">
+          <figcaption>Sculpt panel – brushes grouped like Maya.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="img/texture-paint.png" width="538" height="610" loading="lazy" alt="Texture Paint panel with Paint, Erase and Tools brushes, colour and brush settings">
+          <figcaption>Texture Paint panel – brushes, colour, falloff.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="img/color-tool.png" width="300" height="556" loading="lazy" alt="Colour tool with a hue disc, RGB sliders, hex field and palette">
+          <figcaption>Colour tool.</figcaption>
+        </figure>
+      </div>
+      <ul class="bullets">
+        <li><b>Icon size slider</b> – make the brush buttons as big as you like</li>
+        <li><b>Blender's own viewport</b> embedded for Multires, Dyntopo and native strokes</li>
+        <li><b>Pen pressure</b>, brush circle, F / Shift+F radius and strength drag</li>
+        <li><b>Texture slots</b> – add, rename, save and save as, right in the panel</li>
+        <li><b>Right-click menu</b> with Size, Strength, Unified and Pressure</li>
+        <li><b>Image editor Auto Reload</b> follows the texture while you paint</li>
+      </ul>
     </div>
   </section>
 
@@ -213,6 +366,17 @@
     </div>
   </section>
 
+  <section id="news" class="alt">
+    <div class="wrap">
+      <h2>What's new</h2>
+      <p class="sub">Qt Shell is updated often. The latest releases – every one with its notes on GitHub.</p>
+      <div class="releases" id="releases">
+        <a class="rel" href="https://github.com/xmoner/blender-qt-shell/releases"><span class="tag">Releases</span><span class="title">See all releases and their notes on GitHub</span><span class="date"></span></a>
+      </div>
+      <p class="note">Inside Blender: <b>Help → Check for Qt Shell Updates…</b> shows the notes of every newer version and installs it.</p>
+    </div>
+  </section>
+
   <section id="install">
     <div class="wrap">
       <h2>Install</h2>
@@ -227,11 +391,42 @@
         After updating, restart Blender; the status bar shows the running version.</p>
     </div>
   </section>
+
+  <section id="faq" class="alt">
+    <div class="wrap">
+      <h2>Questions</h2>
+      <p class="sub">The short answers.</p>
+      <details><summary>Does Qt Shell change my .blend files?</summary>
+        <p>No – your scenes stay normal Blender files and open in Blender without Qt Shell. Qt Shell keeps its own settings (layout, shelves, shortcuts) outside the .blend.</p></details>
+      <details><summary>Can I go back to Blender's own interface?</summary>
+        <p>Any time: <b>Window → Show Blender Window</b> brings it back, and closing the Qt Shell window offers <i>Return to the Blender UI</i>, <i>Restart Blender</i> or <i>Quit Blender</i>.</p></details>
+      <details><summary>Do my other add-ons still work?</summary>
+        <p>Yes. Menus, the 3D view sidebar (N) and property panels are built from Blender's own definitions, so entries and panels added by other add-ons show up too.</p></details>
+      <details><summary>Which Blender versions and systems are supported?</summary>
+        <p>Blender 4.2 and newer. Qt Shell is developed and tested on Blender 5.2 LTS on Windows 11; Linux (X11) and macOS are supported too.</p></details>
+      <details><summary>Is it free?</summary>
+        <p>Yes – Qt Shell is open source under the GNU GPL 3.0, like Blender.</p></details>
+      <details><summary>I found a bug – what now?</summary>
+        <p>Use <b>Help → Report a Qt Shell Bug…</b> or <a href="https://github.com/xmoner/blender-qt-shell/issues">open an issue on GitHub</a>. When Qt Shell hits a program error, its error window fills the report in for you.</p></details>
+    </div>
+  </section>
+
+  <section id="support">
+    <div class="wrap">
+      <h2>Support Qt Shell</h2>
+      <p class="sub">Qt Shell is made in spare time. Every star, bug report and sponsor helps it grow.</p>
+      <div class="support">
+        <div class="card"><h4>⭐ Star it on GitHub</h4><p>Help other Blender artists find Qt Shell.</p><a href="https://github.com/xmoner/blender-qt-shell">Open the repository →</a></div>
+        <div class="card"><h4>🐞 Report and suggest</h4><p>Bugs, ideas and wishes are all welcome as issues.</p><a href="https://github.com/xmoner/blender-qt-shell/issues">Open an issue →</a></div>
+        <div class="card"><h4>💛 Become a sponsor</h4><p>Would you like to support the people who develop Qt Shell? Click <b>Sponsors</b> in Qt Shell's status bar for the contact.</p></div>
+      </div>
+    </div>
+  </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <span>Qt Shell · a Blender add-on by xmoner</span>
+    <span>Qt Shell · a free Blender add-on by xmoner · GPL-3.0</span>
     <span>
       <a href="https://github.com/xmoner/blender-qt-shell">GitHub</a> ·
       <a href="https://github.com/xmoner/blender-qt-shell/releases">Releases</a> ·
@@ -241,5 +436,28 @@
   </div>
 </footer>
 
+<script>
+// Latest releases from the GitHub API (the static links above stay when it is not reachable)
+(function () {
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  fetch("https://api.github.com/repos/xmoner/blender-qt-shell/releases?per_page=6")
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(list => {
+      list = (list || []).filter(r => !r.draft);
+      if (!list.length) return;
+      const latest = list[0];
+      document.getElementById("latest").innerHTML =
+        'Latest: <b><a href="' + esc(latest.html_url) + '">' + esc(latest.tag_name) + '</a></b>';
+      const fmt = d => new Date(d).toLocaleDateString("en-GB", {day: "numeric", month: "short", year: "numeric"});
+      document.getElementById("releases").innerHTML = list.map(r => {
+        const title = (r.name || r.tag_name).replace(/^Qt Shell\s+[\d.]+\s*[–-]\s*/, "");
+        return '<a class="rel" href="' + esc(r.html_url) + '"><span class="tag">' + esc(r.tag_name) +
+          '</span><span class="title">' + esc(title) + '</span><span class="date">' + fmt(r.published_at) + '</span></a>';
+      }).join("") + '<a class="rel" href="https://github.com/xmoner/blender-qt-shell/releases"><span class="tag">…</span>' +
+        '<span class="title">All releases</span><span class="date"></span></a>';
+    })
+    .catch(() => {});
+})();
+</script>
 </body>
 </html>
