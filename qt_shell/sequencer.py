@@ -777,8 +777,7 @@ class SeqView(QtWidgets.QWidget):
                 if hw <= x <= w:
                     p.drawRect(QtCore.QRectF(x, rul - theme.px(3), max(1.0, spx), theme.px(3)))
         # current frame
-        cur = getattr(self.ed.hub, "display_frame", None)
-        cur = sc.frame_current if cur is None else cur
+        cur = self.ed.shown_frame()
         x = self.x_of(cur)
         if x >= hw:
             p.setPen(QtGui.QPen(QtGui.QColor("#4f8ff7"), 2))
@@ -915,6 +914,8 @@ class SeqView(QtWidgets.QWidget):
 
     def mousePressEvent(self, ev):
         self.setFocus()
+        if self.ed.cached_playing():
+            self.ed.stop_cached_play()
         pos = ev.position()
         btn, mods = ev.button(), ev.modifiers()
         if btn == QtCore.Qt.MiddleButton or (btn == QtCore.Qt.LeftButton and mods & QtCore.Qt.AltModifier):
@@ -1433,8 +1434,17 @@ class QtPreview(QtWidgets.QWidget):
 
     # ---- frame / camera / geometry
     def frame(self):
-        f = getattr(self.ed.hub, "display_frame", None)
-        return int(bpy.context.scene.frame_current if f is None else f)
+        return self.ed.shown_frame()
+
+    def show_cached(self, f):
+        """Cached playback: the frame straight from the cache (no render, no scene frame change)."""
+        img = self.cache.get(f)
+        if img is None:
+            return False
+        self.image = img
+        self._fps_tick(f)
+        self.repaint()
+        return True
 
     def bp_camera(self):
         """Video Editing layers belong to the edit, not to a camera."""
@@ -1538,7 +1548,7 @@ class QtPreview(QtWidgets.QWidget):
         del ts[:-25]
 
     def playing(self):
-        return bool(getattr(self.ed.hub, "playing", False)) or blender_playing()
+        return bool(getattr(self.ed.hub, "playing", False)) or blender_playing() or self.ed.cached_playing()
 
     def fps_now(self):
         """Measured frames per second of the last frames shown (None when not enough or stale)."""
@@ -2131,6 +2141,9 @@ class VideoSequencer(QtWidgets.QWidget):
         self.hub = hub
         self.meta_path = []          # names of the open metas (Maya-like "groups")
         self.render_version = 0      # +1 on every strip edit made here (drops the preview cache)
+        self._cp_timer = None        # cached playback (Qt Shell preview, all frames cached)
+        self._cp_frame = None
+        self._audio = None
         self.snap_on = QtCore.QSettings("QtShell", "QtShell").value("sequencer/snap", True) not in (False, "false")
         self.show_seconds = QtCore.QSettings("QtShell", "QtShell").value("sequencer/seconds", False) in (True, "true")
         lay = QtWidgets.QVBoxLayout(self)
@@ -2384,7 +2397,7 @@ class VideoSequencer(QtWidgets.QWidget):
         """Strips changed elsewhere (Blender's operators, Python, undo) – a cheap signature check."""
         if not self.isVisible():
             return
-        playing = blender_playing()
+        playing = blender_playing() or self.cached_playing()
         if not playing:
             try:
                 self.sync_bp_tracks()
@@ -2418,6 +2431,11 @@ class VideoSequencer(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(0, self.refresh)
 
     def shutdown(self):
+        try:
+            if self.cached_playing():
+                self.stop_cached_play()
+        except Exception:
+            pass
         try:
             self.set_blue_pencil(False)
         except Exception:
@@ -2471,7 +2489,8 @@ class VideoSequencer(QtWidgets.QWidget):
         try:
             if not (self.isVisible() and self.cache_on() and self.pane.auto_btn.isChecked()):
                 return
-            if getattr(self.hub, "playing", False) or blender_playing() or bridge.is_rendering():
+            if (getattr(self.hub, "playing", False) or blender_playing() or self.cached_playing()
+                    or bridge.is_rendering()):
                 return
             if self.qtprev.bp.enabled and QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
                 return
@@ -2915,7 +2934,114 @@ class VideoSequencer(QtWidgets.QWidget):
         self.view.update()
 
     # ---- playback with sound (Blender's own)
+    def shown_frame(self):
+        """The frame the sequencer shows: the cached playback's frame, else the Timeline's / the scene's."""
+        if self._cp_frame is not None:
+            return self._cp_frame
+        f = getattr(self.hub, "display_frame", None)
+        return int(bpy.context.scene.frame_current if f is None else f)
+
+    # ---- cached playback: the Qt Shell preview plays straight from its cache in real time (like Blender's
+    # preview) – no scene frame changes (the 3D views and Timeline are not redrawn per frame), sound via aud
+    def cached_playing(self):
+        return self._cp_timer is not None and self._cp_timer.isActive()
+
+    def can_play_cached(self):
+        if not (self.pane.is_qt() and self.cache_on()):
+            return False
+        self.qtprev.check_cache()
+        rng = self._play_range()
+        return bool(rng) and all(f in self.qtprev.cache for f in rng)
+
+    def start_cached_play(self):
+        rng = self._play_range()
+        sc = bpy.context.scene
+        self._cp_range = (rng[0], rng[-1])
+        start = sc.frame_current if rng[0] <= sc.frame_current <= rng[-1] else rng[0]
+        self._cp_start = start
+        self._cp_t0 = time.perf_counter()
+        self._cp_loop = -1
+        self._cp_frame = start
+        if self._cp_timer is None:
+            self._cp_timer = QtCore.QTimer(self)
+            self._cp_timer.setTimerType(QtCore.Qt.PreciseTimer)
+            self._cp_timer.timeout.connect(self._cp_tick)
+        self._cp_timer.setInterval(max(1, int(500 / fps())))
+        self._cp_timer.start()
+        self.play_btn.setText("Stop")
+        self._cp_tick()
+
+    def stop_cached_play(self):
+        if self._cp_timer is not None:
+            self._cp_timer.stop()
+        self._audio_stop()
+        f = self._cp_frame
+        self._cp_frame = None
+        self.play_btn.setText("Play")
+        if f is not None and f != bpy.context.scene.frame_current:
+            bpy.context.scene.frame_set(f)       # the scene follows to where playback stopped
+        self.view.update()
+        self.qtprev.request()
+
+    def _cp_tick(self):
+        a, b = self._cp_range
+        span = b - a + 1
+        n = int((time.perf_counter() - self._cp_t0) * fps())   # real time: late frames are skipped
+        pos = (self._cp_start - a) + n
+        loop = pos // span
+        f = a + pos % span
+        if loop != self._cp_loop:                # (re)start the sound at the start / each loop
+            self._cp_loop = loop
+            self._audio_play(f)
+        if f == self._cp_frame and loop >= 0 and self.qtprev.image is not None and n:
+            return
+        self._cp_frame = f
+        if not self.qtprev.show_cached(f):      # the cache changed under us – Blender plays instead
+            self.stop_cached_play()
+            self.play_sound()
+            return
+        self.view.update()
+
+    def _audio_play(self, frame):
+        """The sound strips from frame on, mixed with aud (Blender's audio library)."""
+        self._audio_stop()
+        try:
+            import aud
+            r = fps()
+            mixed = None
+            for s in all_strips():
+                if s.type != "SOUND" or s.mute or s.sound is None or s.frame_final_end <= frame:
+                    continue
+                st = max(s.frame_final_start, frame)
+                pos = (st - s.frame_start) / r + float(getattr(s, "sound_offset", 0.0) or 0.0)
+                dur = (s.frame_final_end - st) / r
+                snd = aud.Sound(bpy.path.abspath(s.sound.filepath)).limit(pos, pos + dur)
+                vol = float(getattr(s, "volume", 1.0))
+                if vol != 1.0:
+                    snd = snd.volume(vol)
+                if st > frame:
+                    snd = snd.delay((st - frame) / r)
+                mixed = snd if mixed is None else mixed.mix(snd)
+            if mixed is not None:
+                self._audio = aud.Device().play(mixed)
+        except Exception as ex:
+            bridge.log(f"Video Sequencer: cached playback without sound ({ex})", "WARNING")
+
+    def _audio_stop(self):
+        h, self._audio = getattr(self, "_audio", None), None
+        if h is not None:
+            try:
+                h.stop()
+            except Exception:
+                pass
+
     def play_sound(self):
+        if self.cached_playing():
+            self.stop_cached_play()
+            return
+        if not blender_playing() and self.can_play_cached():
+            self.start_cached_play()
+            return
         host = PreviewHost.current
         if blender_playing():
             for w in bpy.context.window_manager.windows:
