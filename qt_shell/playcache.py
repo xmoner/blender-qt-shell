@@ -19,6 +19,7 @@ from . import bridge
 KEY_ENABLED = "playback/cache"
 KEY_LIMIT = "playback/cache_mb"
 KEY_AUTO = "playback/cache_auto"
+KEY_BUSY = "playback/cache_while_moving"   # background caching also while the mouse moves / keys are typed
 KEY_MODE = "playback/cache_mode"          # "GEOMETRY" (camera-independent, default) or "IMAGE"
 
 _bytes = 0
@@ -96,6 +97,23 @@ def auto_enabled():
 
 def set_auto_enabled(on):
     _settings().setValue(KEY_AUTO, bool(on))
+
+
+def while_moving():
+    """Background caching keeps going while the mouse moves (only a pressed button / open menu pauses it) –
+    Qt Preferences → Viewport → Playback cache; off = it waits until the user is idle (default)."""
+    v = _settings().value(KEY_BUSY, False)
+    return v not in (False, "false", "0", 0)
+
+
+def set_while_moving(on):
+    _settings().setValue(KEY_BUSY, bool(on))
+
+
+def idle_enough(min_idle):
+    """Background caching may run now: idle for min_idle seconds, or 'while moving' is on."""
+    from . import app as shell_app
+    return while_moving() or shell_app.idle_seconds() >= min_idle
 
 
 def pending_edits(frame=None):

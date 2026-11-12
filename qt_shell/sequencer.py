@@ -1415,6 +1415,8 @@ class QtPreview(QtWidgets.QWidget):
         self.notes = []
         self._blender_ok = True                  # Blender renders the frame (else Qt's own drawing)
         self.cache = {}                          # frame → QImage (Cache / Auto in the preview header)
+        self._fps_times = []                     # when the last frames were shown (fps while playing)
+        self._fps_last_frame = None
         self._cache_key = None
         self._pan = None
         self._img_cache = {}
@@ -1501,6 +1503,7 @@ class QtPreview(QtWidgets.QWidget):
             hit = self.cache.get(f)
             if hit is not None:
                 self.image = hit
+                self._fps_tick(f)
                 self.update()
                 return
         if self._blender_ok and f == bpy.context.scene.frame_current:
@@ -1519,7 +1522,30 @@ class QtPreview(QtWidgets.QWidget):
                 bridge.log(f"Video Sequencer: Qt preview failed:\n{traceback.format_exc()}", "WARNING")
         if img is not None:
             self.image = img
+            self._fps_tick(f)
         self.update()
+
+    # ---- playback speed (fps shown while playing, like Blender's preview)
+    def _fps_tick(self, f):
+        if f == self._fps_last_frame:
+            return
+        self._fps_last_frame = f
+        now = time.perf_counter()
+        ts = self._fps_times
+        if ts and now - ts[-1] > 0.5:            # a pause / a single step: start again
+            ts.clear()
+        ts.append(now)
+        del ts[:-25]
+
+    def playing(self):
+        return bool(getattr(self.ed.hub, "playing", False)) or blender_playing()
+
+    def fps_now(self):
+        """Measured frames per second of the last frames shown (None when not enough or stale)."""
+        ts = self._fps_times
+        if len(ts) < 3 or time.perf_counter() - ts[-1] > 0.6:
+            return None
+        return (len(ts) - 1) / max(1e-6, ts[-1] - ts[0])
 
     # ---- playback cache (like the Timeline's Cache / Auto)
     def cache_key(self):
@@ -1863,6 +1889,19 @@ class QtPreview(QtWidgets.QWidget):
                 p.setPen(QtGui.QColor(225, 225, 225))
                 p.drawText(box, QtCore.Qt.AlignCenter, line)
                 y += box.height() + 1
+        rate = self.fps_now()
+        if rate is not None and self.playing():
+            target = fps()
+            txt = f"fps: {rate:.1f} / {target:g}"
+            f2 = QtGui.QFont(p.font())
+            f2.setBold(True)
+            p.setFont(f2)
+            br = p.fontMetrics().boundingRect(txt)
+            box = QtCore.QRectF(r.right() - br.width() - theme.px(14), r.top() + theme.px(4),
+                                br.width() + theme.px(10), br.height() + theme.px(4))
+            p.fillRect(box, QtGui.QColor(0, 0, 0, 160))
+            p.setPen(QtGui.QColor("#ff6a5a") if rate < target * 0.9 else QtGui.QColor("#8fe388"))
+            p.drawText(box, QtCore.Qt.AlignCenter, txt)
         p.end()
 
     def mousePressEvent(self, ev):
@@ -1984,6 +2023,18 @@ class PreviewPane(QtWidgets.QWidget):
         cmenu = QtWidgets.QMenu(self.cache_btn)
         cmenu.addAction("Cache All Frames", lambda: self.ed.cache_all())
         cmenu.addAction("Flush Cache", lambda: self.qt.flush())
+        cmenu.addSeparator()
+        busy = cmenu.addAction("Keep Caching While the Mouse Moves")
+        busy.setCheckable(True)
+        busy.setToolTip("Auto caching goes on while you move the mouse or type – also in Qt Preferences → Viewport")
+        from . import playcache
+
+        def sync_busy(b=busy):
+            b.blockSignals(True)
+            b.setChecked(playcache.while_moving())
+            b.blockSignals(False)
+        cmenu.aboutToShow.connect(sync_busy)
+        busy.toggled.connect(playcache.set_while_moving)
         self.cache_btn.setMenu(cmenu)
         self.cache_btn.toggled.connect(self._cache_toggled)
         hl.addWidget(self.cache_btn)
@@ -2431,8 +2482,8 @@ class VideoSequencer(QtWidgets.QWidget):
             if (app_.mouseButtons() != QtCore.Qt.NoButton or app_.activePopupWidget() is not None
                     or app_.activeModalWidget() is not None):
                 return
-            from . import app as shell_app, playcache
-            if shell_app.idle_seconds() < 0.6:
+            from . import playcache
+            if not playcache.idle_enough(0.6):
                 return
             key = self.qtprev.cache_key()
             if key != self._ac_key:

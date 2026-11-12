@@ -1230,8 +1230,7 @@ class Timeline(QtWidgets.QWidget):
             if (app.mouseButtons() != QtCore.Qt.NoButton or app.activePopupWidget() is not None
                     or app.activeModalWidget() is not None):
                 return
-            from . import app as shell_app
-            if shell_app.idle_seconds() < AUTO_CACHE_IDLE:
+            if not playcache.idle_enough(AUTO_CACHE_IDLE):
                 return                         # scrolling / moving the mouse / typing: a step blocks the UI
             views = self._views()
             if not views:
@@ -1323,6 +1322,12 @@ class Timeline(QtWidgets.QWidget):
         auto.setCheckable(True)
         auto.setChecked(playcache.auto_enabled())
         auto.toggled.connect(self.auto_cache_btn.setChecked)
+        busy = m.addAction("Keep Caching While the Mouse Moves")
+        busy.setCheckable(True)
+        busy.setChecked(playcache.while_moving())
+        busy.setToolTip("Background caching goes on while you move the mouse or type (only a pressed button or an "
+                        "open menu pauses it) – also in Qt Preferences → Viewport")
+        busy.toggled.connect(playcache.set_while_moving)
         a = m.addAction("Cache All Frames")
         a.setToolTip("Draws every frame of the scene range once, so the next playback is real time")
         a.triggered.connect(self.cache_all)

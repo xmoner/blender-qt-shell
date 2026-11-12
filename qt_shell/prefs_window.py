@@ -298,6 +298,16 @@ class QtPreferences(QtWidgets.QDialog):
         row.addStretch(1)
         lay.addLayout(row)
 
+        _section(lay, "Playback cache", page)
+        from . import playcache
+        self._check(page, lay, "Keep background caching while the mouse moves",
+                    playcache.while_moving(), playcache.set_while_moving,
+                    "Auto caching (Timeline, Video Sequencer) goes on while you move the mouse or type – only a "
+                    "pressed mouse button or an open menu pauses it. Off: it waits until you stop for a moment "
+                    "(smoothest interaction).")
+        _hint(lay, "Background caching renders a few frames at a time and rests in between, so the window stays "
+                   "usable; with this on it doesn't wait for you to stop moving the mouse.", page)
+
         _section(lay, "Layout", page)
         row = QtWidgets.QHBoxLayout()
         row.addWidget(QtWidgets.QLabel("3D views", page))
