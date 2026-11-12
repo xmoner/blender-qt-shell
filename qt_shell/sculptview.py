@@ -300,6 +300,12 @@ def _watch_playback():
         return
     if not playing:
         return
+    seq = getattr(app._win, "sequencer", None)
+    try:
+        if seq is not None and seq.owns_blender_playback():
+            return                       # the Video Sequencer's playback (its Play / Space in its preview)
+    except Exception:
+        pass
     w = playing[0]
     try:
         with bpy.context.temp_override(window=w, screen=w.screen):

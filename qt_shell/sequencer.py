@@ -2202,6 +2202,7 @@ class VideoSequencer(QtWidgets.QWidget):
         self.hub = hub
         self.meta_path = []          # names of the open metas (Maya-like "groups")
         self.render_version = 0      # +1 on every strip edit made here (drops the preview cache)
+        self._bl_play = False        # Blender's playback belongs to the sequencer (its Play / Space in its preview)
         self._cp_timer = None        # cached playback (Qt Shell preview, all frames cached)
         self._cp_frame = None
         self._audio = None
@@ -2467,8 +2468,12 @@ class VideoSequencer(QtWidgets.QWidget):
         playing = blender_playing() or self.cached_playing()
         if not playing and getattr(self.hub, "seq_solo", False):
             self._set_solo(False)
-        elif playing and not self.follow_on() and not self.cached_playing() and self._preview_playing():
-            self._set_solo(True)                 # Space in Blender's preview: it plays there
+        if not blender_playing():
+            self._bl_play = False
+        elif not self._bl_play and self._preview_hovered():
+            self._bl_play = True                 # Space in Blender's preview: it plays there
+        if self._bl_play and not self.follow_on():
+            self._set_solo(True)
         if not self.isVisible():
             return
         if not playing:
@@ -3012,7 +3017,11 @@ class VideoSequencer(QtWidgets.QWidget):
 
     def _set_follow(self, on):
         QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/follow_playback", bool(on))
-        playing = self.cached_playing() or blender_playing()
+        host = PreviewHost.current
+        w = host.bl_window() if host is not None else None
+        if w is not None:
+            self._redraw_flags(w.screen)         # Space in Blender's preview (from its next start)
+        playing = self.cached_playing() or (blender_playing() and self._bl_play)
         self._set_solo(playing and not on)
         if not on and getattr(self.hub, "display_frame", None) is not None and self.cached_playing():
             self.hub.display_frame = None
@@ -3029,13 +3038,36 @@ class VideoSequencer(QtWidgets.QWidget):
             except Exception:
                 pass
 
-    def _preview_playing(self):
+    def _preview_hovered(self):
         host = PreviewHost.current
-        w = host.bl_window() if host is not None else None
         try:
-            return w is not None and w.screen is not None and w.screen.is_animation_playing
+            return (host is not None and host.isVisible()
+                    and host.rect().contains(host.mapFromGlobal(QtGui.QCursor.pos())))
         except Exception:
             return False
+
+    def owns_blender_playback(self):
+        """Blender's playback runs for the sequencer (its Play, or Space in Blender's preview) – the Qt Timeline
+        must not take it over (sculptview hands Blender's playback in its 3D views to the Timeline)."""
+        if not blender_playing():
+            return False
+        if not self._bl_play and self._preview_hovered():
+            self._bl_play = True
+        return self._bl_play
+
+    def _redraw_flags(self, screen):
+        """Which editors Blender's playback redraws (set on the screen it starts in): the 3D views only when
+        they play along – Blender's own 3D views (sculpt / paint / Always) would redraw every frame otherwise."""
+        on = self.follow_on()
+        for attr, val in (("use_play_3d_editors", on), ("use_play_top_left_3d_editor", False if not on else None),
+                          ("use_play_animation_editors", on), ("use_play_sequence_editors", True)):
+            if val is None:
+                continue
+            try:
+                if screen is not None and getattr(screen, attr) != val:
+                    setattr(screen, attr, val)
+            except Exception:
+                pass
 
     def _timeline(self):
         try:
@@ -3174,6 +3206,8 @@ class VideoSequencer(QtWidgets.QWidget):
                 if w.screen is not None and w.screen.is_animation_playing:
                     with bpy.context.temp_override(window=w, screen=w.screen):
                         bpy.ops.screen.animation_cancel(restore_frame=False)
+            self._bl_play = False
+            self._set_solo(False)
             self.play_btn.setText("Play")
             return
         try:
@@ -3185,13 +3219,17 @@ class VideoSequencer(QtWidgets.QWidget):
             pass
         w, a = (host.bl_window(), host.area()) if host is not None else (None, None)
         try:
+            self._bl_play = True                 # before: sculptview's watcher must leave it alone
             if w is not None and a is not None:
+                self._redraw_flags(w.screen)
                 with bpy.context.temp_override(window=w, screen=w.screen, area=a):
                     bpy.ops.screen.animation_play()
             else:                                # Qt Shell preview: Blender's playback in its hidden window
                 with bridge.blender_context():
+                    self._redraw_flags(bpy.context.screen)
                     bpy.ops.screen.animation_play()
         except Exception as ex:
+            self._bl_play = False
             bridge.log(f"Video Sequencer: playback with sound failed ({ex}) – the Timeline plays", "WARNING")
             try:
                 from . import app
