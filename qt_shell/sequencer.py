@@ -34,7 +34,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import bridge, theme
 from . import rna_widgets as rw
 
-TAG = "qtshell_seq_preview"   # ID property on the preview helper window's screen (found again after a load)
+TAG = "qtshell_seq_preview"
+SLOT_NAME = "Qt Shell preview"      # render slot the Qt preview renders into (the user's slots stay)   # ID property on the preview helper window's screen (found again after a load)
 RULER = 22                    # unscaled px
 HEADER_W = 118                # unscaled px – channel names on the left
 ROW_H = 34                    # unscaled px – default channel height
@@ -161,6 +162,16 @@ def _effect_params():
         return [p.identifier for p in coll(se).bl_rna.functions["new_effect"].parameters]
     except Exception:
         return []
+
+
+def fit_kw(container, func):
+    """fit_method='FIT' like Blender's Add Movie / Image (the RNA default is ORIGINAL – a small clip stays small
+    in a large frame)."""
+    try:
+        params = [p.identifier for p in coll(container).bl_rna.functions[func].parameters]
+        return {"fit_method": "FIT"} if "fit_method" in params else {}
+    except Exception:
+        return {}
 
 
 def new_effect(container, name, etype, channel, start, length, inputs=()):
@@ -1277,6 +1288,7 @@ class QtPreview(QtWidgets.QWidget):
         self.ed = ed
         self.image = None
         self.notes = []
+        self._blender_ok = True                  # Blender renders the frame (else Qt's own drawing)
         self._pan = None
         self._img_cache = {}
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
@@ -1351,11 +1363,76 @@ class QtPreview(QtWidgets.QWidget):
         if getattr(bridge, "op_depth", 0):      # a Qt timer inside a running operator (Windows) – later
             self._t.start(50)
             return
-        try:
-            self.image = self.compose(self.frame())
-        except Exception:
-            bridge.log(f"Video Sequencer: Qt preview failed:\n{traceback.format_exc()}", "WARNING")
+        f = self.frame()
+        img = None
+        self.notes = []
+        if self._blender_ok and f == bpy.context.scene.frame_current:
+            try:
+                img = self.blender_frame()
+            except Exception:
+                self._blender_ok = False         # fall back to Qt's own drawing for this session
+                bridge.log(f"Video Sequencer: Blender's frame for the Qt preview failed – Qt drawing used:\n"
+                           f"{traceback.format_exc()}", "WARNING")
+        if img is None:
+            try:
+                img = self.compose(f)
+            except Exception:
+                bridge.log(f"Video Sequencer: Qt preview failed:\n{traceback.format_exc()}", "WARNING")
+        if img is not None:
+            self.image = img
         self.update()
+
+    def blender_frame(self):
+        """The current frame exactly as Blender's sequencer shows it (movies, effects, modifiers, shots), rendered
+        by Blender at preview size (render.opengl with sequencer=True) into its own render slot – the user's render
+        slots stay untouched – and read back through a temporary PNG."""
+        import tempfile
+        from . import image_editor
+        sc = bpy.context.scene
+        se = editor()
+        if se is None or not len(coll(se)):
+            return None
+        r = sc.render
+        w, _h = self.out_size()
+        if getattr(self.ed.hub, "playing", False) or blender_playing():
+            w = min(w, 640)                      # lighter frames while playing
+        pct = max(1, min(100, int(math.ceil(w * 100.0 / max(1, r.resolution_x)))))
+        rr = bpy.data.images.get("Render Result")
+        keep_slot = None
+        if rr is not None:
+            slots = rr.render_slots
+            keep_slot = slots.active_index
+            mine = next((i for i, sl in enumerate(slots) if sl.name == SLOT_NAME), None)
+            if mine is None:
+                slots.new(name=SLOT_NAME)
+                mine = len(slots) - 1
+            slots.active_index = mine
+        keep_pct = r.resolution_percentage
+        path = os.path.join(tempfile.gettempdir(), f"qtshell_seq_preview_{os.getpid()}.png")
+        try:
+            with bridge.quiet_updates():
+                if keep_pct != pct:
+                    r.resolution_percentage = pct
+                try:
+                    with seq_context():
+                        res = bpy.ops.render.opengl("EXEC_DEFAULT", sequencer=True)
+                finally:
+                    if r.resolution_percentage != keep_pct:
+                        r.resolution_percentage = keep_pct
+            if "FINISHED" not in res:
+                raise RuntimeError(f"render.opengl: {res}")
+            out = bpy.data.images.get("Render Result")
+            if rr is None and out is not None:      # the first one: put ours in its own slot next time
+                rr = out
+            image_editor.save_blender_image(out, path, "PNG", depth="8", fast=True)
+        finally:
+            if rr is not None and keep_slot is not None:
+                try:
+                    rr.render_slots.active_index = keep_slot
+                except Exception:
+                    pass
+        img = QtGui.QImage(path)
+        return None if img.isNull() else img.convertToFormat(QtGui.QImage.Format_ARGB32_Premultiplied)
 
     def compose(self, f, size=None):
         """The edit at frame f as a QImage (size: (w, h), default fits the widget)."""
@@ -2249,15 +2326,21 @@ class VideoSequencer(QtWidgets.QWidget):
         except Exception:
             pass
         w, a = (host.bl_window(), host.area()) if host is not None else (None, None)
-        if w is None or a is None:
-            try:                                 # no embedded preview: the Qt Timeline plays (no sound)
+        try:
+            if w is not None and a is not None:
+                with bpy.context.temp_override(window=w, screen=w.screen, area=a):
+                    bpy.ops.screen.animation_play()
+            else:                                # Qt Shell preview: Blender's playback in its hidden window
+                with bridge.blender_context():
+                    bpy.ops.screen.animation_play()
+        except Exception as ex:
+            bridge.log(f"Video Sequencer: playback with sound failed ({ex}) – the Timeline plays", "WARNING")
+            try:
                 from . import app
                 app._win.timeline.toggle_play()
             except Exception:
-                self.status("Open the Preview to play with sound")
+                pass
             return
-        with bpy.context.temp_override(window=w, screen=w.screen, area=a):
-            bpy.ops.screen.animation_play()
         self.play_btn.setText("Stop")
 
     # ---- adding
@@ -2389,7 +2472,8 @@ class VideoSequencer(QtWidgets.QWidget):
         c = self._top()
         f = bpy.context.scene.frame_current if frame is None else int(frame)
         name = os.path.splitext(os.path.basename(path))[0]
-        mv = coll(c).new_movie(name=name, filepath=path, channel=free_channel(c, f, f + 1, channel), frame_start=f)
+        mv = coll(c).new_movie(name=name, filepath=path, channel=free_channel(c, f, f + 1, channel), frame_start=f,
+                               **fit_kw(c, "new_movie"))
         self._place(mv, f, channel)
         out = [mv]
         if with_sound:
@@ -2420,7 +2504,8 @@ class VideoSequencer(QtWidgets.QWidget):
         f = bpy.context.scene.frame_current if frame is None else int(frame)
         first = paths[0]
         name = os.path.splitext(os.path.basename(first))[0]
-        s = coll(c).new_image(name=name, filepath=first, channel=free_channel(c, f, f + 1, channel), frame_start=f)
+        s = coll(c).new_image(name=name, filepath=first, channel=free_channel(c, f, f + 1, channel), frame_start=f,
+                              **fit_kw(c, "new_image"))
         d = os.path.dirname(first)
         for p in paths[1:]:
             if os.path.dirname(p) == d:
