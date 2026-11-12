@@ -197,8 +197,9 @@ class Viewport(QtWidgets.QWidget):
         self._timer = QtCore.QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(16)
-        hub.data_changed.connect(self.request_redraw)
-        hub.frame_changed.connect(lambda _f: self.request_redraw())
+        # while the Video Sequencer plays on its own ("play along" off) the 3D views are not redrawn per frame
+        hub.data_changed.connect(lambda: getattr(hub, "seq_solo", False) or self.request_redraw())
+        hub.frame_changed.connect(lambda _f: getattr(hub, "seq_solo", False) or self.request_redraw())
         hub.selection_changed.connect(self.update)
         hub.selection_changed.connect(lambda: gizmo.invalidate(self))
         hub.data_changed.connect(lambda: gizmo.invalidate(self))

@@ -1145,9 +1145,9 @@ class Timeline(QtWidgets.QWidget):
         self.bar.view_changed.connect(self.slider.update)
         self._update_loop_btn()
 
-        hub.frame_changed.connect(lambda _f: self.sync())
+        hub.frame_changed.connect(lambda _f: getattr(hub, "seq_solo", False) or self.sync())
         hub.selection_changed.connect(self.sync)
-        hub.data_changed.connect(self.sync)
+        hub.data_changed.connect(lambda: getattr(hub, "seq_solo", False) or self.sync())
         hub.file_loaded.connect(self._file_loaded)
         self.sync()
 
@@ -1953,6 +1953,28 @@ class Timeline(QtWidgets.QWidget):
             self.hub.play_frame.emit(f)          # other editors' playheads (Graph Editor)
         except Exception:
             pass
+
+    def follow_frame(self, f):
+        """Another editor plays (the Video Sequencer's cached playback, "play along" on): the Timeline and
+        the 3D views show frame f – from the playback cache when the views have it, else the scene goes there."""
+        sc = bpy.context.scene
+        views = self._views()
+        if self._cache_ready(views, f) and self._cache_show(views, f):
+            self.hub.display_frame = f
+        else:
+            self.hub.display_frame = None
+            if f != sc.frame_current and not playcache.pending_edits():
+                sc.frame_set(f)
+                vp = getattr(self.hub, "viewport_area", None) or getattr(self.hub, "viewport", None)
+                if vp is not None:
+                    vp.render_now()
+        self.cur.blockSignals(True)
+        self.cur.setValue(f)
+        self.cur.blockSignals(False)
+        if setting("follow", True):
+            self.bar.follow(f)
+        self.bar.update()
+        self.slider.update()
 
     # ------------------------------------------------------------ keys
     def insert_key(self):

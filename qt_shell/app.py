@@ -62,6 +62,7 @@ class Hub(QtCore.QObject):
         self.viewport = None     # set by the main window
         self.viewport_area = None   # all 3D views (ViewportArea); viewport is the active one
         self.playing = False     # animation playback in the timeline
+        self.seq_solo = False      # the Video Sequencer plays without the Timeline / 3D views following
         self.display_frame = None  # frame shown from the playback cache (scene frame not changed), else None
         self.main_window = None
         self.redo_until = 0.0    # an operator is being redone again and again (dragging a value) until then
@@ -93,7 +94,7 @@ class Hub(QtCore.QObject):
         self._render_frame = None
         # during playback the viewport is redrawn by the playback itself; the rest of the UI
         # (properties, outliner…) only needs an occasional refresh
-        data_interval = 0.5 if self.playing else 0.06
+        data_interval = 0.5 if self.playing or getattr(self, "seq_solo", False) else 0.06
         if F.depsgraph and now - self._last_data > data_interval:
             F.depsgraph = False
             self._last_data = now

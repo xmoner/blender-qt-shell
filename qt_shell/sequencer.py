@@ -546,19 +546,43 @@ def _on_load_pre(*_args):
         PreviewHost.current.stale = True
 
 
-def register_handlers():
-    lst = bpy.app.handlers.load_pre
-    for old in [f for f in lst if getattr(f, "__name__", "") == "_on_load_pre"
-                and getattr(f, "__module__", "") == __name__]:
-        lst.remove(old)
-    lst.append(_on_load_pre)
+# frames Blender showed (frame_change_post) – the fps of Blender's own playback in its preview
+_FRAME_TIMES = []
+
+
+@bpy.app.handlers.persistent
+def _on_frame_post(*_a):
+    ts = _FRAME_TIMES
+    now = time.perf_counter()
+    if ts and now - ts[-1] > 0.5:                # a pause / a single step: start again
+        ts.clear()
+    ts.append(now)
+    del ts[:-25]
+
+
+def blender_fps():
+    """Measured frames per second of Blender's playback (None when not enough frames or stale)."""
+    ts = _FRAME_TIMES
+    if len(ts) < 3 or time.perf_counter() - ts[-1] > 0.6:
+        return None
+    return (len(ts) - 1) / max(1e-6, ts[-1] - ts[0])
+
+
+_HANDLERS = (("load_pre", "_on_load_pre"), ("frame_change_post", "_on_frame_post"))
 
 
 def unregister_handlers():
-    lst = bpy.app.handlers.load_pre
-    for old in [f for f in lst if getattr(f, "__name__", "") == "_on_load_pre"
-                and getattr(f, "__module__", "") == __name__]:
-        lst.remove(old)
+    for kind, name in _HANDLERS:
+        lst = getattr(bpy.app.handlers, kind)
+        for old in [f for f in lst if getattr(f, "__name__", "") == name
+                    and getattr(f, "__module__", "") == __name__]:
+            lst.remove(old)
+
+
+def register_handlers():
+    unregister_handlers()
+    for kind, name in _HANDLERS:
+        getattr(bpy.app.handlers, kind).append(globals()[name])
 
 
 def blender_playing():
@@ -1899,7 +1923,8 @@ class QtPreview(QtWidgets.QWidget):
                 p.setPen(QtGui.QColor(225, 225, 225))
                 p.drawText(box, QtCore.Qt.AlignCenter, line)
                 y += box.height() + 1
-        rate = self.fps_now()
+        pane = getattr(self.ed, "pane", None)
+        rate = self.fps_now() if pane is None or pane.fps_on() else None
         if rate is not None and self.playing():
             target = fps()
             txt = f"fps: {rate:.1f} / {target:g}"
@@ -2058,6 +2083,21 @@ class PreviewPane(QtWidgets.QWidget):
         self.auto_btn.toggled.connect(self._auto_toggled)
         hl.addWidget(self.auto_btn)
         hl.addStretch(1)
+        self.fps_label = QtWidgets.QLabel(head)
+        self.fps_label.setToolTip("Frames per second of Blender's playback in its preview / the target fps")
+        hl.addWidget(self.fps_label)
+        self.fps_btn = QtWidgets.QToolButton(head)
+        self.fps_btn.setText("FPS")
+        self.fps_btn.setCheckable(True)
+        self.fps_btn.setChecked(qs.value("sequencer/show_fps", True) not in (False, "false"))
+        self.fps_btn.setToolTip("Show the playback speed (frames per second / the scene's fps) while playing – "
+                                "red when slower than 90 % of the target. Both previews.")
+        self.fps_btn.toggled.connect(self._fps_toggled)
+        hl.addWidget(self.fps_btn)
+        self._fps_timer = QtCore.QTimer(self)
+        self._fps_timer.setInterval(250)
+        self._fps_timer.timeout.connect(self.update_fps_label)
+        self._fps_timer.start()
         lay.addWidget(head)
         self.stack = QtWidgets.QStackedWidget(self)
         self.host = PreviewHost(self.stack)
@@ -2072,6 +2112,27 @@ class PreviewPane(QtWidgets.QWidget):
 
     def is_qt(self):
         return self.stack.currentWidget() is self.qt
+
+    def fps_on(self):
+        return self.fps_btn.isChecked()
+
+    def _fps_toggled(self, on):
+        QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/show_fps", bool(on))
+        self.update_fps_label()
+        self.qt.update()
+
+    def update_fps_label(self):
+        """Blender preview: the fps of Blender's playback in the header (the Qt preview draws its own)."""
+        rate = None
+        if self.isVisible() and self.fps_on() and not self.is_qt() and blender_playing():
+            rate = blender_fps()
+        if rate is None:
+            if self.fps_label.text():
+                self.fps_label.setText("")
+            return
+        target = fps()
+        col = "#ff6a5a" if rate < target * 0.9 else "#8fe388"
+        self.fps_label.setText(f"<b style='color:{col}'>fps: {rate:.1f} / {target:g}</b>")
 
     def _cache_toggled(self, on):
         QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/cache", bool(on))
@@ -2270,6 +2331,14 @@ class VideoSequencer(QtWidgets.QWidget):
         self.sync.setToolTip("Playback sync (Blender's scene.sync_mode): Sync to Audio keeps picture and sound together")
         self.sync.activated.connect(self._set_sync)
         h.addWidget(self.sync)
+        self.follow_chk = QtWidgets.QCheckBox("Play the Timeline and 3D view too", bar)
+        self.follow_chk.setChecked(QtCore.QSettings("QtShell", "QtShell").value("sequencer/follow_playback", True)
+                                   not in (False, "false"))
+        self.follow_chk.setToolTip("While the Video Sequencer plays, the Timeline's playhead and the 3D views follow "
+                                   "the frame.\nOff: only the sequencer plays – the Timeline and the 3D views stay as "
+                                   "they are until you stop (faster playback, they catch up afterwards).")
+        self.follow_chk.toggled.connect(self._set_follow)
+        h.addWidget(self.follow_chk)
         h.addStretch(1)
         self.render_chk = QtWidgets.QCheckBox("Render uses the Sequencer", bar)
         self.render_chk.setToolTip("Render → Render Animation renders the strips (scene.render.use_sequencer)\n"
@@ -2395,9 +2464,13 @@ class VideoSequencer(QtWidgets.QWidget):
 
     def _poll(self):
         """Strips changed elsewhere (Blender's operators, Python, undo) – a cheap signature check."""
+        playing = blender_playing() or self.cached_playing()
+        if not playing and getattr(self.hub, "seq_solo", False):
+            self._set_solo(False)
+        elif playing and not self.follow_on() and not self.cached_playing() and self._preview_playing():
+            self._set_solo(True)                 # Space in Blender's preview: it plays there
         if not self.isVisible():
             return
-        playing = blender_playing() or self.cached_playing()
         if not playing:
             try:
                 self.sync_bp_tracks()
@@ -2933,6 +3006,44 @@ class VideoSequencer(QtWidgets.QWidget):
         self.status(f"Scene range {sc.frame_start} – {sc.frame_end}")
         self.view.update()
 
+    # ---- the Timeline and 3D views during the sequencer's playback ("play along")
+    def follow_on(self):
+        return self.follow_chk.isChecked()
+
+    def _set_follow(self, on):
+        QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/follow_playback", bool(on))
+        playing = self.cached_playing() or blender_playing()
+        self._set_solo(playing and not on)
+        if not on and getattr(self.hub, "display_frame", None) is not None and self.cached_playing():
+            self.hub.display_frame = None
+
+    def _set_solo(self, on):
+        """The sequencer plays on its own: the 3D views / Timeline skip the frame changes until it stops."""
+        on = bool(on)
+        if bool(getattr(self.hub, "seq_solo", False)) == on:
+            return
+        self.hub.seq_solo = on
+        if not on:                               # catch up with where the playback is now
+            try:
+                self.hub.frame_changed.emit(bpy.context.scene.frame_current)
+            except Exception:
+                pass
+
+    def _preview_playing(self):
+        host = PreviewHost.current
+        w = host.bl_window() if host is not None else None
+        try:
+            return w is not None and w.screen is not None and w.screen.is_animation_playing
+        except Exception:
+            return False
+
+    def _timeline(self):
+        try:
+            from . import app
+            return getattr(app._win, "timeline", None)
+        except Exception:
+            return None
+
     # ---- playback with sound (Blender's own)
     def shown_frame(self):
         """The frame the sequencer shows: the cached playback's frame, else the Timeline's / the scene's."""
@@ -2968,6 +3079,7 @@ class VideoSequencer(QtWidgets.QWidget):
             self._cp_timer.timeout.connect(self._cp_tick)
         self._cp_timer.setInterval(max(1, int(500 / fps())))
         self._cp_timer.start()
+        self._set_solo(not self.follow_on())
         self.play_btn.setText("Stop")
         self._cp_tick()
 
@@ -2978,8 +3090,15 @@ class VideoSequencer(QtWidgets.QWidget):
         f = self._cp_frame
         self._cp_frame = None
         self.play_btn.setText("Play")
+        tl = self._timeline()
+        if tl is None or not tl.is_playing():
+            self.hub.display_frame = None
         if f is not None and f != bpy.context.scene.frame_current:
             bpy.context.scene.frame_set(f)       # the scene follows to where playback stopped
+        self._set_solo(False)
+        if tl is not None:
+            tl.sync()
+            tl.bar.update()
         self.view.update()
         self.qtprev.request()
 
@@ -3001,6 +3120,13 @@ class VideoSequencer(QtWidgets.QWidget):
             self.play_sound()
             return
         self.view.update()
+        if self.follow_on():                     # the Timeline and 3D views play along
+            tl = self._timeline()
+            if tl is not None and not tl.is_playing():
+                try:
+                    tl.follow_frame(f)
+                except Exception:
+                    bridge.log(f"Video Sequencer: Timeline follow:\n{traceback.format_exc()}", "WARNING")
 
     def _audio_play(self, frame):
         """The sound strips from frame on, mixed with aud (Blender's audio library)."""
@@ -3073,6 +3199,7 @@ class VideoSequencer(QtWidgets.QWidget):
             except Exception:
                 pass
             return
+        self._set_solo(not self.follow_on())
         self.play_btn.setText("Stop")
 
     # ---- adding
