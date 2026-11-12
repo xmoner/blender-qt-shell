@@ -124,6 +124,22 @@ def strip_info(s):
     return t.replace("_", " ").title()
 
 
+def inputs(s):
+    """The input strips of an effect strip (Blender 4.4+: input_1 / input_2, before: seq1 / seq2)."""
+    out = []
+    for a in ("input_1", "input_2", "seq1", "seq2"):
+        x = getattr(s, a, None)
+        if x is not None and x not in out:
+            out.append(x)
+    return out
+
+
+def time_locked(s):
+    """Effect strips with inputs (Cross, Wipe, …) take their range from the inputs – frame_start /
+    frame_final_start / _end are read-only; only the channel can change."""
+    return getattr(s, "input_count", 0) > 0
+
+
 def free_channel(container, start, end, above=1, skip=()):
     """Lowest channel ≥ above where [start, end) is free."""
     taken = {}
@@ -641,7 +657,8 @@ class SeqView(QtWidgets.QWidget):
         for s in self.strips():
             r = self.strip_rect(s)
             if s in moving:
-                r = r.translated(drag["dx_px"], -drag["dch"] * rh)
+                follows = not time_locked(s) or all(x in moving for x in inputs(s))
+                r = r.translated(drag["dx_px"] if follows else 0, -drag["dch"] * rh)
             elif drag.get("mode") in ("trim_l", "trim_r") and drag.get("strip") == s:
                 if drag["mode"] == "trim_l":
                     r.setLeft(self.x_of(drag["new"]))
@@ -815,6 +832,8 @@ class SeqView(QtWidgets.QWidget):
         if s is None:
             return None
         r = self.strip_rect(s)
+        if time_locked(s):
+            return s, "body"
         e = min(theme.px(EDGE), r.width() / 3)
         if pos.x() - r.left() <= e:
             return s, "l"
@@ -1615,21 +1634,34 @@ class VideoSequencer(QtWidgets.QWidget):
             return
         order = sorted(strips, key=lambda s: s.frame_final_start, reverse=df > 0)
         for s in order:
-            if df:
+            if df and not time_locked(s):        # effects with inputs follow their inputs
                 s.frame_start += df
         order = sorted(strips, key=lambda s: s.channel, reverse=dch > 0)
         for s in order:
             if dch:
                 s.channel = max(1, s.channel + dch)
         bridge.undo_push("Move Strips")
-        self.status(f"Moved {len(strips)} strip(s) {df:+d} frames" + (f", {dch:+d} channels" if dch else ""))
+        timed = [s for s in strips if not time_locked(s)]
+        msg = f"Moved {len(strips)} strip(s)"
+        msg += f" {df:+d} frames" if df and timed else ""
+        msg += f", {dch:+d} channels" if dch else ""
+        if df and not timed:
+            msg += " – effects follow their input strips"
+        self.status(msg)
         self.after_edit()
 
     def trim(self, s, side, frame):
-        if side == "l":
-            s.frame_final_start = int(frame)
-        else:
-            s.frame_final_end = int(frame)
+        if time_locked(s):
+            self.status(f"“{s.name}” takes its length from its input strips – trim or move those")
+            return
+        try:
+            if side == "l":
+                s.frame_final_start = int(frame)
+            else:
+                s.frame_final_end = int(frame)
+        except (AttributeError, TypeError, RuntimeError) as ex:
+            self.status(f"“{s.name}” cannot be trimmed ({ex})")
+            return
         bridge.undo_push("Trim Strip")
         self.after_edit()
 
