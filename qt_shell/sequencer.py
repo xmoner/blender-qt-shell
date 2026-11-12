@@ -200,7 +200,31 @@ def new_effect(container, name, etype, channel, start, length, inputs=()):
     for i, s in enumerate(inputs[:2]):
         key = f"input{i + 1}" if f"input{i + 1}" in params else f"seq{i + 1}"
         kw[key] = s
-    return coll(container).new_effect(**kw)
+    strip = coll(container).new_effect(**kw)
+    fix_size(strip)
+    return strip
+
+
+def fix_size(strip):
+    """Blender 5.x: generator strips (Color, …) made through RNA get a 1 × 1 px image (the Add menu operator
+    sets the scene resolution) – they render as a single pixel, i.e. invisible. True when it was fixed."""
+    try:
+        if hasattr(strip, "width") and strip.width <= 1 and strip.height <= 1:
+            r = bpy.context.scene.render
+            strip.width, strip.height = r.resolution_x, r.resolution_y
+            strip.invalidate_cache("COMPOSITE")
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def fix_all_sizes():
+    """Repairs 1 × 1 generator strips made by earlier Qt Shell versions (0.102 – 0.104)."""
+    n = 0
+    for s in all_strips():
+        n += fix_size(s)
+    return n
 
 
 # ---------------------------------------------------------------- Blender context for operators
@@ -1333,6 +1357,18 @@ def shot_at(frame):
 
 
 _CHECKER = None
+_CM = QtGui.QPainter
+QT_BLEND = {     # Blender blend_type → the nearest QPainter composition (Qt Shell's own drawing only)
+    "REPLACE": _CM.CompositionMode_Source, "ALPHA_OVER": _CM.CompositionMode_SourceOver,
+    "ALPHA_UNDER": _CM.CompositionMode_DestinationOver, "CROSS": _CM.CompositionMode_SourceOver,
+    "GAMMA_CROSS": _CM.CompositionMode_SourceOver, "ADD": _CM.CompositionMode_Plus,
+    "MULTIPLY": _CM.CompositionMode_Multiply, "SCREEN": _CM.CompositionMode_Screen,
+    "OVERLAY": _CM.CompositionMode_Overlay, "DARKEN": _CM.CompositionMode_Darken,
+    "LIGHTEN": _CM.CompositionMode_Lighten, "DODGE": _CM.CompositionMode_ColorDodge,
+    "BURN": _CM.CompositionMode_ColorBurn, "HARD_LIGHT": _CM.CompositionMode_HardLight,
+    "SOFT_LIGHT": _CM.CompositionMode_SoftLight, "DIFFERENCE": _CM.CompositionMode_Difference,
+    "EXCLUSION": _CM.CompositionMode_Exclusion,
+}
 
 
 def _checker():
@@ -1489,15 +1525,20 @@ class QtPreview(QtWidgets.QWidget):
         keep_pct = r.resolution_percentage
         path = os.path.join(tempfile.gettempdir(), f"qtshell_seq_preview_{os.getpid()}.png")
         try:
+            keep_prefetch = getattr(se, "use_prefetch", None)
             with bridge.quiet_updates():
                 if keep_pct != pct:
                     r.resolution_percentage = pct
+                if keep_prefetch:                # no background prefetch thread from our renders: it can
+                    se.use_prefetch = False      # still be reading a strip that is removed next (crash)
                 try:
                     with seq_context():
                         res = bpy.ops.render.opengl("EXEC_DEFAULT", sequencer=True)
                 finally:
                     if r.resolution_percentage != keep_pct:
                         r.resolution_percentage = keep_pct
+                    if keep_prefetch and not se.use_prefetch:
+                        se.use_prefetch = True
             if "FINISHED" not in res:
                 raise RuntimeError(f"render.opengl: {res}")
             out = bpy.data.images.get("Render Result")
@@ -1528,7 +1569,10 @@ class QtPreview(QtWidgets.QWidget):
                 if layer is None:
                     continue
                 p.setOpacity(max(0.0, min(1.0, float(getattr(s, "blend_alpha", 1.0)))))
+                p.setCompositionMode(QT_BLEND.get(getattr(s, "blend_type", "ALPHA_OVER"),
+                                                  QtGui.QPainter.CompositionMode_SourceOver))
                 p.drawImage(QtCore.QRect(0, 0, w, h), layer)
+                p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
         finally:
             p.end()
         return img
@@ -2096,6 +2140,15 @@ class VideoSequencer(QtWidgets.QWidget):
     def refresh(self):
         if not self.isVisible():
             return
+        if getattr(self, "_sizes_checked", None) != bpy.data.filepath + str(len(all_strips())):
+            self._sizes_checked = bpy.data.filepath + str(len(all_strips()))
+            try:
+                n = fix_all_sizes()
+                if n:
+                    bridge.log(f"Video Sequencer: {n} colour strip(s) had a 1 × 1 px image – set to the scene size",
+                               "INFO")
+            except Exception:
+                pass
         try:
             sc = bpy.context.scene
             self.render_chk.blockSignals(True)
@@ -2115,6 +2168,13 @@ class VideoSequencer(QtWidgets.QWidget):
     def after_edit(self, props=True):
         if props:
             self.props.refresh(force=True)
+        se = editor()
+        if se is not None:                       # Blender's frame cache does not always see RNA edits
+            for s in {*(x for x in self.view.strips() if x.select), *([se.active_strip] if se.active_strip else [])}:
+                try:
+                    s.invalidate_cache("COMPOSITE")
+                except Exception:
+                    pass
         self.view.update()
         self.preview.redraw()
         self.qtprev.request()
