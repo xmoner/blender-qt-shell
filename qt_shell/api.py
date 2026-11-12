@@ -30,7 +30,7 @@ import types
 import bpy
 
 __all__ = [
-    "API_VERSION", "is_running", "main_window", "viewport", "status",
+    "API_VERSION", "is_running", "main_window", "viewport", "status", "video_sequencer",
     "add_dock", "remove_dock", "add_menu_action", "remove_menu_action",
     "get_view", "set_view", "frame_all", "frame_selected", "redraw",
     "view_matrix", "projection_matrix", "project", "viewport_size",
@@ -40,7 +40,7 @@ __all__ = [
     "active_tool", "set_tool", "TOOLS", "timeline", "image_editor", "check_for_updates", "latest_release",
 ]
 
-API_VERSION = (1, 12)
+API_VERSION = (1, 13)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -298,6 +298,24 @@ def image_editor():
         ie.export_animation("C:/renders/anim.mp4", "MP4", 1, 120)   # MP4, PNG, JPEG, TIFF, COPY"""
     w = main_window()
     return getattr(w, "image_editor", None) if w is not None else None
+
+
+def video_sequencer():
+    """The Video Sequencer of the Qt Shell window (None when Qt Shell is not open). It edits Blender's own
+    strips (scene.sequence_editor), so everything bpy can do with strips works alongside it.
+
+        import qt_shell
+        vs = qt_shell.api.video_sequencer()
+        vs.add_files(["C:/clips/a.mp4", "C:/music/song.wav"])   # movies (+ their sound), sounds, images
+        vs.add_camera_shot(bpy.data.objects["Camera.001"])      # Maya-style shot: this scene through a camera
+        vs.add_text(); vs.add_color(); vs.add_adjustment()
+        vs.cut(48)                         # split the selected strips (none selected: all) at frame 48
+        vs.delete(ripple=True)             # delete the selection and close the gap
+        vs.make_meta(); vs.enter_meta(strip); vs.exit_meta()
+        vs.move_strips(vs.selected(), 10, 1)   # +10 frames, one channel up
+        vs.play_sound()                    # Blender's own playback with sound (in the preview)"""
+    w = main_window()
+    return getattr(w, "sequencer", None) if w is not None else None
 
 
 # 3D viewport tools: tool → its variants (None = no variants)

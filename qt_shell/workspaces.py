@@ -28,7 +28,8 @@ LEFT = QtCore.Qt.LeftDockWidgetArea
 RIGHT = QtCore.Qt.RightDockWidgetArea
 
 # template → (shading, viewport layout)
-TEMPLATES = ["Layout", "Modeling", "Shading", "Animation", "Scripting", "UV Editing", "Compositing"]
+TEMPLATES = ["Layout", "Modeling", "Shading", "Animation", "Scripting", "UV Editing", "Compositing",
+             "Video Editing"]
 DEFAULT_NAMES = ["Layout", "Modeling", "Shading", "Animation", "Scripting"]
 
 
@@ -129,6 +130,15 @@ def apply_template(win, name):
             win.image_editor.set_source("COMPOSITOR")
         except Exception:
             bridge.log(traceback.format_exc(), "WARNING")
+    elif name == "Video Editing":
+        # like Blender's Video Editing workspace: preview, strips and strip properties in one big panel
+        hide("sidebar", "console", "node_editor", "uv_editor", "text_editor", "last_op", "image_editor",
+             "graph_editor")
+        sq = d.get("sequencer")
+        if sq is not None:
+            sq.show()
+            sq.raise_()
+            win.resizeDocks([sq], [theme.px(430)], QtCore.Qt.Vertical)
     left = [d[k] for k in ("sidebar", "last_op") if k in d and d[k].isVisible() and not d[k].isFloating()]
     if left and name != "Scripting":
         win.resizeDocks(left, [theme.px(270)] * len(left), QtCore.Qt.Horizontal)

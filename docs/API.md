@@ -687,6 +687,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 
 | API | Qt Shell | Changes |
 |---|---|---|
+| 1.13 | 0.102.0 | `video_sequencer()` – the Video Sequencer: add movies / sounds / images / scenes / camera shots / text / colour / adjustment / transitions, cut, delete (ripple), duplicate, move, trim, meta strips, play with sound. |
 | 1.2 | 0.9.0 – 0.9.1 | `set_viewport_layout()`, `viewport_layout()`, `viewports()`; overlays drawn in every view. 0.9.1: `status_history()`, status messages also in the Console. |
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
@@ -889,6 +890,26 @@ from qt_shell import shelf
 shelf.export_shelves(r"C:/shelves/modeling.json", ["Modeling"])   # None = all shelves
 shelf.import_shelves(r"C:/shelves/modeling.json")                 # added as new tabs of the open Shelf
 shelf.shelf_folder()                                              # default folder: config/qt_shell/shelves
+```
+
+## Video Sequencer from a script
+
+`qt_shell.api.video_sequencer()` (API 1.13) returns the Video Sequencer dock (None when Qt Shell is closed). It edits
+Blender's own strips (`scene.sequence_editor`), so plain bpy works alongside it; each method makes one undo step.
+
+```python
+import bpy, qt_shell
+vs = qt_shell.api.video_sequencer()
+vs.add_files(["C:/clips/a.mp4", "C:/music/song.wav"], frame=1)   # movies (+ their sound), sounds, images
+vs.add_camera_shot(bpy.data.objects["Camera.001"])  # Maya-style shot after the last one (preview / scene range)
+vs.add_camera_shot(cam, 1, 48)                       # … of scene frames 1–48
+vs.add_scene(bpy.data.scenes["Intro"]); vs.add_text(); vs.add_color(); vs.add_adjustment()
+vs.select([s1, s2]); vs.add_transition("CROSS")      # CROSS, GAMMA_CROSS, WIPE between two strips
+vs.cut(48)                         # split the selected strips (none selected: all) at frame 48
+vs.delete(ripple=True)             # delete the selection and close the gap on its channel
+vs.duplicate(); vs.move_strips(vs.selected(), 10, 1); vs.trim(strip, "r", 120)
+vs.make_meta(); vs.enter_meta(meta); vs.exit_meta(); vs.separate_meta()
+vs.set_flag("mute", True); vs.range_to_strips(); vs.play_sound()
 ```
 
 ## Image editor from a script
