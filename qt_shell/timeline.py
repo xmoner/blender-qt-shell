@@ -1203,6 +1203,10 @@ class Timeline(QtWidgets.QWidget):
                 v.render_frame()
 
     def shown_frame(self):
+        if getattr(self.hub, "seq_solo", False):     # the Video Sequencer plays on its own: the playhead stays
+            f = getattr(self.hub, "seq_solo_frame", None)
+            if f is not None:
+                return f
         f = getattr(self.hub, "display_frame", None)
         return bpy.context.scene.frame_current if f is None else f
 

@@ -2338,6 +2338,7 @@ class VideoSequencer(QtWidgets.QWidget):
         self.follow_chk.setToolTip("While the Video Sequencer plays, the Timeline's playhead and the 3D views follow "
                                    "the frame.\nOff: only the sequencer plays – the Timeline and the 3D views stay as "
                                    "they are until you stop (faster playback, they catch up afterwards).")
+        self.follow_chk.setFocusPolicy(QtCore.Qt.NoFocus)    # Space must stay Play / Stop, not toggle this
         self.follow_chk.toggled.connect(self._set_follow)
         h.addWidget(self.follow_chk)
         h.addStretch(1)
@@ -3021,7 +3022,12 @@ class VideoSequencer(QtWidgets.QWidget):
         w = host.bl_window() if host is not None else None
         if w is not None:
             self._redraw_flags(w.screen)         # Space in Blender's preview (from its next start)
-        playing = self.cached_playing() or (blender_playing() and self._bl_play)
+        if blender_playing() and self._bl_play and not self.cached_playing():
+            # Blender's playback takes which editors it redraws at its start: start it again (sound restarts)
+            self.play_sound()
+            self.play_sound()
+            return
+        playing = self.cached_playing()
         self._set_solo(playing and not on)
         if not on and getattr(self.hub, "display_frame", None) is not None and self.cached_playing():
             self.hub.display_frame = None
@@ -3031,6 +3037,14 @@ class VideoSequencer(QtWidgets.QWidget):
         on = bool(on)
         if bool(getattr(self.hub, "seq_solo", False)) == on:
             return
+        if on:                                   # the Timeline's playhead stays where it is now
+            tl = self._timeline()
+            try:
+                self.hub.seq_solo_frame = int(tl.cur.value()) if tl is not None else None
+            except Exception:
+                self.hub.seq_solo_frame = None
+        else:
+            self.hub.seq_solo_frame = None
         self.hub.seq_solo = on
         if not on:                               # catch up with where the playback is now
             try:
