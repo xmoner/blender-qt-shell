@@ -35,6 +35,9 @@ from . import bridge, theme
 from . import rna_widgets as rw
 
 TAG = "qtshell_seq_preview"
+BP_PROP = "qtshell_bp_layer"         # Blue Pencil track strip → the layer it stands for
+BP_START = "qtshell_bp_start"        # where the track started last time (moving it moves the drawings)
+BP_COLOR = "#4f7fe0"
 SLOT_NAME = "Qt Shell preview"      # render slot the Qt preview renders into (the user's slots stay)   # ID property on the preview helper window's screen (found again after a load)
 RULER = 22                    # unscaled px
 HEADER_W = 118                # unscaled px – channel names on the left
@@ -89,7 +92,16 @@ def fps():
     return max(r.fps / (r.fps_base or 1.0), 1.0)
 
 
+def is_bp_track(s):
+    try:
+        return s.get(BP_PROP) is not None
+    except Exception:
+        return False
+
+
 def strip_color(s):
+    if is_bp_track(s):
+        return QtGui.QColor(BP_COLOR)
     tag = getattr(s, "color_tag", "NONE")
     if tag in TAG_COLORS:
         return QtGui.QColor(TAG_COLORS[tag])
@@ -105,6 +117,8 @@ def strip_color(s):
 def strip_info(s):
     """Second line of a strip: what it shows."""
     t = s.type
+    if is_bp_track(s):
+        return "Blue Pencil drawings"
     try:
         if t == "SCENE":
             cam = getattr(s, "scene_camera", None)
@@ -795,6 +809,19 @@ class SeqView(QtWidgets.QWidget):
         if getattr(s, "input_count", 0) >= 2 or s.type in ("CROSS", "GAMMA_CROSS", "WIPE"):
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 120), 1))
             p.drawLine(r.bottomLeft(), r.topRight())
+        if is_bp_track(s):                       # its Blue Pencil keys as diamonds
+            lay = bp_layer(s.get(BP_PROP))
+            if lay is not None:
+                from . import bluepencil
+                p.setPen(QtGui.QPen(QtGui.QColor(20, 30, 60), 1))
+                p.setBrush(QtGui.QColor(255, 255, 255, 120 if muted else 235))
+                d = max(3.0, min(r.height() / 4, theme.px(5)))
+                cy = r.bottom() - d - 2
+                for k in bluepencil.keys(lay):
+                    x = self.x_of(k)
+                    if r.left() - d <= x <= r.right() + d:
+                        p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, cy - d), QtCore.QPointF(x + d, cy),
+                                                       QtCore.QPointF(x, cy + d), QtCore.QPointF(x - d, cy)]))
         # handles
         hv = self._hover
         if s.select or (hv is not None and hv[0] == s):
@@ -843,7 +870,7 @@ class SeqView(QtWidgets.QWidget):
         if s is None:
             return None
         r = self.strip_rect(s)
-        if time_locked(s):
+        if time_locked(s) or is_bp_track(s):     # no trim: their length comes from inputs / drawings
             return s, "body"
         e = min(theme.px(EDGE), r.width() / 3)
         if pos.x() - r.left() <= e:
@@ -1244,6 +1271,41 @@ class StripProps(QtWidgets.QScrollArea):
         return b
 
 
+# ---------------------------------------------------------------- Blue Pencil tracks
+def bp_layer(name):
+    """The Blue Pencil layer (3D view layers – the ones the sequencer draws into) called name, or None."""
+    from . import bluepencil
+    for lay in bluepencil.data()["layers"]:
+        if lay.get("name") == name and lay.get("space", "VIEWPORT") == "VIEWPORT":
+            return lay
+    return None
+
+
+def _bp_save(message=None):
+    """Writes the Blue Pencil data back (message: with an undo step, None: quietly – bookkeeping only)."""
+    from . import bluepencil
+    if message:
+        bluepencil.commit(message)
+        return
+    import json
+    sc = bpy.context.scene
+    d = bluepencil.data(sc)
+    raw = json.dumps(d, separators=(",", ":"))
+    sc[bluepencil.PROP] = raw
+    bluepencil._cache[sc.as_pointer()] = (raw, d)
+    bluepencil.signals.changed.emit()
+
+
+def bp_track_range(lay):
+    """(start, end) of a layer's track: first key → last key + its hold (the gap before it, at least 1 s)."""
+    from . import bluepencil
+    ks = bluepencil.keys(lay)
+    if not ks:
+        return None
+    hold = max(int(round(fps())), ks[-1] - ks[-2] if len(ks) > 1 else 0)
+    return ks[0], ks[-1] + hold
+
+
 # ---------------------------------------------------------------- Qt Shell's own preview (with Blue Pencil)
 def strips_at(frame):
     """Top-level strips Blender would show at a frame, bottom channel first (muted strips / channels left out)."""
@@ -1268,6 +1330,23 @@ def shot_at(frame):
     """The topmost scene strip (shot) at a frame, or None."""
     shots = [s for s in strips_at(frame) if s.type == "SCENE" and s.scene is not None]
     return shots[-1] if shots else None
+
+
+_CHECKER = None
+
+
+def _checker():
+    global _CHECKER
+    if _CHECKER is None:
+        n = 8
+        pm = QtGui.QPixmap(2 * n, 2 * n)
+        pm.fill(QtGui.QColor(92, 92, 92))
+        q = QtGui.QPainter(pm)
+        q.fillRect(0, 0, n, n, QtGui.QColor(64, 64, 64))
+        q.fillRect(n, n, n, n, QtGui.QColor(64, 64, 64))
+        q.end()
+        _CHECKER = pm
+    return _CHECKER
 
 
 def _qcolor(c, alpha=1.0):
@@ -1600,13 +1679,25 @@ class QtPreview(QtWidgets.QWidget):
         return img
 
     # ---- painting / input
+    def video_opacity(self):
+        """1.0 = the video as it is; less while 'Transparent' is on (0 = only the drawings on a checkerboard)."""
+        pane = self.parent().parent() if self.parent() is not None else None
+        if pane is None or not hasattr(pane, "transparent_on"):
+            return 1.0
+        return pane.video_opacity() if pane.transparent_on() else 1.0
+
     def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
         p.fillRect(self.rect(), QtGui.QColor(24, 24, 24))
         r = self.pic_rect()
-        if self.image is not None:
+        op = self.video_opacity()
+        if op < 1.0:                             # transparent sheet: checkerboard under the faded video
+            p.fillRect(r, QtGui.QBrush(_checker()))
+        if self.image is not None and op > 0.0:
             p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+            p.setOpacity(op)
             p.drawImage(r, self.image)
+            p.setOpacity(1.0)
         p.setPen(QtGui.QColor(70, 70, 70))
         p.drawRect(r.adjusted(-0.5, -0.5, 0.5, 0.5))
         try:
@@ -1650,6 +1741,7 @@ class QtPreview(QtWidgets.QWidget):
     def mouseReleaseEvent(self, ev):
         if self.bp.enabled:
             self.bp.release(ev, ev.position())
+            self.ed.mark_bp_layer()
 
     def mouseDoubleClickEvent(self, ev):
         if self.bp.enabled:
@@ -1716,6 +1808,29 @@ class PreviewPane(QtWidgets.QWidget):
                                 "through that camera and in renders. Hold for the drawing tools.")
         self.bp_btn.toggled.connect(lambda on: self.ed.set_blue_pencil(on))
         hl.addWidget(self.bp_btn)
+        qs = QtCore.QSettings("QtShell", "QtShell")
+        self.clear_btn = QtWidgets.QToolButton(head)
+        self.clear_btn.setCheckable(True)
+        self.clear_btn.setAutoRaise(True)
+        self.clear_btn.setText("◫")
+        self.clear_btn.setToolTip("Transparent – the video fades (slider) or disappears, so the Blue Pencil drawings "
+                                  "stand alone on a transparent sheet (Qt Shell preview)")
+        self.clear_btn.setChecked(qs.value("sequencer/transparent", False) in (True, "true"))
+        hl.addWidget(self.clear_btn)
+        self.op_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, head)
+        self.op_slider.setRange(0, 100)
+        self.op_slider.setFixedWidth(theme.px(80))
+        try:
+            self.op_slider.setValue(int(qs.value("sequencer/video_opacity", 25)))
+        except (TypeError, ValueError):
+            self.op_slider.setValue(25)
+        self.op_slider.setToolTip("Video opacity while Transparent is on (0 % = only the drawings)")
+        hl.addWidget(self.op_slider)
+        self.op_label = QtWidgets.QLabel(head)
+        self.op_label.setMinimumWidth(theme.px(30))
+        hl.addWidget(self.op_label)
+        self.clear_btn.toggled.connect(self._transparency_changed)
+        self.op_slider.valueChanged.connect(self._transparency_changed)
         hl.addStretch(1)
         lay.addWidget(head)
         self.stack = QtWidgets.QStackedWidget(self)
@@ -1724,12 +1839,30 @@ class PreviewPane(QtWidgets.QWidget):
         self.stack.addWidget(self.host)
         self.stack.addWidget(self.qt)
         lay.addWidget(self.stack, 1)
+        self._transparency_changed(save=False)
         mode = QtCore.QSettings("QtShell", "QtShell").value("sequencer/preview_mode", "blender")
         self.set_mode(mode if mode in ("blender", "qt") else "blender", save=False)
         self.mode.activated.connect(lambda _i: self.set_mode(self.mode.currentData()))
 
     def is_qt(self):
         return self.stack.currentWidget() is self.qt
+
+    def transparent_on(self):
+        return self.clear_btn.isChecked()
+
+    def video_opacity(self):
+        return self.op_slider.value() / 100.0
+
+    def _transparency_changed(self, *_a, save=True):
+        on = self.clear_btn.isChecked()
+        self.op_slider.setEnabled(on)
+        self.op_label.setText(f"{self.op_slider.value()} %")
+        self.op_label.setEnabled(on)
+        if save:
+            qs = QtCore.QSettings("QtShell", "QtShell")
+            qs.setValue("sequencer/transparent", on)
+            qs.setValue("sequencer/video_opacity", self.op_slider.value())
+        self.qt.update()
 
     def set_mode(self, mode, save=True):
         qt = mode == "qt"
@@ -1740,6 +1873,8 @@ class PreviewPane(QtWidgets.QWidget):
             self.ed.set_blue_pencil(False)
         self.stack.setCurrentWidget(self.qt if qt else self.host)
         self.bp_btn.setEnabled(qt)
+        for w in (self.clear_btn, self.op_slider, self.op_label):
+            w.setVisible(qt)
         if qt:
             self.qt.request()
         if save:
@@ -1995,6 +2130,11 @@ class VideoSequencer(QtWidgets.QWidget):
         if not self.isVisible():
             return
         playing = blender_playing()
+        if not playing:
+            try:
+                self.sync_bp_tracks()
+            except Exception:
+                bridge.log(f"Video Sequencer: Blue Pencil tracks:\n{traceback.format_exc()}", "WARNING")
         w = self.preview.bl_window()
         if w is not None and follow_scene(w):
             self.preview.redraw()
@@ -2011,6 +2151,7 @@ class VideoSequencer(QtWidgets.QWidget):
             self.refresh()
 
     def _file_loaded(self):
+        self._bp_known = set()
         self.meta_path = []
         self.view._framed = False
         self.preview.reopen() if self.preview.ptr is not None or PreviewHost.current is self.preview \
@@ -2028,6 +2169,101 @@ class VideoSequencer(QtWidgets.QWidget):
             pass
         self.preview.close_window()
         unregister_handlers()
+
+    # ---- Blue Pencil tracks: layers drawn in the sequencer get their own strip ("pencil line")
+    def mark_bp_layer(self):
+        """After a stroke in the Qt Shell preview: the active layer gets a track in the sequencer."""
+        from . import bluepencil
+        lay = bluepencil.active_layer()
+        if lay is None or lay.get("seq"):
+            if lay is not None:
+                self.sync_bp_tracks()
+            return
+        lay["seq"] = True
+        _bp_save()
+        self.sync_bp_tracks()
+
+    def bp_tracks(self):
+        se = editor()
+        return [s for s in coll(se) if is_bp_track(s)] if se is not None else []
+
+    def sync_bp_tracks(self):
+        """Keeps one strip per sequencer Blue Pencil layer: range = its keys, mute = hidden layer, moved strip =
+        moved drawings, deleted strip = the layer leaves the sequencer (its drawings stay)."""
+        from . import bluepencil
+        d = bluepencil.data()
+        wanted = {lay["name"]: lay for lay in d["layers"]
+                  if lay.get("seq") and lay.get("space", "VIEWPORT") == "VIEWPORT"}
+        se = editor(bool(wanted))
+        if se is None:
+            return
+        c = coll(se)
+        changed = edited = False
+        known = getattr(self, "_bp_known", set())
+        tracks = {}
+        for s in list(c):
+            if not is_bp_track(s):
+                continue
+            name = s.get(BP_PROP)
+            if name not in wanted or name in tracks:
+                c.remove(s)                      # its layer is gone (deleted / renamed) or a duplicate
+                changed = True
+                continue
+            tracks[name] = s
+        for name in list(known):                 # a track the user deleted: the layer leaves the sequencer
+            if name in wanted and name not in tracks:
+                wanted.pop(name)["seq"] = False
+                edited = True
+        for name, lay in wanted.items():
+            rng = bp_track_range(lay)
+            s = tracks.get(name)
+            if rng is None:
+                if s is not None:
+                    c.remove(s)
+                    tracks.pop(name)
+                    changed = True
+                continue
+            a, b = rng
+            if s is None:
+                top = max((x.channel for x in c), default=0) + 1
+                s = new_effect(se, "✎ " + name, "COLOR", free_channel(se, a, b, top), a, b - a)
+                s.color = (0.31, 0.5, 0.88)
+                s.blend_alpha = 0.0              # renders nothing – the drawings are Blue Pencil's
+                s[BP_PROP] = name
+                s[BP_START] = a
+                tracks[name] = s
+                changed = True
+                continue
+            start = int(s.get(BP_START, a))
+            if s.frame_final_start != start and not s.lock:      # moved by the user → move the drawings
+                delta = s.frame_final_start - start
+                if bluepencil.move_keys(lay, {k: k + delta for k in bluepencil.keys(lay)}):
+                    bluepencil.commit("Move drawings with the track")
+                    a, b = a + delta, b + delta
+                    changed = True
+            vis = not s.mute
+            if lay.get("visible", True) != vis:
+                lay["visible"] = vis
+                edited = True
+            if (s.frame_final_start, s.frame_final_end) != (a, b):
+                if b > s.frame_final_end:
+                    s.frame_final_end = b
+                    s.frame_final_start = a
+                else:
+                    s.frame_final_start = a
+                    s.frame_final_end = b
+                changed = True
+            if int(s.get(BP_START, -10 ** 9)) != a:
+                s[BP_START] = a
+            label = "✎ " + name
+            if s.name != label and not s.name.startswith(label):
+                s.name = label
+        self._bp_known = set(tracks)
+        if edited:
+            _bp_save()
+        if changed:
+            self.view.update()
+            self.qtprev.request()
 
     # ---- Blue Pencil (Qt Shell preview)
     def set_blue_pencil(self, on):
@@ -2207,6 +2443,9 @@ class VideoSequencer(QtWidgets.QWidget):
         self.after_edit()
 
     def trim(self, s, side, frame):
+        if is_bp_track(s):
+            self.status(f"“{s.name}” spans its Blue Pencil keys – move it to move the drawings")
+            return
         if time_locked(s):
             self.status(f"“{s.name}” takes its length from its input strips – trim or move those")
             return
