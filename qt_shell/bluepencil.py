@@ -52,7 +52,7 @@ TOOLS = [
 ]
 TOOL_IDS = [t[0] for t in TOOLS]
 # where a layer is drawn: the 3D view, the Render View (over the render) or the Animation Player (over its frames)
-SPACES = {"VIEWPORT": "Viewport", "RENDER": "Render View", "ANIM": "Animation Player"}
+SPACES = {"VIEWPORT": "Viewport", "RENDER": "Render View", "ANIM": "Animation Player", "VIDEO": "Video Editing"}
 PALETTE = ("#2f7bff", "#ff3b30", "#ffd60a", "#34c759", "#ff9500", "#bf5af2", "#ffffff", "#111111")
 DEFAULT_SIZES = {"PENCIL": 3, "BRUSH": 8, "ERASER": 20, "TEXT": 24, "LINE": 3, "ARROW": 3, "ELLIPSE": 3,
                  "RECT": 3, "TRANSFORM": 3}
@@ -294,7 +294,16 @@ def held_key(layer, f):
     return best
 
 
+def in_range(layer, f):
+    """A layer with a "range" [start, end) (Video Editing layers – its track in the Video Sequencer) shows
+    its drawings only from start to end; others always."""
+    r = layer.get("range")
+    return r is None or int(r[0]) <= f < int(r[1])
+
+
 def strokes_at(layer, f):
+    if not in_range(layer, f):
+        return []
     k = held_key(layer, f)
     return layer["frames"].get(str(k), []) if k is not None else []
 
@@ -534,6 +543,8 @@ def space_camera(space):
     the Render View's render camera, the scene camera for the Animation Player."""
     if space == "VIEWPORT":
         return view_camera_name()
+    if space == "VIDEO":
+        return ""                    # Video Editing layers belong to the edit, not to a camera
     if space == "RENDER":
         rv = getattr(_mw(), "render_window", None)
         if rv is not None and hasattr(rv, "bp_camera"):
@@ -569,7 +580,7 @@ def paint_layers(p, cam, rect, f, hide=(), ghosts=True, space="VIEWPORT", always
     p.setRenderHint(QtGui.QPainter.Antialiasing)
     for i in reversed(range(len(d["layers"]))):
         lay = d["layers"][i]
-        if not lay.get("visible", True) or not in_space(lay, cam, space):
+        if not lay.get("visible", True) or not in_space(lay, cam, space) or not in_range(lay, f):
             continue
         op = float(lay.get("opacity", 1.0))
         if ghosts and i == act and (not playing or st.ghost_playback) and lay.get("state") != "STATIC":
@@ -2177,9 +2188,11 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         for sp, label in SPACES.items():
             self.space_tabs.addTab(label)
             self.space_tabs.setTabData(self.space_tabs.count() - 1, sp)
-        self.space_tabs.setToolTip("The layers of a window – drawing in the 3D view, the Render View or the "
-                                   "Animation Player uses only that window's layers (drawing there switches this "
-                                   "tab). New Layer creates a layer for the tab's window.")
+        self.space_tabs.setToolTip("The layers of a window – drawing in the 3D view, the Render View, the "
+                                   "Animation Player or the Video Sequencer (Video Editing) uses only that window's "
+                                   "layers (drawing there switches this tab). New Layer creates a layer for the "
+                                   "tab's window. Video Editing layers have a track in the Video Sequencer: they "
+                                   "are shown from its start to its end.")
         self.space_tabs.currentChanged.connect(self._space_tab_changed)
         v.addWidget(self.space_tabs)
         self.tree = QtWidgets.QTreeWidget(inner)

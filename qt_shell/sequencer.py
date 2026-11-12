@@ -766,6 +766,16 @@ class SeqView(QtWidgets.QWidget):
                 p.setPen(QtGui.QColor("#a8a8a8"))
                 p.drawText(QtCore.QPointF(x + 3, rul - theme.px(8)), self._time_label(f))
             f += step
+        # frames cached by the Qt Shell preview (green, like the Timeline)
+        cached = self.ed.qtprev.cache if self.ed.cache_on() else {}
+        if cached:
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor("#3fbf5a"))
+            spx = self.spx()
+            for cf in cached:
+                x = self.x_of(cf)
+                if hw <= x <= w:
+                    p.drawRect(QtCore.QRectF(x, rul - theme.px(3), max(1.0, spx), theme.px(3)))
         # current frame
         cur = getattr(self.ed.hub, "display_frame", None)
         cur = sc.frame_current if cur is None else cur
@@ -894,7 +904,7 @@ class SeqView(QtWidgets.QWidget):
         if s is None:
             return None
         r = self.strip_rect(s)
-        if time_locked(s) or is_bp_track(s):     # no trim: their length comes from inputs / drawings
+        if time_locked(s):                       # no trim: their length comes from their inputs
             return s, "body"
         e = min(theme.px(EDGE), r.width() / 3)
         if pos.x() - r.left() <= e:
@@ -1297,10 +1307,10 @@ class StripProps(QtWidgets.QScrollArea):
 
 # ---------------------------------------------------------------- Blue Pencil tracks
 def bp_layer(name):
-    """The Blue Pencil layer (3D view layers – the ones the sequencer draws into) called name, or None."""
+    """The Video Editing Blue Pencil layer (the ones the sequencer draws into) called name, or None."""
     from . import bluepencil
     for lay in bluepencil.data()["layers"]:
-        if lay.get("name") == name and lay.get("space", "VIEWPORT") == "VIEWPORT":
+        if lay.get("name") == name and lay.get("space", "VIEWPORT") == "VIDEO":
             return lay
     return None
 
@@ -1404,6 +1414,8 @@ class QtPreview(QtWidgets.QWidget):
         self.image = None
         self.notes = []
         self._blender_ok = True                  # Blender renders the frame (else Qt's own drawing)
+        self.cache = {}                          # frame → QImage (Cache / Auto in the preview header)
+        self._cache_key = None
         self._pan = None
         self._img_cache = {}
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
@@ -1415,7 +1427,7 @@ class QtPreview(QtWidgets.QWidget):
         self._t.timeout.connect(self._render)
         from . import bluepencil
         self.bp = bluepencil.ImageBPTools(self, self.bp_camera, self.pic_rect, self.frame, step_fn=self._bp_step,
-                                          space="VIEWPORT")
+                                          space="VIDEO")
 
     # ---- frame / camera / geometry
     def frame(self):
@@ -1423,12 +1435,14 @@ class QtPreview(QtWidgets.QWidget):
         return int(bpy.context.scene.frame_current if f is None else f)
 
     def bp_camera(self):
+        """Video Editing layers belong to the edit, not to a camera."""
+        return ""
+
+    def shot_camera(self):
         s = shot_at(self.frame())
         cam = None
         if s is not None:
             cam = getattr(s, "scene_camera", None) or s.scene.camera
-        if cam is None:
-            cam = bpy.context.scene.camera
         return cam.name if cam is not None else ""
 
     def _bp_step(self, direction):
@@ -1481,9 +1495,19 @@ class QtPreview(QtWidgets.QWidget):
         f = self.frame()
         img = None
         self.notes = []
+        cache_on = self.ed.cache_on()
+        if cache_on:
+            self.check_cache()
+            hit = self.cache.get(f)
+            if hit is not None:
+                self.image = hit
+                self.update()
+                return
         if self._blender_ok and f == bpy.context.scene.frame_current:
             try:
                 img = self.blender_frame()
+                if img is not None and cache_on:
+                    self.store(f, img)
             except Exception:
                 self._blender_ok = False         # fall back to Qt's own drawing for this session
                 bridge.log(f"Video Sequencer: Blender's frame for the Qt preview failed – Qt drawing used:\n"
@@ -1497,6 +1521,79 @@ class QtPreview(QtWidgets.QWidget):
             self.image = img
         self.update()
 
+    # ---- playback cache (like the Timeline's Cache / Auto)
+    def cache_key(self):
+        """The cached frames stay valid while this is the same: the strips (what Blender composites), Qt Shell's
+        strip edits, the animation and – when shots (scene strips) are in the edit – any scene edit, the size."""
+        from . import playcache
+        strips = all_strips()
+        sig = []
+        has_scene = False
+        for x in strips:
+            if is_bp_track(x):
+                continue
+            has_scene = has_scene or x.type == "SCENE"
+            sig.append((x.as_pointer(), x.type, x.channel, x.frame_final_start, x.frame_final_end, x.mute,
+                        getattr(x, "blend_type", ""), round(float(getattr(x, "blend_alpha", 1.0)), 4)))
+        se = editor()
+        chans = tuple(c.mute for c in se.channels) if se is not None and hasattr(se, "channels") else ()
+        sc = bpy.context.scene
+        r = sc.render
+        return (tuple(sig), chans, self.ed.render_version, playcache.anim_signature(),
+                bridge.Flags.edit_version if has_scene else 0, self.out_size(), r.resolution_x, r.resolution_y)
+
+    def check_cache(self):
+        key = self.cache_key()
+        if key != self._cache_key:
+            if self.cache:
+                self.cache.clear()
+                self.ed.view.update()
+            self._cache_key = key
+
+    def store(self, f, img):
+        limit = self.ed.cache_limit_bytes()
+        per = max(1, img.sizeInBytes())
+        if (len(self.cache) + 1) * per > limit:
+            return False
+        self.cache[f] = img
+        self.ed.view.update()
+        return True
+
+    def flush(self):
+        self.cache.clear()
+        self._cache_key = None
+        self.ed.view.update()
+
+    def cache_frames(self, frames, budget=None, progress=None):
+        """Renders missing frames into the cache (frame hops, the current frame is put back). budget: seconds of
+        work (background caching), None = all (Cache All Frames). Returns the number of frames rendered."""
+        sc = bpy.context.scene
+        keep = sc.frame_current
+        self.check_cache()
+        todo = [f for f in frames if f not in self.cache]
+        if not todo:
+            return 0
+        n = 0
+        t0 = time.perf_counter()
+        flag = bridge.Flags.depsgraph
+        try:
+            for f in todo:
+                sc.frame_set(f)
+                img = self.blender_frame()
+                if img is None or not self.store(f, img):
+                    break
+                n += 1
+                if progress is not None and not progress(f, n, len(todo)):
+                    break
+                if budget is not None and time.perf_counter() - t0 > budget:
+                    break
+        finally:
+            if sc.frame_current != keep:
+                sc.frame_set(keep)
+            bridge.Flags.depsgraph = flag        # frame hops are not edits
+            self._cache_key = self.cache_key()   # our own hops / renders do not count as changes
+        return n
+
     def blender_frame(self):
         """The current frame exactly as Blender's sequencer shows it (movies, effects, modifiers, shots), rendered
         by Blender at preview size (render.opengl with sequencer=True) into its own render slot – the user's render
@@ -1509,8 +1606,8 @@ class QtPreview(QtWidgets.QWidget):
             return None
         r = sc.render
         w, _h = self.out_size()
-        if getattr(self.ed.hub, "playing", False) or blender_playing():
-            w = min(w, 640)                      # lighter frames while playing
+        if not self.ed.cache_on() and (getattr(self.ed.hub, "playing", False) or blender_playing()):
+            w = min(w, 640)                      # lighter frames while playing (the cache keeps full ones)
         pct = max(1, min(100, int(math.ceil(w * 100.0 / max(1, r.resolution_x)))))
         rr = bpy.data.images.get("Render Result")
         keep_slot = None
@@ -1751,9 +1848,9 @@ class QtPreview(QtWidgets.QWidget):
         lines = list(self.notes)
         s = shot_at(self.frame())
         if s is not None:
-            lines.insert(0, f"{s.name}  ·  🎥 {self.bp_camera()}")
+            lines.insert(0, f"{s.name}  ·  🎥 {self.shot_camera()}")
         if self.bp.enabled:
-            lines.append("Blue Pencil – drawing on the shot camera")
+            lines.append("Blue Pencil – Video Editing layers")
         if lines:
             f = p.font()
             f.setPointSizeF(max(7.0, f.pointSizeF() * 0.85))
@@ -1875,6 +1972,30 @@ class PreviewPane(QtWidgets.QWidget):
         hl.addWidget(self.op_label)
         self.clear_btn.toggled.connect(self._transparency_changed)
         self.op_slider.valueChanged.connect(self._transparency_changed)
+        self.cache_btn = QtWidgets.QToolButton(head)
+        self.cache_btn.setText("Cache")
+        self.cache_btn.setCheckable(True)
+        self.cache_btn.setChecked(qs.value("sequencer/cache", True) not in (False, "false"))
+        self.cache_btn.setPopupMode(QtWidgets.QToolButton.MenuButtonPopup)
+        self.cache_btn.setToolTip("Cached playback (like the Timeline's Cache): frames of the Qt Shell preview "
+                                  "drawn once are kept and play back in real time – the green line above the "
+                                  "strips. Any change to the strips (or to the scene, when shots are in the edit) "
+                                  "drops the cache. Hold for Cache All Frames / Flush.")
+        cmenu = QtWidgets.QMenu(self.cache_btn)
+        cmenu.addAction("Cache All Frames", lambda: self.ed.cache_all())
+        cmenu.addAction("Flush Cache", lambda: self.qt.flush())
+        self.cache_btn.setMenu(cmenu)
+        self.cache_btn.toggled.connect(self._cache_toggled)
+        hl.addWidget(self.cache_btn)
+        self.auto_btn = QtWidgets.QToolButton(head)
+        self.auto_btn.setText("Auto")
+        self.auto_btn.setCheckable(True)
+        self.auto_btn.setChecked(qs.value("sequencer/auto_cache", False) in (True, "true"))
+        self.auto_btn.setToolTip("Background caching (like the Timeline's Auto): while you don't work, the frames "
+                                 "of the play range are cached for the Qt Shell preview – your current frame "
+                                 "doesn't change.")
+        self.auto_btn.toggled.connect(self._auto_toggled)
+        hl.addWidget(self.auto_btn)
         hl.addStretch(1)
         lay.addWidget(head)
         self.stack = QtWidgets.QStackedWidget(self)
@@ -1890,6 +2011,18 @@ class PreviewPane(QtWidgets.QWidget):
 
     def is_qt(self):
         return self.stack.currentWidget() is self.qt
+
+    def _cache_toggled(self, on):
+        QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/cache", bool(on))
+        if not on:
+            self.auto_btn.setChecked(False)
+            if hasattr(self, "qt"):
+                self.qt.flush()
+
+    def _auto_toggled(self, on):
+        QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/auto_cache", bool(on))
+        if on and not self.cache_btn.isChecked():
+            self.cache_btn.setChecked(True)
 
     def transparent_on(self):
         return self.clear_btn.isChecked()
@@ -1917,7 +2050,7 @@ class PreviewPane(QtWidgets.QWidget):
             self.ed.set_blue_pencil(False)
         self.stack.setCurrentWidget(self.qt if qt else self.host)
         self.bp_btn.setEnabled(qt)
-        for w in (self.clear_btn, self.op_slider, self.op_label):
+        for w in (self.clear_btn, self.op_slider, self.op_label, self.cache_btn, self.auto_btn):
             w.setVisible(qt)
         if qt:
             self.qt.request()
@@ -1946,6 +2079,7 @@ class VideoSequencer(QtWidgets.QWidget):
         super().__init__(parent)
         self.hub = hub
         self.meta_path = []          # names of the open metas (Maya-like "groups")
+        self.render_version = 0      # +1 on every strip edit made here (drops the preview cache)
         self.snap_on = QtCore.QSettings("QtShell", "QtShell").value("sequencer/snap", True) not in (False, "false")
         self.show_seconds = QtCore.QSettings("QtShell", "QtShell").value("sequencer/seconds", False) in (True, "true")
         lay = QtWidgets.QVBoxLayout(self)
@@ -1990,6 +2124,13 @@ class VideoSequencer(QtWidgets.QWidget):
         self._tick.timeout.connect(self._poll)
         self._tick.start()
         self._sig = None
+        self._ac_since = 0.0
+        self._ac_key = None
+        self._ac_next = 0.0
+        self._ac_timer = QtCore.QTimer(self)
+        self._ac_timer.setInterval(60)
+        self._ac_timer.timeout.connect(self._auto_cache_step)
+        self._ac_timer.start()
         register_handlers()
 
     # ---- toolbar
@@ -2165,11 +2306,14 @@ class VideoSequencer(QtWidgets.QWidget):
         self.view.update()
         self.qtprev.request()
 
-    def after_edit(self, props=True):
+    def after_edit(self, props=True, edit=True):
+        """edit=False: only the selection changed (the picture and its cache stay)."""
+        if edit:
+            self.render_version += 1
         if props:
             self.props.refresh(force=True)
         se = editor()
-        if se is not None:                       # Blender's frame cache does not always see RNA edits
+        if se is not None and edit:                       # Blender's frame cache does not always see RNA edits
             for s in {*(x for x in self.view.strips() if x.select), *([se.active_strip] if se.active_strip else [])}:
                 try:
                     s.invalidate_cache("COMPOSITE")
@@ -2230,35 +2374,126 @@ class VideoSequencer(QtWidgets.QWidget):
         self.preview.close_window()
         unregister_handlers()
 
+    # ---- playback cache of the Qt Shell preview (Cache / Auto, like the Timeline)
+    def cache_on(self):
+        return self.pane.is_qt() and self.pane.cache_btn.isChecked()
+
+    def cache_limit_bytes(self):
+        try:
+            from . import playcache
+            return min(int(playcache.limit_bytes()), 4 << 30)
+        except Exception:
+            return 2 << 30
+
+    def _play_range(self):
+        from .timeline import play_range
+        a, b = play_range(bpy.context.scene)
+        return list(range(a, b + 1))
+
+    def cache_all(self):
+        """Cache All Frames: renders the play range for the Qt Shell preview (Esc stops)."""
+        from . import playcache
+        if not self.pane.is_qt():
+            self.pane.set_mode("qt")
+        if not self.pane.cache_btn.isChecked():
+            self.pane.cache_btn.setChecked(True)
+        if playcache.pending_edits():
+            self.status("Key or undo your unkeyed changes first – a frame change would reset them")
+            return 0
+        if blender_playing():
+            self.play_sound()
+        app_ = QtWidgets.QApplication.instance()
+
+        def progress(f, n, total):
+            self.status(f"Caching frame {f} ({n}/{total})…")
+            app_.processEvents(QtCore.QEventLoop.ExcludeUserInputEvents)
+            return True
+
+        n = self.qtprev.cache_frames(self._play_range(), progress=progress)
+        self.qtprev.request()
+        mb = sum(img.sizeInBytes() for img in self.qtprev.cache.values()) / 1048576
+        self.status(f"Cached {len(self.qtprev.cache)} frame(s) of the Video Sequencer ({mb:.0f} MB)")
+        return n
+
+    def _auto_cache_step(self):
+        """Background caching while the user is idle (a few frames per step, then a rest)."""
+        try:
+            if not (self.isVisible() and self.cache_on() and self.pane.auto_btn.isChecked()):
+                return
+            if getattr(self.hub, "playing", False) or blender_playing() or bridge.is_rendering():
+                return
+            if self.qtprev.bp.enabled and QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
+                return
+            now = time.perf_counter()
+            if now < self._ac_next:
+                return
+            app_ = QtWidgets.QApplication
+            if (app_.mouseButtons() != QtCore.Qt.NoButton or app_.activePopupWidget() is not None
+                    or app_.activeModalWidget() is not None):
+                return
+            from . import app as shell_app, playcache
+            if shell_app.idle_seconds() < 0.6:
+                return
+            key = self.qtprev.cache_key()
+            if key != self._ac_key:
+                self._ac_key = key                # something changed – wait until things settle
+                self._ac_since = now
+                return
+            if now - self._ac_since < 0.6:
+                return
+            rng = self._play_range()
+            keep = bpy.context.scene.frame_current
+            i0 = rng.index(keep) if keep in rng else 0
+            order = rng[i0:] + rng[:i0]
+            if all(f in self.qtprev.cache for f in order):
+                return
+            if playcache.pending_edits():
+                return
+            t0 = time.perf_counter()
+            self.qtprev.cache_frames(order, budget=0.03)
+            self._ac_key = self.qtprev.cache_key()
+            self._ac_next = time.perf_counter() + 2.0 * (time.perf_counter() - t0)
+            self.view.update()
+        except Exception as ex:
+            bridge.log(f"Video Sequencer: background caching: {ex}", "WARNING")
+            self._ac_next = time.perf_counter() + 5.0
+
     # ---- Blue Pencil tracks: layers drawn in the sequencer get their own strip ("pencil line")
     def mark_bp_layer(self):
-        """After a stroke in the Qt Shell preview: the active layer gets a track in the sequencer."""
-        from . import bluepencil
-        lay = bluepencil.active_layer()
-        if lay is None or lay.get("seq"):
-            if lay is not None:
-                self.sync_bp_tracks()
-            return
-        lay["seq"] = True
-        _bp_save()
+        """After a stroke in the Qt Shell preview: the track follows at once."""
         self.sync_bp_tracks()
 
     def bp_tracks(self):
         se = editor()
         return [s for s in coll(se) if is_bp_track(s)] if se is not None else []
 
-    def sync_bp_tracks(self):
-        """Keeps one strip per sequencer Blue Pencil layer: range = its keys, mute = hidden layer, moved strip =
-        moved drawings, deleted strip = the layer leaves the sequencer (its drawings stay)."""
+    def _migrate_bp_layers(self):
+        """0.104.0 drew sequencer layers into the 3D view's layers (seq flag) – they become Video Editing layers."""
         from . import bluepencil
+        moved = False
+        for lay in bluepencil.data()["layers"]:
+            if lay.pop("seq", None) and lay.get("space", "VIEWPORT") == "VIEWPORT":
+                lay["space"] = "VIDEO"
+                lay["camera"] = ""
+                moved = True
+        if moved:
+            _bp_save()
+
+    def sync_bp_tracks(self):
+        """One track (strip) per Video Editing Blue Pencil layer: the layer's drawings are shown from the track's
+        start to its end ("range" of the layer). Trim the track = change where the drawings show; move it = move
+        the drawings with it; mute = hide; delete the track = delete the layer. Drawing outside the range extends
+        it to the new key (+ hold)."""
+        from . import bluepencil
+        self._migrate_bp_layers()
         d = bluepencil.data()
-        wanted = {lay["name"]: lay for lay in d["layers"]
-                  if lay.get("seq") and lay.get("space", "VIEWPORT") == "VIEWPORT"}
+        wanted = {lay["name"]: lay for lay in d["layers"] if lay.get("space", "VIEWPORT") == "VIDEO"}
         se = editor(bool(wanted))
         if se is None:
             return
         c = coll(se)
         changed = edited = False
+        commit_msg = None
         known = getattr(self, "_bp_known", set())
         tracks = {}
         for s in list(c):
@@ -2270,20 +2505,30 @@ class VideoSequencer(QtWidgets.QWidget):
                 changed = True
                 continue
             tracks[name] = s
-        for name in list(known):                 # a track the user deleted: the layer leaves the sequencer
+        for name in list(known):                 # a track the user deleted: its layer goes too (like Blender)
             if name in wanted and name not in tracks:
-                wanted.pop(name)["seq"] = False
-                edited = True
+                d["layers"].remove(wanted.pop(name))
+                commit_msg = "Delete Layer (track deleted)"
         for name, lay in wanted.items():
-            rng = bp_track_range(lay)
-            s = tracks.get(name)
+            ks = bluepencil.keys(lay)
+            rng = lay.get("range")
             if rng is None:
-                if s is not None:
-                    c.remove(s)
-                    tracks.pop(name)
-                    changed = True
-                continue
-            a, b = rng
+                auto = bp_track_range(lay)
+                if auto is None:
+                    continue                     # an empty layer: its track comes with the first drawing
+                rng = list(auto)
+                lay["range"] = rng
+                edited = True
+            a, b = int(rng[0]), int(rng[1])
+            if ks and (ks[0] < a or ks[-1] >= b):        # drawn outside the track → it grows to the new key
+                hold = max(int(round(fps())), 1)
+                na = min(a, ks[0]) if ks[0] < a else a
+                nb = max(b, ks[-1] + hold) if ks[-1] >= b else b
+                if (na, nb) != (a, b):
+                    a, b = na, nb
+                    lay["range"] = [a, b]
+                    edited = True
+            s = tracks.get(name)
             if s is None:
                 top = max((x.channel for x in c), default=0) + 1
                 s = new_effect(se, "✎ " + name, "COLOR", free_channel(se, a, b, top), a, b - a)
@@ -2291,16 +2536,26 @@ class VideoSequencer(QtWidgets.QWidget):
                 s.blend_alpha = 0.0              # renders nothing – the drawings are Blue Pencil's
                 s[BP_PROP] = name
                 s[BP_START] = a
+                s["qtshell_bp_end"] = b
                 tracks[name] = s
                 changed = True
                 continue
             start = int(s.get(BP_START, a))
-            if s.frame_final_start != start and not s.lock:      # moved by the user → move the drawings
-                delta = s.frame_final_start - start
-                if bluepencil.move_keys(lay, {k: k + delta for k in bluepencil.keys(lay)}):
-                    bluepencil.commit("Move drawings with the track")
+            end = int(s.get("qtshell_bp_end", b))
+            fs, fe = s.frame_final_start, s.frame_final_end
+            if (fs, fe) != (start, end) and not s.lock:
+                if fe - fs == end - start:               # moved → the drawings move with it
+                    delta = fs - start
+                    if ks and not bluepencil.move_keys(lay, {k: k + delta for k in ks}):
+                        delta = 0                        # keys would collide – the track goes back
+                    if delta:
+                        commit_msg = commit_msg or "Move drawings with the track"
                     a, b = a + delta, b + delta
-                    changed = True
+                else:                                    # trimmed → the drawings show only in the new range
+                    a, b = fs, fe
+                    commit_msg = commit_msg or "Blue Pencil track range"
+                lay["range"] = [a, b]
+                changed = True
             vis = not s.mute
             if lay.get("visible", True) != vis:
                 lay["visible"] = vis
@@ -2315,15 +2570,19 @@ class VideoSequencer(QtWidgets.QWidget):
                 changed = True
             if int(s.get(BP_START, -10 ** 9)) != a:
                 s[BP_START] = a
+            if int(s.get("qtshell_bp_end", -10 ** 9)) != b:
+                s["qtshell_bp_end"] = b
             label = "✎ " + name
             if s.name != label and not s.name.startswith(label):
                 s.name = label
         self._bp_known = set(tracks)
-        if edited:
+        if commit_msg:
+            bluepencil.commit(commit_msg)
+        elif edited:
             _bp_save()
-        if changed:
+        if changed or edited or commit_msg:
             self.view.update()
-            self.qtprev.request()
+            self.qtprev.update()
 
     # ---- Blue Pencil (Qt Shell preview)
     def set_blue_pencil(self, on):
@@ -2365,13 +2624,13 @@ class VideoSequencer(QtWidgets.QWidget):
                 se.active_strip = strips[-1]
             elif not any(s.select for s in self.view.strips()):
                 se.active_strip = None
-        self.after_edit()
+        self.after_edit(edit=False)
 
     def set_active(self, s):
         se = editor()
         if se is not None and se.active_strip != s:
             se.active_strip = s
-            self.after_edit()
+            self.after_edit(edit=False)
 
     # ---- actions
     def run_action(self, aid):
@@ -2400,7 +2659,7 @@ class VideoSequencer(QtWidgets.QWidget):
         """Splits the selected strips (none selected: all unlocked strips) at the frame – K in Blender."""
         f = bpy.context.scene.frame_current if frame is None else int(frame)
         pool = self.selected() or self.view.strips()
-        todo = [s for s in pool if not s.lock and s.frame_final_start < f < s.frame_final_end]
+        todo = [s for s in pool if not s.lock and not is_bp_track(s) and s.frame_final_start < f < s.frame_final_end]
         if not todo:
             self.status("Nothing to cut at the current frame")
             return 0
@@ -2503,9 +2762,6 @@ class VideoSequencer(QtWidgets.QWidget):
         self.after_edit()
 
     def trim(self, s, side, frame):
-        if is_bp_track(s):
-            self.status(f"“{s.name}” spans its Blue Pencil keys – move it to move the drawings")
-            return
         if time_locked(s):
             self.status(f"“{s.name}” takes its length from its input strips – trim or move those")
             return
