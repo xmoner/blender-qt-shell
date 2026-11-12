@@ -17,9 +17,11 @@ Don't dig through old chat history.
   give `Tag: vX.Y.Z` + `Title: Qt Shell X.Y.Z – <short name>` in one code block and the body
   (Markdown, English: `## New` / `## Fixes` / `## Improvements`, then `## Install`) in a second one.
   Install section: *Download `qt_shell.zip`, then in Blender 5.2: Edit → Preferences → Add-ons → Install from Disk.*
-- **Every time a task is finished, also give the release text as a `.txt` file to save**: file name
-  `Qt Shell - <title> - <version>.txt` (e.g. `Qt Shell - Video Sequencer - 0.103.0.txt`), content = the Tag / Title
-  lines + the release body; write it to `/mnt/user-data/outputs/release_notes/` and send it with `SendUserFile`
+- **Every time a task is finished, also give the Czech reply as a `.txt` file to save**: the summary text of the
+  final reply to the owner (what's new / what was wrong, how it works, what was tested, what wasn't, restart note –
+  in Czech, as written in the chat, **without** the release-text code blocks); file name
+  `Qt Shell - <title> - <version>.txt` (e.g. `Qt Shell - Video Sequencer Qt preview and Blue Pencil - 0.103.0.txt`),
+  UTF-8; write it to `/mnt/user-data/outputs/release_notes/` and send it with `SendUserFile`
   (the owner asked for this on 2026-11-12 – don't make him repeat it).
 - After an update tell the owner to **restart Blender** (Install from Disk over a running Qt Shell keeps the
   old modules). The status bar shows `Qt Shell X.Y.Z` – ask him to check it when something "doesn't work".
@@ -44,7 +46,7 @@ Don't dig through old chat history.
      `Projects project_write` (`path: docs/DEVELOPMENT.md`, `local_path: …`).
 6. Commit + `git push origin main`. Commit message ends with the two attribution lines the session gives
    (`Co-Authored-By: …` and `Claude-Session: …`).
-7. Release text file: `Qt Shell - <title> - <version>.txt` (Tag + Title + body) → `SendUserFile` (see Owner's preferences).
+7. Reply text file: `Qt Shell - <title> - <version>.txt` = the Czech summary of the reply (no release blocks) → `SendUserFile` (see Owner's preferences).
 8. Zip: `rm -f /mnt/user-data/outputs/qt_shell.zip && zip -qr /mnt/user-data/outputs/qt_shell.zip qt_shell -x '*__pycache__*'`,
    send it with `SendUserFile`.
 9. Reply in Czech: what was wrong / what's new, what was tested, what wasn't; then the release text.
