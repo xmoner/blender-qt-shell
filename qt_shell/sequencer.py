@@ -1044,7 +1044,8 @@ class SeqView(QtWidgets.QWidget):
     # ---- keys
     _KEYS = ("seq.cut", "seq.delete", "seq.ripple_delete", "seq.duplicate", "seq.select_all", "seq.deselect_all",
              "seq.mute", "seq.unmute", "seq.lock", "seq.unlock", "seq.meta", "seq.unmeta", "seq.frame_all",
-             "seq.frame_selected", "seq.prev_cut", "seq.next_cut", "seq.play", "seq.snap")
+             "seq.frame_selected", "seq.prev_cut", "seq.next_cut", "seq.play", "seq.snap",
+             "seq.blue_pencil")
 
     def event(self, ev):
         if ev.type() == QtCore.QEvent.ShortcutOverride:
@@ -1232,6 +1233,455 @@ class StripProps(QtWidgets.QScrollArea):
         return b
 
 
+# ---------------------------------------------------------------- Qt Shell's own preview (with Blue Pencil)
+def strips_at(frame):
+    """Top-level strips Blender would show at a frame, bottom channel first (muted strips / channels left out)."""
+    se = editor()
+    if se is None:
+        return []
+    chans = getattr(se, "channels", None)
+    out = []
+    for s in coll(se):
+        if s.mute or s.type == "SOUND" or not (s.frame_final_start <= frame < s.frame_final_end):
+            continue
+        try:
+            if chans is not None and s.channel < len(chans) and chans[s.channel].mute:
+                continue
+        except Exception:
+            pass
+        out.append(s)
+    return sorted(out, key=lambda s: s.channel)
+
+
+def shot_at(frame):
+    """The topmost scene strip (shot) at a frame, or None."""
+    shots = [s for s in strips_at(frame) if s.type == "SCENE" and s.scene is not None]
+    return shots[-1] if shots else None
+
+
+def _qcolor(c, alpha=1.0):
+    g = [max(0.0, min(1.0, float(v))) ** (1 / 2.2) for v in c[:3]]
+    a = float(c[3]) if len(c) > 3 else 1.0
+    return QtGui.QColor.fromRgbF(g[0], g[1], g[2], max(0.0, min(1.0, a * alpha)))
+
+
+class QtPreview(QtWidgets.QWidget):
+    """The edit drawn by Qt Shell: shots (scene strips) through their cameras with Qt Shell's offscreen 3D
+    drawing, colour, text and image strips, cross fades; movies are named only (Blender's preview shows them).
+    Blue Pencil draws on it – into the 3D view's layers of the shot's camera, so the drawings are the same as
+    in the 3D view through that camera and are burnt into renders."""
+    MAX_W = 1280
+
+    def __init__(self, ed, parent=None):
+        super().__init__(parent)
+        self.ed = ed
+        self.image = None
+        self.notes = []
+        self._pan = None
+        self._img_cache = {}
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setMouseTracking(True)
+        self.setMinimumSize(theme.px(160), theme.px(90))
+        self._t = QtCore.QTimer(self)
+        self._t.setSingleShot(True)
+        self._t.setInterval(15)
+        self._t.timeout.connect(self._render)
+        from . import bluepencil
+        self.bp = bluepencil.ImageBPTools(self, self.bp_camera, self.pic_rect, self.frame, step_fn=self._bp_step,
+                                          space="VIEWPORT")
+
+    # ---- frame / camera / geometry
+    def frame(self):
+        f = getattr(self.ed.hub, "display_frame", None)
+        return int(bpy.context.scene.frame_current if f is None else f)
+
+    def bp_camera(self):
+        s = shot_at(self.frame())
+        cam = None
+        if s is not None:
+            cam = getattr(s, "scene_camera", None) or s.scene.camera
+        if cam is None:
+            cam = bpy.context.scene.camera
+        return cam.name if cam is not None else ""
+
+    def _bp_step(self, direction):
+        from . import bluepencil
+        bluepencil.step(direction)
+
+    def out_size(self):
+        r = bpy.context.scene.render
+        rx = max(1.0, r.resolution_x * r.pixel_aspect_x)
+        ry = max(1.0, r.resolution_y * r.pixel_aspect_y)
+        dpr = self.devicePixelRatioF()
+        w = int(min(self.MAX_W, max(64, self.width() * dpr)))
+        h = int(round(w * ry / rx))
+        hmax = max(36, int(self.height() * dpr))
+        if h > hmax:
+            h = hmax
+            w = int(round(h * rx / ry))
+        return max(16, w), max(16, h)
+
+    def pic_rect(self):
+        r = bpy.context.scene.render
+        aspect = max(1.0, r.resolution_x * r.pixel_aspect_x) / max(1.0, r.resolution_y * r.pixel_aspect_y)
+        m = theme.px(4)
+        w, h = self.width() - 2 * m, self.height() - 2 * m
+        if w / max(h, 1) > aspect:
+            pw, ph = h * aspect, h
+        else:
+            pw, ph = w, w / aspect
+        return QtCore.QRectF((self.width() - pw) / 2, (self.height() - ph) / 2, pw, ph)
+
+    # ---- rendering
+    def request(self):
+        if self.isVisible():
+            self._t.start()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self.request()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.request()
+
+    def _render(self):
+        if not self.isVisible():
+            return
+        if getattr(bridge, "op_depth", 0):      # a Qt timer inside a running operator (Windows) – later
+            self._t.start(50)
+            return
+        try:
+            self.image = self.compose(self.frame())
+        except Exception:
+            bridge.log(f"Video Sequencer: Qt preview failed:\n{traceback.format_exc()}", "WARNING")
+        self.update()
+
+    def compose(self, f, size=None):
+        """The edit at frame f as a QImage (size: (w, h), default fits the widget)."""
+        w, h = size or self.out_size()
+        img = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32_Premultiplied)
+        img.fill(QtGui.QColor(0, 0, 0))
+        self.notes = []
+        p = QtGui.QPainter(img)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        try:
+            for s in strips_at(f):
+                layer = self.strip_image(s, f, w, h)
+                if layer is None:
+                    continue
+                p.setOpacity(max(0.0, min(1.0, float(getattr(s, "blend_alpha", 1.0)))))
+                p.drawImage(QtCore.QRect(0, 0, w, h), layer)
+        finally:
+            p.end()
+        return img
+
+    def strip_image(self, s, f, w, h, depth=0):
+        t = s.type
+        if depth > 4:
+            return None
+        if t == "SCENE":
+            return self.scene_image(s, f, w, h)
+        if t == "COLOR":
+            img = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32_Premultiplied)
+            img.fill(_qcolor(s.color))
+            return img
+        if t == "TEXT":
+            return self.text_image(s, w, h)
+        if t == "IMAGE":
+            return self.picture(s, f, w, h)
+        if t in ("CROSS", "GAMMA_CROSS", "WIPE", "ALPHA_OVER", "ALPHA_UNDER", "ADD", "MULTIPLY", "SUBTRACT"):
+            ins = inputs(s)
+            imgs = [self.strip_image(x, f, w, h, depth + 1) if x.frame_final_start <= f < x.frame_final_end
+                    else None for x in ins]
+            out = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32_Premultiplied)
+            out.fill(QtCore.Qt.transparent)
+            p = QtGui.QPainter(out)
+            fac = (f - s.frame_final_start + 1) / max(1, s.frame_final_duration + 1)
+            if not getattr(s, "use_default_fade", True):
+                fac = float(getattr(s, "effect_fader", fac))
+            if imgs and imgs[0] is not None:
+                p.drawImage(0, 0, imgs[0])
+            if len(imgs) > 1 and imgs[1] is not None:
+                if t in ("CROSS", "GAMMA_CROSS", "WIPE"):
+                    p.setOpacity(max(0.0, min(1.0, fac)))
+                p.drawImage(0, 0, imgs[1])
+            p.end()
+            return out
+        if t == "MOVIE":
+            self.notes.append(f"Movie “{s.name}” – shown in Blender's preview")
+        return None
+
+    def scene_image(self, s, f, w, h):
+        import gpu
+        import numpy as np
+        from . import burnin
+        from .viewport import eevee_samples
+        sc = s.scene
+        cam = getattr(s, "scene_camera", None) or sc.camera
+        if cam is None:
+            self.notes.append(f"“{s.name}”: no camera")
+            return None
+        local = int(sc.frame_start + (f - s.frame_start))
+        if sc == bpy.context.scene and local != f:
+            self.notes.append(f"{s.name}: scene frame {local} – shown at {f}")
+        space, region = burnin._space()
+        if space is None:
+            return None
+        view, proj = burnin.camera_mats(sc, cam, w, h)
+        vl = bpy.context.view_layer if sc == bpy.context.scene else sc.view_layers[0]
+        off = gpu.types.GPUOffScreen(w, h)
+        ov = getattr(space, "overlay", None)
+        keep = getattr(ov, "show_overlays", None)
+        try:
+            if ov is not None:
+                ov.show_overlays = False
+            with eevee_samples(1):
+                try:
+                    off.draw_view3d(sc, vl, space, region, view, proj, do_color_management=True,
+                                    draw_background=True)
+                except TypeError:
+                    off.draw_view3d(sc, vl, space, region, view, proj)
+            with off.bind():
+                buf = gpu.state.active_framebuffer_get().read_color(0, 0, w, h, 4, 0, "UBYTE")
+            try:
+                arr = np.frombuffer(buf, dtype=np.uint8)
+            except TypeError:
+                arr = np.asarray(buf.to_list(), dtype=np.uint8)
+        finally:
+            off.free()
+            if ov is not None and keep is not None:
+                ov.show_overlays = keep
+        img = QtGui.QImage(w, h, QtGui.QImage.Format_RGBX8888)
+        dst = np.frombuffer(img.bits(), dtype=np.uint8, count=h * img.bytesPerLine())
+        dst = dst.reshape(h, img.bytesPerLine())[:, :w * 4].reshape(h, w, 4)
+        dst[:] = arr.reshape(h, w, 4)[::-1]
+        return img.convertToFormat(QtGui.QImage.Format_ARGB32_Premultiplied)
+
+    def text_image(self, s, w, h):
+        img = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32_Premultiplied)
+        img.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(img)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setRenderHint(QtGui.QPainter.TextAntialiasing)
+        rh = max(1, bpy.context.scene.render.resolution_y)
+        font = QtGui.QFont()
+        font.setPixelSize(max(4, int(float(getattr(s, "font_size", 60)) * h / rh)))
+        font.setBold(bool(getattr(s, "use_bold", False)))
+        font.setItalic(bool(getattr(s, "use_italic", False)))
+        p.setFont(font)
+        loc = getattr(s, "location", (0.5, 0.5))
+        x, y = float(loc[0]) * w, (1.0 - float(loc[1])) * h
+        fm = p.fontMetrics()
+        lines = str(getattr(s, "text", "")).split("\n")
+        tw = max((fm.horizontalAdvance(l) for l in lines), default=0)
+        th = fm.height() * len(lines)
+        ax = getattr(s, "anchor_x", "CENTER")
+        ay = getattr(s, "anchor_y", "BOTTOM")
+        left = x - (tw / 2 if ax == "CENTER" else tw if ax == "RIGHT" else 0)
+        top = y - (th / 2 if ay == "CENTER" else th if ay == "BOTTOM" else 0)
+        box = QtCore.QRectF(left, top, tw, th)
+        if getattr(s, "use_box", False):
+            m = float(getattr(s, "box_margin", 0.01)) * w
+            p.fillRect(box.adjusted(-m, -m, m, m), _qcolor(getattr(s, "box_color", (0.2, 0.2, 0.2, 1))))
+        if getattr(s, "use_shadow", False):
+            p.setPen(_qcolor(getattr(s, "shadow_color", (0, 0, 0, 1))))
+            p.drawText(box.translated(max(1, font.pixelSize() / 20), max(1, font.pixelSize() / 20)),
+                       QtCore.Qt.AlignCenter, "\n".join(lines))
+        p.setPen(_qcolor(getattr(s, "color", (1, 1, 1, 1))))
+        p.drawText(box, QtCore.Qt.AlignCenter, "\n".join(lines))
+        p.end()
+        return img
+
+    def picture(self, s, f, w, h):
+        try:
+            el = s.strip_elem_from_frame(f)
+            path = bpy.path.abspath(os.path.join(s.directory, el.filename)) if el is not None else None
+        except Exception:
+            path = None
+        if not path or not os.path.isfile(path):
+            self.notes.append(f"Image “{s.name}”: file not found")
+            return None
+        src = self._img_cache.get(path)
+        if src is None:
+            src = QtGui.QImage(path)
+            if src.isNull():
+                self.notes.append(f"Image “{s.name}”: Qt cannot read it – see Blender's preview")
+                return None
+            if len(self._img_cache) > 64:
+                self._img_cache.clear()
+            self._img_cache[path] = src
+        img = QtGui.QImage(w, h, QtGui.QImage.Format_ARGB32_Premultiplied)
+        img.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(img)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        sc = min(w / max(1, src.width()), h / max(1, src.height()))     # Blender's default: Scale to Fit
+        dw, dh = src.width() * sc, src.height() * sc
+        p.drawImage(QtCore.QRectF((w - dw) / 2, (h - dh) / 2, dw, dh), src)
+        p.end()
+        return img
+
+    # ---- painting / input
+    def paintEvent(self, _ev):
+        p = QtGui.QPainter(self)
+        p.fillRect(self.rect(), QtGui.QColor(24, 24, 24))
+        r = self.pic_rect()
+        if self.image is not None:
+            p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+            p.drawImage(r, self.image)
+        p.setPen(QtGui.QColor(70, 70, 70))
+        p.drawRect(r.adjusted(-0.5, -0.5, 0.5, 0.5))
+        try:
+            self.bp.paint_all(p)
+        except Exception:
+            pass
+        lines = list(self.notes)
+        s = shot_at(self.frame())
+        if s is not None:
+            lines.insert(0, f"{s.name}  ·  🎥 {self.bp_camera()}")
+        if self.bp.enabled:
+            lines.append("Blue Pencil – drawing on the shot camera")
+        if lines:
+            f = p.font()
+            f.setPointSizeF(max(7.0, f.pointSizeF() * 0.85))
+            p.setFont(f)
+            y = r.top() + theme.px(4)
+            for line in lines[:4]:
+                br = p.fontMetrics().boundingRect(line)
+                box = QtCore.QRectF(r.left() + theme.px(4), y, br.width() + theme.px(8), br.height() + theme.px(2))
+                p.fillRect(box, QtGui.QColor(0, 0, 0, 140))
+                p.setPen(QtGui.QColor(225, 225, 225))
+                p.drawText(box, QtCore.Qt.AlignCenter, line)
+                y += box.height() + 1
+        p.end()
+
+    def mousePressEvent(self, ev):
+        self.setFocus()
+        if self.bp.enabled:
+            if blender_playing():
+                self.ed.play_sound()
+            if self.bp.press(ev, ev.position()):
+                return
+        if ev.button() == QtCore.Qt.LeftButton and not self.bp.enabled:
+            self.ed.set_blue_pencil(True) if ev.modifiers() & QtCore.Qt.ShiftModifier else None
+
+    def mouseMoveEvent(self, ev):
+        if self.bp.enabled:
+            self.bp.move(ev, ev.position())
+
+    def mouseReleaseEvent(self, ev):
+        if self.bp.enabled:
+            self.bp.release(ev, ev.position())
+
+    def mouseDoubleClickEvent(self, ev):
+        if self.bp.enabled:
+            self.bp.double_click(ev, ev.position())
+
+    def wheelEvent(self, ev):
+        if self.bp.enabled and self.bp.wheel(ev):
+            return
+        super().wheelEvent(ev)
+
+    def event(self, ev):
+        if ev.type() == QtCore.QEvent.ShortcutOverride and self.bp.enabled and self.bp.owns_key(ev):
+            ev.accept()
+            return True
+        return super().event(ev)
+
+    def keyPressEvent(self, ev):
+        from . import keymap
+        names = keymap.event_names(ev)
+        if self.bp.enabled and self.bp.key(ev, lambda aid: keymap.hit(aid, ev, names)):
+            self.update()
+            return
+        if keymap.hit("seq.blue_pencil", ev, names):
+            self.ed.set_blue_pencil(not self.bp.enabled)
+            return
+        self.ed.view.keyPressEvent(ev)       # the strips view's keys (cut, play …) also work here
+
+
+class PreviewPane(QtWidgets.QWidget):
+    """Preview header (Blender / Qt Shell, Blue Pencil) above Blender's embedded preview or Qt Shell's own."""
+
+    def __init__(self, ed, parent=None):
+        super().__init__(parent)
+        from . import icons, keymap
+        self.ed = ed
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        head = QtWidgets.QWidget(self)
+        hl = QtWidgets.QHBoxLayout(head)
+        hl.setContentsMargins(theme.px(4), theme.px(2), theme.px(4), theme.px(2))
+        hl.setSpacing(theme.px(3))
+        self.mode = QtWidgets.QComboBox(head)
+        self.mode.addItem("Blender preview", "blender")
+        self.mode.addItem("Qt Shell preview", "qt")
+        self.mode.setToolTip("Blender preview: Blender's own sequencer preview – movies, effects and modifiers "
+                             "exactly as rendered, playback with sound.\n"
+                             "Qt Shell preview: drawn by Qt Shell – shots through their cameras, colour, text and "
+                             "image strips, cross fades – with Blue Pencil on the shot camera.")
+        hl.addWidget(self.mode)
+        self.bp_btn = QtWidgets.QToolButton(head)
+        self.bp_btn.setCheckable(True)
+        self.bp_btn.setAutoRaise(True)
+        icons.set_icon(self.bp_btn, "tool_blue_pencil")
+        if self.bp_btn.icon().isNull():
+            self.bp_btn.setText("✐")
+        bpm = QtWidgets.QMenu(self.bp_btn)
+        bpm.aboutToShow.connect(lambda m=bpm: self._fill_bp_menu(m))
+        self.bp_btn.setMenu(bpm)
+        self.bp_btn.setPopupMode(QtWidgets.QToolButton.DelayedPopup)
+        self.bp_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
+        keymap.tip(self.bp_btn, "Blue Pencil ({seq.blue_pencil}) – draw on the shot (Qt Shell preview): the drawings "
+                                "go to the 3D view's layers of the shot camera, so you see them in the 3D view "
+                                "through that camera and in renders. Hold for the drawing tools.")
+        self.bp_btn.toggled.connect(lambda on: self.ed.set_blue_pencil(on))
+        hl.addWidget(self.bp_btn)
+        hl.addStretch(1)
+        lay.addWidget(head)
+        self.stack = QtWidgets.QStackedWidget(self)
+        self.host = PreviewHost(self.stack)
+        self.qt = QtPreview(ed, self.stack)
+        self.stack.addWidget(self.host)
+        self.stack.addWidget(self.qt)
+        lay.addWidget(self.stack, 1)
+        mode = QtCore.QSettings("QtShell", "QtShell").value("sequencer/preview_mode", "blender")
+        self.set_mode(mode if mode in ("blender", "qt") else "blender", save=False)
+        self.mode.activated.connect(lambda _i: self.set_mode(self.mode.currentData()))
+
+    def is_qt(self):
+        return self.stack.currentWidget() is self.qt
+
+    def set_mode(self, mode, save=True):
+        qt = mode == "qt"
+        i = self.mode.findData(mode)
+        if i >= 0 and i != self.mode.currentIndex():
+            self.mode.setCurrentIndex(i)
+        if not qt and self.qt.bp.enabled:
+            self.ed.set_blue_pencil(False)
+        self.stack.setCurrentWidget(self.qt if qt else self.host)
+        self.bp_btn.setEnabled(qt)
+        if qt:
+            self.qt.request()
+        if save:
+            QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/preview_mode", mode)
+
+    def _fill_bp_menu(self, m):
+        from . import bluepencil, icons
+        m.clear()
+        cur = bluepencil.current_tool()
+        for tid, name, icon, tip in bluepencil.TOOLS:
+            a = m.addAction(icons.icon(icon), name)
+            a.setToolTip(tip)
+            if tid == cur:
+                f = a.font()
+                f.setBold(True)
+                a.setFont(f)
+            a.triggered.connect(lambda _c=False, t=tid: (bluepencil.set_variant(t), self.ed.set_blue_pencil(True)))
+
+
 # ---------------------------------------------------------------- the dock widget
 class VideoSequencer(QtWidgets.QWidget):
     PY = "qt_shell.api.video_sequencer()"
@@ -1247,10 +1697,12 @@ class VideoSequencer(QtWidgets.QWidget):
         lay.setSpacing(0)
         lay.addWidget(self._toolbar())
         self.split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
-        self.preview = PreviewHost(self.split)
+        self.pane = PreviewPane(self, self.split)
+        self.preview = self.pane.host
+        self.qtprev = self.pane.qt
         self.view = SeqView(self, self.split)
         self.props = StripProps(self, self.split)
-        self.split.addWidget(self.preview)
+        self.split.addWidget(self.pane)
         self.split.addWidget(self.view)
         self.split.addWidget(self.props)
         self.split.setStretchFactor(0, 2)
@@ -1272,7 +1724,7 @@ class VideoSequencer(QtWidgets.QWidget):
             b.blockSignals(False)
         hub.frame_changed.connect(lambda _f: self._frame())
         try:
-            hub.play_frame.connect(lambda _f: self.isVisible() and self.view.update())
+            hub.play_frame.connect(lambda _f: self.isVisible() and (self.view.update(), self.qtprev.request()))
         except Exception:
             pass
         hub.data_changed.connect(self.refresh)
@@ -1446,17 +1898,20 @@ class VideoSequencer(QtWidgets.QWidget):
         self.path_lab.setText(" ▸ ".join(self.meta_path))
         self.props.refresh()
         self.view.update()
+        self.qtprev.request()
 
     def after_edit(self, props=True):
         if props:
             self.props.refresh(force=True)
         self.view.update()
         self.preview.redraw()
+        self.qtprev.request()
 
     def _frame(self):
         if self.isVisible():
             self.view.update()
             self.props.refresh()
+            self.qtprev.request()
 
     def _poll(self):
         """Strips changed elsewhere (Blender's operators, Python, undo) – a cheap signature check."""
@@ -1490,8 +1945,31 @@ class VideoSequencer(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(0, self.refresh)
 
     def shutdown(self):
+        try:
+            self.set_blue_pencil(False)
+        except Exception:
+            pass
         self.preview.close_window()
         unregister_handlers()
+
+    # ---- Blue Pencil (Qt Shell preview)
+    def set_blue_pencil(self, on):
+        """Blue Pencil on the Qt Shell preview (switches the preview to Qt Shell's)."""
+        on = bool(on)
+        if on and not self.pane.is_qt():
+            self.pane.set_mode("qt")
+        if self.pane.bp_btn.isChecked() != on:
+            self.pane.bp_btn.setChecked(on)        # toggled → here again
+            return
+        if on and blender_playing():
+            self.play_sound()                      # stops Blender's playback
+        if on and (self.split.sizes()[0] == 0):
+            self.preview_btn.setChecked(True)
+        self.qtprev.bp.set_enabled(on)
+        self.qtprev.setCursor(QtCore.Qt.CrossCursor if on else QtCore.Qt.ArrowCursor)
+        if on:
+            self.qtprev.setFocus()
+        self.qtprev.update()
 
     # ---- selection
     def selected(self):
@@ -1532,7 +2010,8 @@ class VideoSequencer(QtWidgets.QWidget):
               "seq.unmeta": self.separate_meta, "seq.frame_all": self.view_frame_all,
               "seq.frame_selected": lambda: self.view.frame_all(selected=True),
               "seq.prev_cut": lambda: self.jump(-1), "seq.next_cut": lambda: self.jump(1),
-              "seq.play": self.play_sound, "seq.snap": lambda: self.snap_btn.toggle()}.get(aid)
+              "seq.play": self.play_sound, "seq.snap": lambda: self.snap_btn.toggle(),
+              "seq.blue_pencil": lambda: self.set_blue_pencil(not self.qtprev.bp.enabled)}.get(aid)
         if fn is None:
             return
         try:
