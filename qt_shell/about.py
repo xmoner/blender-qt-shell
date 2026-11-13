@@ -29,7 +29,7 @@ SPONSOR_BUTTON_TEXT = "Sponsors"
 SPONSOR_CONTACT = ""                # e.g. '<a href="mailto:…">…</a>' – shown after "please contact:"
 SUPPORT_BUTTON_TEXT = "Get Support"
 SUPPORT = {
-    "price": "",                    # price of every started 30 minutes, e.g. "25 EUR"
+    "price": "15 € / $15",          # price of every started 30 minutes (EUR or USD)
     "contact": "",                  # e.g. '<a href="mailto:support@…">support@…</a>' or a phone number
     "paypal": "",                   # PayPal link for paying in advance, e.g. "https://paypal.me/…"
 }
