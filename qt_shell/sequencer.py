@@ -1537,6 +1537,10 @@ class QtPreview(QtWidgets.QWidget):
         if self.isVisible():
             self._t.start()
 
+    def stop(self):
+        """Blender preview chosen: no more renders of this preview (a pending one is dropped)."""
+        self._t.stop()
+
     def showEvent(self, ev):
         super().showEvent(ev)
         self.request()
@@ -2198,12 +2202,24 @@ class PreviewPane(QtWidgets.QWidget):
         self.qt.update()
 
     def set_mode(self, mode, save=True):
+        """Only one preview runs: Qt Shell preview closes Blender's preview window (it would keep rendering every
+        frame in the background), Blender preview stops the Qt Shell preview's rendering / cached playback."""
         qt = mode == "qt"
         i = self.mode.findData(mode)
         if i >= 0 and i != self.mode.currentIndex():
             self.mode.setCurrentIndex(i)
+        changed = qt != self.is_qt()
+        if changed:
+            self._stop_playback()
         if not qt and self.qt.bp.enabled:
             self.ed.set_blue_pencil(False)
+        if qt:
+            self.host.close_window()              # Blender's preview off (opened again when chosen)
+            self.host.note.setText("Blender preview is off (Qt Shell preview is shown)")
+            self.host.note.show()
+        else:
+            self.qt.stop()                        # Qt Shell preview off (cache kept for coming back)
+            self.host.note.setText("Preview")
         self.stack.setCurrentWidget(self.qt if qt else self.host)
         self.bp_btn.setEnabled(qt)
         for w in (self.clear_btn, self.op_slider, self.op_label, self.cache_btn, self.auto_btn):
@@ -2212,6 +2228,23 @@ class PreviewPane(QtWidgets.QWidget):
             self.qt.request()
         if save:
             QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/preview_mode", mode)
+
+    def _stop_playback(self):
+        """A preview switch stops the sequencer's playback (cached in the Qt Shell preview, or Blender's with sound
+        in its preview window, which is about to close)."""
+        ed = self.ed
+        try:
+            if ed.cached_playing():
+                ed.stop_cached_play()
+            elif blender_playing() and getattr(ed, "_bl_play", False):
+                ed.play_sound()                   # stops Blender's playback
+        except Exception:
+            bridge.log(f"Video Sequencer: stopping playback on a preview switch:\n{traceback.format_exc()}",
+                       "WARNING")
+
+    def blender_preview_on(self):
+        """True while Blender's preview window exists (only in Blender preview mode)."""
+        return self.host.alive()
 
     def _fill_bp_menu(self, m):
         from . import bluepencil, icons
