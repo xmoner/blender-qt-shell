@@ -322,6 +322,68 @@ def run_seq_op(idname, props=None, undo=None):
 
 
 # ---------------------------------------------------------------- Blender's preview, embedded
+# ---------------------------------------------------------------- annotations in Blender's preview
+ANNOT_PROP = "qtshell_seq_annotation"    # scene ID property: name of the annotation data of Blender's preview
+ANNOTATE_TOOLS = (
+    ("builtin.annotate", "Annotate", "tool_annotate", "Draw free-hand notes over the picture"),
+    ("builtin.annotate_line", "Annotate Line", "tool_annotate_line", "Drag to draw a straight line"),
+    ("builtin.annotate_polygon", "Annotate Polygon", "tool_annotate_polygon",
+     "Click points of a polygon, double-click / Enter to finish"),
+    ("builtin.annotate_eraser", "Annotate Eraser", "tool_annotate_eraser", "Drag over strokes to erase them"),
+)
+
+
+def video_annotation(create=False):
+    """The annotation data drawn over Blender's sequencer preview. Blender keeps a sequencer preview's notes on
+    the editor (not the scene) – the preview window here comes and goes, so the data is the scene's own (named in a
+    scene property, fake user) and linked to every new preview window."""
+    sc = bpy.context.scene
+    name = sc.get(ANNOT_PROP)
+    an = bpy.data.annotations.get(name) if isinstance(name, str) else None
+    if an is None and create:
+        an = bpy.data.annotations.new("Video Annotations")
+        sc[ANNOT_PROP] = an.name
+    if an is not None and not an.use_fake_user:
+        an.use_fake_user = True
+    return an
+
+
+def annotation_layer_name(lay):
+    return getattr(lay, "info", None) or getattr(lay, "name", "") or ""
+
+
+def active_annotation_layer(an):
+    """The active layer. Blender 5: AnnotationLayers.active_note is the active layer's *name* (an enum) and
+    active_index its index; older versions had .active (the layer)."""
+    if an is None:
+        return None
+    lays = an.layers
+    v = getattr(lays, "active_note", None)
+    if isinstance(v, str):
+        return next((l for l in lays if annotation_layer_name(l) == v), None)
+    if v is not None:
+        return v
+    v = getattr(lays, "active", None)
+    if v is not None:
+        return v
+    i = getattr(lays, "active_index", -1)
+    return lays[i] if 0 <= i < len(lays) else None
+
+
+def set_active_annotation_layer(an, lay):
+    lays = an.layers
+    if hasattr(lays, "active_index"):
+        lays.active_index = list(lays).index(lay)
+        return
+    for attr in ("active_note", "active"):
+        if hasattr(lays, attr):
+            try:
+                setattr(lays, attr, annotation_layer_name(lay) if attr == "active_note" else lay)
+                return
+            except (AttributeError, TypeError):
+                pass
+
+
 class PreviewHost(QtWidgets.QWidget):
     """Blender's sequencer preview (a helper Blender window) embedded in Qt. Windows only – elsewhere a note."""
     current = None
@@ -431,6 +493,7 @@ class PreviewHost(QtWidgets.QWidget):
                         setattr(sp, attr, val)
                     except Exception:
                         pass
+        self.link_annotation()
         self.container = QtWidgets.QWidget.createWindowContainer(QtGui.QWindow.fromWinId(self.hwnd), self)
         self.container.setFocusPolicy(QtCore.Qt.NoFocus)
         self.layout().addWidget(self.container)
@@ -443,6 +506,48 @@ class PreviewHost(QtWidgets.QWidget):
                 app._win.activateWindow()
         except Exception:
             pass
+
+    # ---- annotations (Blender's own Annotate tools draw in this preview)
+    def preview_region(self):
+        a = self.area()
+        return next((r for r in a.regions if r.type == "PREVIEW"), None) if a is not None else None
+
+    def link_annotation(self, create=False):
+        """The scene's video annotation data on this preview (shown in its overlay)."""
+        a = self.area()
+        if a is None:
+            return None
+        an = video_annotation(create)
+        w = self.bl_window()
+        sp = a.spaces.active
+        try:
+            with bpy.context.temp_override(window=w, screen=w.screen, area=a):   # space RNA needs a window
+                if an is not None and sp.annotation != an:
+                    sp.annotation = an
+                ov = getattr(sp, "preview_overlay", None)
+                if ov is not None and not ov.show_annotation:
+                    ov.show_annotation = True
+        except Exception as ex:
+            bridge.log(f"Video Sequencer: annotations of Blender's preview ({ex})", "WARNING")
+        return an
+
+    def set_tool(self, idname):
+        w, a, r = self.bl_window(), self.area(), self.preview_region()
+        if w is None or a is None or r is None:
+            return False
+        with bpy.context.temp_override(window=w, screen=w.screen, area=a, region=r):
+            return "FINISHED" in bpy.ops.wm.tool_set_by_id(name=idname, space_type="SEQUENCE_EDITOR")
+
+    def tool(self):
+        w, a, r = self.bl_window(), self.area(), self.preview_region()
+        if w is None or a is None or r is None:
+            return None
+        try:
+            with bpy.context.temp_override(window=w, screen=w.screen, area=a, region=r):
+                t = bpy.context.workspace.tools.from_space_sequencer("PREVIEW")
+                return t.idname if t is not None else None
+        except Exception:
+            return None
 
     def fit_view(self):
         a, w = self.area(), self.bl_window()
@@ -2069,6 +2174,35 @@ class PreviewPane(QtWidgets.QWidget):
         self.bp_btn.toggled.connect(lambda on: self.ed.set_blue_pencil(on))
         py_tag(self.bp_btn, "set_blue_pencil(True)")
         hl.addWidget(self.bp_btn)
+        # Blender preview: Blender's own Annotate tools draw over the picture, on annotation layers
+        self.ann_btn = QtWidgets.QToolButton(head)
+        self.ann_btn.setCheckable(True)
+        self.ann_btn.setAutoRaise(True)
+        icons.set_icon(self.ann_btn, "tool_annotate")
+        if self.ann_btn.icon().isNull():
+            self.ann_btn.setText("✎")
+        anm = QtWidgets.QMenu(self.ann_btn)
+        anm.aboutToShow.connect(lambda m=anm: self._fill_annotate_menu(m))
+        self.ann_btn.setMenu(anm)
+        self.ann_btn.setPopupMode(QtWidgets.QToolButton.DelayedPopup)
+        self.ann_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
+        self.ann_btn.setToolTip("Annotate (Blender preview): draw notes over the picture with Blender's Annotate tools "
+                                "– on the active annotation layer, kept on the frame you draw on.\n"
+                                "Hold for the tools (Annotate, Line, Polygon, Eraser).")
+        self.ann_btn.toggled.connect(lambda on: self.ed.set_annotate(on))
+        py_tag(self.ann_btn, "set_annotate(True)   # set_annotate(True, 'builtin.annotate_line')")
+        hl.addWidget(self.ann_btn)
+        self.ann_layer_btn = QtWidgets.QToolButton(head)
+        self.ann_layer_btn.setText("Layers")
+        self.ann_layer_btn.setAutoRaise(True)
+        self.ann_layer_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        alm = QtWidgets.QMenu(self.ann_layer_btn)
+        alm.aboutToShow.connect(lambda m=alm: self._fill_annotation_layers_menu(m))
+        self.ann_layer_btn.setMenu(alm)
+        self.ann_layer_btn.setToolTip("Annotation layers of the Blender preview: New Layer, the active layer, "
+                                      "show / hide, colour, thickness, delete; delete the drawing on this frame")
+        py_tag(self.ann_layer_btn, "add_annotation_layer('Notes')   # annotation_layers()")
+        hl.addWidget(self.ann_layer_btn)
         qs = QtCore.QSettings("QtShell", "QtShell")
         self.clear_btn = QtWidgets.QToolButton(head)
         self.clear_btn.setCheckable(True)
@@ -2234,8 +2368,15 @@ class PreviewPane(QtWidgets.QWidget):
         else:
             self.qt.stop()                        # Qt Shell preview off (cache kept for coming back)
             self.host.note.setText("Preview")
+        if qt and self.ann_btn.isChecked():
+            self.ann_btn.blockSignals(True)
+            self.ann_btn.setChecked(False)          # Blender's preview is closed – its tool goes with it
+            self.ann_btn.blockSignals(False)
         self.stack.setCurrentWidget(self.qt if qt else self.host)
         self.bp_btn.setEnabled(qt)
+        self.bp_btn.setVisible(qt)
+        self.ann_btn.setVisible(not qt)
+        self.ann_layer_btn.setVisible(not qt)
         for w in (self.clear_btn, self.op_slider, self.op_label, self.cache_btn, self.auto_btn):
             w.setVisible(qt)
         if qt:
@@ -2259,6 +2400,76 @@ class PreviewPane(QtWidgets.QWidget):
     def blender_preview_on(self):
         """True while Blender's preview window exists (only in Blender preview mode)."""
         return self.host.alive()
+
+    def _fill_annotate_menu(self, m):
+        from . import icons
+        m.clear()
+        cur = self.ed.annotate_tool()
+        for tid, name, icon, tip in ANNOTATE_TOOLS:
+            a = m.addAction(icons.icon(icon), name)
+            a.setToolTip(tip)
+            a.setCheckable(True)
+            a.setChecked(tid == cur)
+            a.triggered.connect(lambda _c=False, t=tid: self.ed.set_annotate(True, t))
+            py_tag(a, f"set_annotate(True, {tid!r})")
+        m.addSeparator()
+        self._fill_annotation_layers_menu(m, clear=False)
+
+    def _fill_annotation_layers_menu(self, m, clear=True):
+        if clear:
+            m.clear()
+        ed = self.ed
+        py_tag(m.addAction("New Annotation Layer…", self._new_annotation_layer), "add_annotation_layer('Notes')")
+        an = video_annotation()
+        layers = list(an.layers) if an is not None else []
+        if layers:
+            m.addSeparator()
+            act = active_annotation_layer(an)
+            for lay in reversed(layers):           # top layer first, like Blender's list
+                name = annotation_layer_name(lay)
+                hidden = getattr(lay, "annotation_hide", False)
+                a = m.addAction(name + ("   (hidden)" if hidden else ""))
+                a.setCheckable(True)
+                a.setChecked(act is not None and lay == act)
+                a.setToolTip("Make it the active layer – new strokes go there")
+                a.triggered.connect(lambda _c=False, n=name: ed.set_annotation_layer(n))
+                py_tag(a, f"set_annotation_layer({name!r})")
+            m.addSeparator()
+            if act is not None:
+                hidden = getattr(act, "annotation_hide", False)
+                py_tag(m.addAction(("Show" if hidden else "Hide") + f" “{annotation_layer_name(act)}”",
+                                   lambda: ed.set_annotation_layer_hidden(not hidden)),
+                       f"set_annotation_layer_hidden({not hidden})")
+                py_tag(m.addAction("Layer Colour…", self._annotation_colour), "set_annotation_color((1.0, 0.3, 0.2))")
+                th = m.addMenu("Thickness")
+                for v in (1, 2, 3, 5, 8, 12):
+                    a = th.addAction(f"{v} px")
+                    a.setCheckable(True)
+                    a.setChecked(int(getattr(act, "thickness", 3)) == v)
+                    a.triggered.connect(lambda _c=False, t=v: ed.set_annotation_thickness(t))
+                    py_tag(a, f"set_annotation_thickness({v})")
+                py_tag(m.addAction(f"Delete Layer “{annotation_layer_name(act)}”",
+                                   lambda: ed.remove_annotation_layer()), "remove_annotation_layer()")
+            m.addSeparator()
+            py_tag(m.addAction("Delete Drawing on This Frame", lambda: ed.clear_annotation_frame()),
+                   "clear_annotation_frame()")
+
+    def _new_annotation_layer(self):
+        an = video_annotation()
+        n = len(an.layers) + 1 if an is not None else 1
+        name, ok = QtWidgets.QInputDialog.getText(self, "New Annotation Layer", "Name:", text=f"Notes {n}")
+        if ok:
+            self.ed.add_annotation_layer(name.strip() or f"Notes {n}")
+
+    def _annotation_colour(self):
+        act = active_annotation_layer(video_annotation())
+        if act is None:
+            return
+        from . import colorpicker
+        c = act.color
+        colorpicker.pick(self.ann_layer_btn, QtGui.QColor.fromRgbF(*[max(0.0, min(1.0, x)) for x in c[:3]]),
+                         lambda col: self.ed.set_annotation_color((col.redF(), col.greenF(), col.blueF())),
+                         title="Annotation Layer Colour")
 
     def _fill_bp_menu(self, m):
         from . import bluepencil, icons
@@ -2893,6 +3104,141 @@ class VideoSequencer(QtWidgets.QWidget):
         if on:
             self.qtprev.setFocus()
         self.qtprev.update()
+
+    # ---- annotations in Blender's preview (Blender's own Annotate tools)
+    def _annot_host(self):
+        if self.pane.is_qt():
+            self.pane.set_mode("blender")
+        host = self.preview
+        if not host.alive():
+            host.ensure()
+        return host if host.alive() else None
+
+    def annotate_tool(self):
+        """The Annotate tool chosen last (the one the Annotate button turns on)."""
+        t = QtCore.QSettings("QtShell", "QtShell").value("sequencer/annotate_tool", "builtin.annotate")
+        return t if t in [x[0] for x in ANNOTATE_TOOLS] else "builtin.annotate"
+
+    def annotate_on(self):
+        return self.pane.ann_btn.isChecked()
+
+    def set_annotate(self, on=True, tool=None):
+        """Annotate in Blender's preview: on – Blender's Annotate tool (tool = 'builtin.annotate',
+        'builtin.annotate_line', 'builtin.annotate_polygon' or 'builtin.annotate_eraser'); off – Select Box."""
+        on = bool(on)
+        if tool:
+            if tool not in [x[0] for x in ANNOTATE_TOOLS]:
+                raise ValueError(f"unknown annotate tool {tool!r}")
+            QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/annotate_tool", tool)
+        btn = self.pane.ann_btn
+        if btn.isChecked() != on:
+            btn.blockSignals(True)
+            btn.setChecked(on)
+            btn.blockSignals(False)
+        host = self._annot_host() if on else (self.preview if self.preview.alive() else None)
+        if host is None:
+            if on:
+                btn.blockSignals(True)
+                btn.setChecked(False)
+                btn.blockSignals(False)
+            return False
+        if on:
+            if blender_playing():
+                self.play_sound()                  # stops Blender's playback
+            an = host.link_annotation(create=True)
+            if an is not None and not len(an.layers):
+                self.add_annotation_layer("Notes")
+            ok = host.set_tool(self.annotate_tool())
+        else:
+            ok = host.set_tool("builtin.select_box")
+        self.status("Annotate: draw in the preview" if on else "Annotate off")
+        return ok
+
+    def annotation_layers(self):
+        """Names of the annotation layers of Blender's preview (bottom first)."""
+        an = video_annotation()
+        return [annotation_layer_name(l) for l in an.layers] if an is not None else []
+
+    def _annotation_layer(self, name=None):
+        an = video_annotation()
+        if an is None:
+            return None, None
+        if name is None:
+            return an, active_annotation_layer(an)
+        lay = next((l for l in an.layers if annotation_layer_name(l) == name), None)
+        if lay is None:
+            raise ValueError(f"no annotation layer {name!r}")
+        return an, lay
+
+    def add_annotation_layer(self, name=None):
+        """A new annotation layer for Blender's preview (made the active one). Returns its name."""
+        an = video_annotation(create=True)
+        host = self.preview if self.preview.alive() else None
+        if host is not None:
+            host.link_annotation()
+        try:
+            lay = an.layers.new(name or f"Notes {len(an.layers) + 1}", set_active=True)
+        except TypeError:
+            lay = an.layers.new(name or f"Notes {len(an.layers) + 1}")
+        set_active_annotation_layer(an, lay)
+        try:
+            lay.color = (0.38, 0.61, 0.78)          # Blender's annotation blue (RNA-made layers are dark grey)
+            lay.thickness = 3
+        except Exception:
+            pass
+        bridge.undo_push("Add Annotation Layer")
+        self._annot_redraw()
+        return annotation_layer_name(lay)
+
+    def set_annotation_layer(self, name):
+        an, lay = self._annotation_layer(name)
+        set_active_annotation_layer(an, lay)
+        self._annot_redraw()
+
+    def set_annotation_layer_hidden(self, hidden=True, name=None):
+        _an, lay = self._annotation_layer(name)
+        if lay is not None:
+            lay.annotation_hide = bool(hidden)
+            self._annot_redraw()
+
+    def set_annotation_color(self, rgb, name=None):
+        _an, lay = self._annotation_layer(name)
+        if lay is not None:
+            lay.color = tuple(rgb)[:3]
+            self._annot_redraw()
+
+    def set_annotation_thickness(self, px, name=None):
+        _an, lay = self._annotation_layer(name)
+        if lay is not None:
+            lay.thickness = int(px)
+            self._annot_redraw()
+
+    def remove_annotation_layer(self, name=None):
+        an, lay = self._annotation_layer(name)
+        if lay is not None:
+            an.layers.remove(lay)
+            bridge.undo_push("Delete Annotation Layer")
+            self._annot_redraw()
+
+    def clear_annotation_frame(self, name=None):
+        """Deletes the active layer's drawing on the current frame (the key shown there)."""
+        _an, lay = self._annotation_layer(name)
+        if lay is None:
+            return False
+        f = bpy.context.scene.frame_current
+        key = None
+        for fr in lay.frames:
+            if fr.frame_number <= f and (key is None or fr.frame_number > key.frame_number):
+                key = fr
+        if key is None:
+            return False
+        lay.frames.remove(key)
+        bridge.undo_push("Delete Annotation Drawing")
+        self._annot_redraw()
+        return True
+
+    def _annot_redraw(self):
+        self.preview.redraw()
 
     # ---- selection
     def selected(self):

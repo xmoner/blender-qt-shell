@@ -4455,6 +4455,17 @@ The methods below belong to the object you get with `vs = qt_shell.api.video_seq
 | [`VideoSequencer.set_follow`](#videosequencerset_follow) | Timeline + 3D On / Off (the two toolbar buttons): True – the Timeline's playhead and the 3D views follow the sequencer's playback; False – only the sequencer plays, the Timeline and the 3D views stay frozen until it stops. |
 | [`VideoSequencer.follow_on`](#videosequencerfollow_on) | True when Timeline + 3D On is chosen (the Timeline and the 3D views play along with the sequencer). |
 | [`VideoSequencer.set_blue_pencil`](#videosequencerset_blue_pencil) | Blue Pencil on the Qt Shell preview (switches the preview to Qt Shell's); drawings go to Video Editing layers. |
+| [`VideoSequencer.set_annotate`](#videosequencerset_annotate) | Annotate in Blender's preview (the Annotate button): on – Blender's Annotate tool is active in the preview, you draw with the mouse on the active annotation layer (a layer 'Notes' is made when there is none); off – Select Box. |
+| [`VideoSequencer.annotate_on`](#videosequencerannotate_on) | True while the Annotate button is on. |
+| [`VideoSequencer.annotate_tool`](#videosequencerannotate_tool) | The Annotate tool the button turns on (the last one chosen). |
+| [`VideoSequencer.annotation_layers`](#videosequencerannotation_layers) | Names of the annotation layers of Blender's preview, bottom first (the scene's 'Video Annotations' data). |
+| [`VideoSequencer.add_annotation_layer`](#videosequenceradd_annotation_layer) | A new annotation layer for Blender's preview, made the active one (new strokes go there). |
+| [`VideoSequencer.set_annotation_layer`](#videosequencerset_annotation_layer) | Makes a layer the active one. |
+| [`VideoSequencer.set_annotation_layer_hidden`](#videosequencerset_annotation_layer_hidden) | Hides / shows a layer (default the active one). |
+| [`VideoSequencer.set_annotation_color`](#videosequencerset_annotation_color) | Colour of a layer (default the active one). |
+| [`VideoSequencer.set_annotation_thickness`](#videosequencerset_annotation_thickness) | Stroke thickness of a layer in pixels (default the active one). |
+| [`VideoSequencer.remove_annotation_layer`](#videosequencerremove_annotation_layer) | Deletes a layer with its drawings (default the active one). |
+| [`VideoSequencer.clear_annotation_frame`](#videosequencerclear_annotation_frame) | Deletes the drawing of a layer shown on the current frame (its key at or before the frame). |
 | [`VideoSequencer.cache_all`](#videosequencercache_all) | Cache All Frames: renders the play range into the Qt Shell preview's cache (Esc stops). |
 | [`VideoSequencer.export_video`](#videosequencerexport_video) | Exports the edit – rendered by Blender like Render Animation (progress, cancel); the scene's output settings are put back afterwards. |
 | [`formats`](#formats) | The export format ids this Blender can write (its FFmpeg containers / codecs differ between builds). |
@@ -5101,6 +5112,233 @@ import bpy, qt_shell
 vs = qt_shell.api.video_sequencer()
 vs.set_blue_pencil(True)
 vs.set_blue_pencil(False)
+```
+
+#### VideoSequencer.set_annotate
+
+**Synopsis:** `VideoSequencer.set_annotate(on=True, tool=None)`  
+**Returns:** bool
+
+Annotate in Blender's preview (the Annotate button): on – Blender's Annotate tool is active in the preview, you draw with the mouse on the active annotation layer (a layer 'Notes' is made when there is none); off – Select Box. Switches the preview to Blender's.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `on` | bool | Annotate on / off. |
+| `tool` | str | 'builtin.annotate', 'builtin.annotate_line', 'builtin.annotate_polygon' or 'builtin.annotate_eraser' (remembered). |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+vs.set_annotate(True, "builtin.annotate_line")   # straight lines
+print(vs.annotate_on(), vs.annotate_tool())
+vs.set_annotate(False)
+```
+
+#### VideoSequencer.annotate_on
+
+**Synopsis:** `VideoSequencer.annotate_on()`  
+**Returns:** bool
+
+True while the Annotate button is on.
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+print(vs.annotate_on())
+```
+
+#### VideoSequencer.annotate_tool
+
+**Synopsis:** `VideoSequencer.annotate_tool()`  
+**Returns:** str
+
+The Annotate tool the button turns on (the last one chosen).
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+print(vs.annotate_tool())
+```
+
+#### VideoSequencer.annotation_layers
+
+**Synopsis:** `VideoSequencer.annotation_layers()`  
+**Returns:** list of str
+
+Names of the annotation layers of Blender's preview, bottom first (the scene's 'Video Annotations' data).
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+print(vs.annotation_layers())
+```
+
+#### VideoSequencer.add_annotation_layer
+
+**Synopsis:** `VideoSequencer.add_annotation_layer(name=None)`  
+**Returns:** str
+
+A new annotation layer for Blender's preview, made the active one (new strokes go there). Returns its name.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | str | Layer name; default 'Notes N'. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+name = vs.add_annotation_layer("Director notes")
+vs.set_annotation_color((1.0, 0.3, 0.2))     # the active layer
+vs.set_annotation_thickness(5)
+vs.remove_annotation_layer(name)
+```
+
+#### VideoSequencer.set_annotation_layer
+
+**Synopsis:** `VideoSequencer.set_annotation_layer(name)`  
+**Returns:** None
+
+Makes a layer the active one.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | str | Layer name. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+vs.add_annotation_layer("A")
+vs.add_annotation_layer("B")
+vs.set_annotation_layer("A")
+vs.remove_annotation_layer("A"); vs.remove_annotation_layer("B")
+```
+
+#### VideoSequencer.set_annotation_layer_hidden
+
+**Synopsis:** `VideoSequencer.set_annotation_layer_hidden(hidden=True, name=None)`  
+**Returns:** None
+
+Hides / shows a layer (default the active one).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `hidden` | bool | True hides. |
+| `name` | str | Layer name; default the active layer. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+n = vs.add_annotation_layer("Temp")
+vs.set_annotation_layer_hidden(True, n)
+vs.remove_annotation_layer(n)
+```
+
+#### VideoSequencer.set_annotation_color
+
+**Synopsis:** `VideoSequencer.set_annotation_color(rgb, name=None)`  
+**Returns:** None
+
+Colour of a layer (default the active one).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rgb` | tuple | (r, g, b) 0–1. |
+| `name` | str | Layer name; default the active layer. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+n = vs.add_annotation_layer("Red")
+vs.set_annotation_color((1, 0, 0), n)
+vs.remove_annotation_layer(n)
+```
+
+#### VideoSequencer.set_annotation_thickness
+
+**Synopsis:** `VideoSequencer.set_annotation_thickness(px, name=None)`  
+**Returns:** None
+
+Stroke thickness of a layer in pixels (default the active one).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `px` | int | Thickness. |
+| `name` | str | Layer name; default the active layer. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+n = vs.add_annotation_layer("Thick")
+vs.set_annotation_thickness(8, n)
+vs.remove_annotation_layer(n)
+```
+
+#### VideoSequencer.remove_annotation_layer
+
+**Synopsis:** `VideoSequencer.remove_annotation_layer(name=None)`  
+**Returns:** None
+
+Deletes a layer with its drawings (default the active one).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | str | Layer name. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+n = vs.add_annotation_layer("Scratch")
+vs.remove_annotation_layer(n)
+```
+
+#### VideoSequencer.clear_annotation_frame
+
+**Synopsis:** `VideoSequencer.clear_annotation_frame(name=None)`  
+**Returns:** bool
+
+Deletes the drawing of a layer shown on the current frame (its key at or before the frame). False when there is none.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | str | Layer name; default the active layer. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+print(vs.clear_annotation_frame())
 ```
 
 #### VideoSequencer.cache_all

@@ -1459,6 +1459,74 @@ C("sequencer.VideoSequencer.set_blue_pencil", "sequencer", "set_blue_pencil(on)"
   [("on", "bool", "On / off.")],
   example=VS + "vs.set_blue_pencil(True)\nvs.set_blue_pencil(False)")
 
+C("sequencer.VideoSequencer.set_annotate", "sequencer", "set_annotate(on=True, tool=None)", "bool",
+  "Annotate in Blender's preview (the Annotate button): on – Blender's Annotate tool is active in the preview, you "
+  "draw with the mouse on the active annotation layer (a layer 'Notes' is made when there is none); off – "
+  "Select Box. Switches the preview to Blender's.",
+  [("on", "bool", "Annotate on / off."),
+   ("tool", "str", "'builtin.annotate', 'builtin.annotate_line', 'builtin.annotate_polygon' or "
+                   "'builtin.annotate_eraser' (remembered).")],
+  example=VS + """vs.set_annotate(True, "builtin.annotate_line")   # straight lines
+print(vs.annotate_on(), vs.annotate_tool())
+vs.set_annotate(False)""")
+
+C("sequencer.VideoSequencer.annotate_on", "sequencer", "annotate_on()", "bool",
+  "True while the Annotate button is on.", example=VS + "print(vs.annotate_on())")
+
+C("sequencer.VideoSequencer.annotate_tool", "sequencer", "annotate_tool()", "str",
+  "The Annotate tool the button turns on (the last one chosen).", example=VS + "print(vs.annotate_tool())")
+
+C("sequencer.VideoSequencer.annotation_layers", "sequencer", "annotation_layers()", "list of str",
+  "Names of the annotation layers of Blender's preview, bottom first (the scene's 'Video Annotations' data).",
+  example=VS + "print(vs.annotation_layers())")
+
+C("sequencer.VideoSequencer.add_annotation_layer", "sequencer", "add_annotation_layer(name=None)", "str",
+  "A new annotation layer for Blender's preview, made the active one (new strokes go there). Returns its name.",
+  [("name", "str", "Layer name; default 'Notes N'.")],
+  example=VS + """name = vs.add_annotation_layer("Director notes")
+vs.set_annotation_color((1.0, 0.3, 0.2))     # the active layer
+vs.set_annotation_thickness(5)
+vs.remove_annotation_layer(name)""")
+
+C("sequencer.VideoSequencer.set_annotation_layer", "sequencer", "set_annotation_layer(name)", "None",
+  "Makes a layer the active one.", [("name", "str", "Layer name.")],
+  example=VS + """vs.add_annotation_layer("A")
+vs.add_annotation_layer("B")
+vs.set_annotation_layer("A")
+vs.remove_annotation_layer("A"); vs.remove_annotation_layer("B")""")
+
+C("sequencer.VideoSequencer.set_annotation_layer_hidden", "sequencer",
+  "set_annotation_layer_hidden(hidden=True, name=None)", "None",
+  "Hides / shows a layer (default the active one).",
+  [("hidden", "bool", "True hides."), ("name", "str", "Layer name; default the active layer.")],
+  example=VS + """n = vs.add_annotation_layer("Temp")
+vs.set_annotation_layer_hidden(True, n)
+vs.remove_annotation_layer(n)""")
+
+C("sequencer.VideoSequencer.set_annotation_color", "sequencer", "set_annotation_color(rgb, name=None)", "None",
+  "Colour of a layer (default the active one).",
+  [("rgb", "tuple", "(r, g, b) 0–1."), ("name", "str", "Layer name; default the active layer.")],
+  example=VS + """n = vs.add_annotation_layer("Red")
+vs.set_annotation_color((1, 0, 0), n)
+vs.remove_annotation_layer(n)""")
+
+C("sequencer.VideoSequencer.set_annotation_thickness", "sequencer", "set_annotation_thickness(px, name=None)",
+  "None", "Stroke thickness of a layer in pixels (default the active one).",
+  [("px", "int", "Thickness."), ("name", "str", "Layer name; default the active layer.")],
+  example=VS + """n = vs.add_annotation_layer("Thick")
+vs.set_annotation_thickness(8, n)
+vs.remove_annotation_layer(n)""")
+
+C("sequencer.VideoSequencer.remove_annotation_layer", "sequencer", "remove_annotation_layer(name=None)", "None",
+  "Deletes a layer with its drawings (default the active one).", [("name", "str", "Layer name.")],
+  example=VS + """n = vs.add_annotation_layer("Scratch")
+vs.remove_annotation_layer(n)""")
+
+C("sequencer.VideoSequencer.clear_annotation_frame", "sequencer", "clear_annotation_frame(name=None)", "bool",
+  "Deletes the drawing of a layer shown on the current frame (its key at or before the frame). False when "
+  "there is none.", [("name", "str", "Layer name; default the active layer.")],
+  example=VS + "print(vs.clear_annotation_frame())")
+
 C("sequencer.VideoSequencer.cache_all", "sequencer", "cache_all()", "int – frames cached",
   "Cache All Frames: renders the play range into the Qt Shell preview's cache (Esc stops).",
   example=VS + 'vs.pane.set_mode("qt")\nvs.add_color()\nvs.cache_all()\nvs.pane.set_mode("blender")')
