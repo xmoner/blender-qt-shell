@@ -705,7 +705,16 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
             doc = inspect.getdoc(obj) or getattr(obj, "__doc__", "") or ""
             if not isinstance(doc, str):
                 doc = ""
-            if len(doc) > 1600:
+            ref = None
+            try:                                         # Qt Shell API: the command reference with its example
+                from . import api_reference
+                ref = api_reference.lookup(obj)
+            except Exception:
+                ref = None
+            if ref is not None:
+                doc = api_reference.text(ref)
+                sig = ""
+            elif len(doc) > 1600:
                 doc = doc[:1600] + " …"
             kind = type(obj).__name__
             import html

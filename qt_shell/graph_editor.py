@@ -787,6 +787,13 @@ class GraphEditor(QtWidgets.QWidget):
     def all_curves(self):
         return self._curves
 
+    def recollect(self):
+        """Reads the curves again – after F-curves were added or removed the kept FCurve objects are invalid."""
+        try:
+            self._curves = self._collect()
+        except Exception:
+            self._curves = []
+
     def shown(self):
         out = []
         sel = self.tree.selectedItems()
@@ -1007,6 +1014,7 @@ class GraphEditor(QtWidgets.QWidget):
                 ob.update_tag()
         else:
             keying.insert()
+            self.recollect()                     # new F-curves reallocate the curve list (see delete_keys)
         self.view._finish_edit("Insert Keyframe")
         self.refresh()
 
@@ -1028,8 +1036,10 @@ class GraphEditor(QtWidgets.QWidget):
             except Exception:
                 pass
         # curves without keys are removed, like in Blender
+        removed = False
         for c in by_fc:
             if len(c.fc.keyframe_points) == 0:
+                removed = True
                 try:
                     ad = c.ob.animation_data
                     from bpy_extras import anim_utils
@@ -1040,6 +1050,10 @@ class GraphEditor(QtWidgets.QWidget):
                         c.ob.animation_data.action.fcurves.remove(c.fc)
                     except Exception:
                         pass
+        if removed:
+            # removing an F-curve frees it and reallocates the channel bag's curve list: every kept Curve.fc
+            # (also of the other curves) now points at freed memory – reading it crashes Blender
+            self.recollect()
         self.view._finish_edit("Delete Keyframes")
         self.refresh(force=True)
 
