@@ -2,6 +2,8 @@
 (with a colourful heart) and Help → About the Author… open the same window.
 The "Sponsors" button next to it (a palm holding coins – coins.svg) and Help → Sponsors… open the Sponsor window;
 its contact is SPONSOR_CONTACT below (plain text or simple HTML, e.g. an e-mail as a mailto: link).
+The "Get Support" button (left of Sponsors) and Help → Get Support… open the paid-support window – fill in
+SUPPORT below (price per 30 minutes, contact, PayPal link).
 
 The texts are placeholders – fill in AUTHOR and DONATE below (no other code needs to change):
   AUTHOR["name"], AUTHOR["text"] (plain text or simple HTML, paragraphs separated by blank lines),
@@ -25,6 +27,12 @@ DONATE = [
 BUTTON_TEXT = "Do not touch it."
 SPONSOR_BUTTON_TEXT = "Sponsors"
 SPONSOR_CONTACT = ""                # e.g. '<a href="mailto:…">…</a>' – shown after "please contact:"
+SUPPORT_BUTTON_TEXT = "Get Support"
+SUPPORT = {
+    "price": "",                    # price of every started 30 minutes, e.g. "25 EUR"
+    "contact": "",                  # e.g. '<a href="mailto:support@…">support@…</a>' or a phone number
+    "paypal": "",                   # PayPal link for paying in advance, e.g. "https://paypal.me/…"
+}
 HEART = ("#ff4d6d", "#ff9f1c", "#ffd60a", "#2ec4b6", "#3a86ff", "#8338ec")   # the heart's colours
 
 
@@ -175,6 +183,22 @@ def make_sponsor_button(parent, on_click):
                           "Become a sponsor of Qt Shell", on_click)
 
 
+def support_icon(size=16):
+    """The Get Support icon (Blender's HELP / QUESTION icon; Qt's help icon when it has no drawing)."""
+    try:
+        from . import blicons
+        if blicons.has("HELP"):
+            return blicons.icon("HELP")
+    except Exception:
+        pass
+    return QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_DialogHelpButton)
+
+
+def make_support_button(parent, on_click):
+    return _status_button(parent, SUPPORT_BUTTON_TEXT, support_icon(16),
+                          "Paid help with Qt Shell – online and remote, paid in advance via PayPal", on_click)
+
+
 # ---------------------------------------------------------------- the window
 class AboutDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -305,6 +329,78 @@ class SponsorDialog(QtWidgets.QDialog):
         lay.addLayout(row)
 
 
+class SupportDialog(QtWidgets.QDialog):
+    """Paid support: price per 30 minutes, how it works (online / remote, PayPal in advance, refund when it
+    does not help), the contact and a PayPal button – the values come from SUPPORT."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("qtshell_support")
+        self.setWindowTitle("Get Support")
+        self.setMinimumWidth(theme.px(460))
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(theme.px(18), theme.px(16), theme.px(18), theme.px(14))
+        lay.setSpacing(theme.px(12))
+
+        head = QtWidgets.QHBoxLayout()
+        head.setSpacing(theme.px(14))
+        icon = QtWidgets.QLabel(self)
+        icon.setPixmap(support_icon(48).pixmap(theme.px(48), theme.px(48)))
+        head.addWidget(icon, 0, QtCore.Qt.AlignTop)
+        hv = QtWidgets.QVBoxLayout()
+        title = QtWidgets.QLabel("Get Support", self)
+        f = title.font()
+        f.setBold(True)
+        f.setPointSizeF(f.pointSizeF() * 1.5)
+        title.setFont(f)
+        hv.addWidget(title)
+        sub = QtWidgets.QLabel("Paid help with Qt Shell – online and remote", self)
+        sub.setStyleSheet("color:#9a9a9a;")
+        hv.addWidget(sub)
+        hv.addStretch(1)
+        head.addLayout(hv, 1)
+        lay.addLayout(head)
+
+        price = SUPPORT.get("price") or ""
+        contact = SUPPORT.get("contact") or "<i>(contact coming soon)</i>"
+        price_html = (f"<b>{price}</b> for every 30 minutes (each started half hour)" if price
+                      else "<i>(price coming soon)</i> for every 30 minutes (each started half hour)")
+        self.text = QtWidgets.QLabel(
+            f"<b>Price:</b> {price_html}<br><br>"
+            "<b>How it works</b>"
+            "<ol>"
+            "<li>Write to the contact below what you need help with – we agree on a time and how long it "
+            "will take.</li>"
+            "<li>Pay <b>in advance via PayPal</b>.</li>"
+            "<li>The support takes place <b>online</b> – a video call and a <b>remote</b> connection to your "
+            "computer, so we can look at the problem together.</li>"
+            "<li>If the support does not solve your problem, <b>the money is returned</b>.</li>"
+            "</ol>"
+            f"<b>Contact:</b> {contact}", self)
+        self.text.setWordWrap(True)
+        self.text.setTextFormat(QtCore.Qt.RichText)
+        self.text.setOpenExternalLinks(True)
+        self.text.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
+        lay.addWidget(self.text)
+
+        lay.addStretch(1)
+        row = QtWidgets.QHBoxLayout()
+        url = SUPPORT.get("paypal") or ""
+        self.pay_btn = QtWidgets.QPushButton("Pay with PayPal…", self)
+        self.pay_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.pay_btn.setEnabled(bool(url))
+        self.pay_btn.setToolTip(f"Opens PayPal in the browser – pay after we agreed on the time\n{url}" if url
+                                else "The PayPal link is coming soon")
+        self.pay_btn.clicked.connect(lambda _=False: QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)))
+        row.addWidget(self.pay_btn)
+        row.addStretch(1)
+        close = QtWidgets.QPushButton("Close", self)
+        close.setDefault(True)
+        close.clicked.connect(self.close)
+        row.addWidget(close)
+        lay.addLayout(row)
+
+
 def _open(cls, holder, parent):
     dlg = holder.get("dlg")
     try:
@@ -329,6 +425,14 @@ _sponsor = {}
 def show_sponsor(parent=None):
     """Opens (or raises) the Sponsor window."""
     return _open(SponsorDialog, _sponsor, parent)
+
+
+_support = {}
+
+
+def show_support(parent=None):
+    """Opens (or raises) the Get Support window."""
+    return _open(SupportDialog, _support, parent)
 
 
 _dialog = None

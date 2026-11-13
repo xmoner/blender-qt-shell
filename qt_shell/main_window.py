@@ -668,8 +668,11 @@ class MainWindow(QtWidgets.QMainWindow):
         hist_btn.clicked.connect(self.show_status_history)
         self.statusBar().addPermanentWidget(hist_btn)
         # bottom right: "Do not touch it." with a colourful heart → About the Author / Donate (about.py)
-        # "Sponsors" (palm holding coins) next to it → the Sponsor window
+        # "Sponsors" (palm holding coins) next to it → the Sponsor window; "Get Support" left of it → paid support
         from . import about
+        self.support_btn = about.make_support_button(self.statusBar(), lambda: about.show_support(self))
+        pytips.tag(self.support_btn, "import qt_shell.about as about; about.show_support()")
+        self.statusBar().addPermanentWidget(self.support_btn)
         self.sponsor_btn = about.make_sponsor_button(self.statusBar(), lambda: about.show_sponsor(self))
         self.statusBar().addPermanentWidget(self.sponsor_btn)
         self.about_btn = about.make_button(self.statusBar(), lambda: about.show(self))
@@ -2036,6 +2039,10 @@ class MainWindow(QtWidgets.QMainWindow):
         a = menu.addAction(about.coins_icon(16), "Sponsors…")
         a.setToolTip("Become a sponsor of Qt Shell")
         a.triggered.connect(lambda: about.show_sponsor(self))
+        a = menu.addAction(about.support_icon(16), "Get Support…")
+        a.setToolTip("Paid help with Qt Shell – online and remote, paid in advance via PayPal")
+        pytips.tag(a, "import qt_shell.about as about; about.show_support()")
+        a.triggered.connect(lambda: about.show_support(self))
         from . import splash
         a = menu.addAction(QtGui.QIcon(splash.ICON), "Show Qt Shell Banner")
         a.setToolTip("Shows the startup banner again – it goes away when the mouse moves")
