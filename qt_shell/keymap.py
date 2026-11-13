@@ -341,6 +341,7 @@ _a("seq.next_cut", SQ, "Jump to the Next Strip Edge", "PgUp")
 _a("seq.play", SQ, "Play / Stop with Sound", "Space")
 _a("seq.snap", SQ, "Snapping On / Off", "Shift+Tab")
 _a("seq.blue_pencil", SQ, "Blue Pencil on the Qt Shell preview (draw on the shot)")
+_a("seq.export", SQ, "Export Video… (MP4 / MOV / MKV / WebM, image sequence, sound)")
 # text editor
 _a("text.run_script", TE, "Run Script", "Alt+P")
 _a("text.run_selection", TE, "Run Selection", "Ctrl+Return", "Ctrl+Enter")

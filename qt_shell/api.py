@@ -40,7 +40,7 @@ __all__ = [
     "active_tool", "set_tool", "TOOLS", "timeline", "image_editor", "check_for_updates", "latest_release",
 ]
 
-API_VERSION = (1, 13)
+API_VERSION = (1, 14)
 
 # event name → Hub signal (None = emitted by Qt Shell itself)
 EVENTS = {
@@ -313,7 +313,9 @@ def video_sequencer():
         vs.delete(ripple=True)             # delete the selection and close the gap
         vs.make_meta(); vs.enter_meta(strip); vs.exit_meta()
         vs.move_strips(vs.selected(), 10, 1)   # +10 frames, one channel up
-        vs.play_sound()                    # Blender's own playback with sound (in the preview)"""
+        vs.play_sound()                    # Blender's own playback with sound (in the preview)
+        vs.export_video("C:/out/edit.mp4", "MP4_H264")   # video / "SEQ_PNG" images / "AUDIO_WAV" sound;
+                                           # start, end, quality, scale, audio – no path: the dialog"""
     w = main_window()
     return getattr(w, "sequencer", None) if w is not None else None
 

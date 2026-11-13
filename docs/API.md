@@ -687,6 +687,7 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 
 | API | Qt Shell | Changes |
 |---|---|---|
+| 1.14 | 0.109.0 | Video Sequencer `export_video(path, fmt, start, end, quality, scale, audio)`, `last_export`; `qt_shell.seq_export.formats()`. |
 | 1.13 | 0.102.0 | `video_sequencer()` – the Video Sequencer: add movies / sounds / images / scenes / camera shots / text / colour / adjustment / transitions, cut, delete (ripple), duplicate, move, trim, meta strips, play with sound. |
 | 1.2 | 0.9.0 – 0.9.1 | `set_viewport_layout()`, `viewport_layout()`, `viewports()`; overlays drawn in every view. 0.9.1: `status_history()`, status messages also in the Console. |
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
@@ -910,6 +911,18 @@ vs.delete(ripple=True)             # delete the selection and close the gap on i
 vs.duplicate(); vs.move_strips(vs.selected(), 10, 1); vs.trim(strip, "r", 120)
 vs.make_meta(); vs.enter_meta(meta); vs.exit_meta(); vs.separate_meta()
 vs.set_flag("mute", True); vs.range_to_strips(); vs.play_sound()
+
+# Export (API 1.14) – rendered by Blender like Render Animation; the scene's output settings are put back
+vs.export_video()                                    # the Export dialog
+vs.export_video("C:/out/edit.mp4", "MP4_H264")       # the scene range, High quality, 100 %, with sound
+vs.export_video("C:/out/web.webm", "WEBM_VP9", start=1, end=240, quality="MEDIUM", scale=50, audio=False)
+vs.export_video("C:/out/frames/shot.png", "SEQ_PNG") # shot_0001.png …
+vs.export_video("C:/out/mix.wav", "AUDIO_WAV")       # the sound alone
+vs.last_export                                       # {"path", "format", "start", "end", "state", "files"}
+qt_shell.seq_export.formats()                        # ids this Blender can write:
+# MP4_H264 MP4_H265 MP4_AV1 MOV_H264 MOV_PRORES MKV_H264 MKV_FFV1 WEBM_VP9 AVI_H264 OGG_THEORA
+# SEQ_PNG SEQ_JPEG SEQ_TIFF SEQ_EXR SEQ_WEBP   AUDIO_WAV AUDIO_MP3 AUDIO_FLAC AUDIO_OGG
+# quality: "LOSSLESS" / "HIGH" / "MEDIUM" / "LOW";  scale: per cent of the scene resolution
 ```
 
 ## Image editor from a script

@@ -2,6 +2,7 @@
 import math
 import os
 import time
+import traceback
 import tempfile
 
 import bpy
@@ -1890,6 +1891,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._render_cancelled = False
         anim = getattr(self, "_render_anim", False)
         self._set_rendering(False, anim)
+        hooks, self._render_done_hooks = list(getattr(self, "_render_done_hooks", ())), []
+        if hooks:                                # someone borrowed the render (Video Sequencer → Export)
+            for fn in hooks:
+                try:
+                    fn(cancelled)
+                except Exception:
+                    bridge.log(f"Render: after-render hook failed:\n{traceback.format_exc()}", "ERROR")
+            try:
+                self.timeline.sync()
+            except Exception:
+                pass
+            return
         if anim:
             try:
                 self.timeline.sync()            # Blender puts the scene frame back after the render

@@ -1165,7 +1165,7 @@ class SeqView(QtWidgets.QWidget):
     _KEYS = ("seq.cut", "seq.delete", "seq.ripple_delete", "seq.duplicate", "seq.select_all", "seq.deselect_all",
              "seq.mute", "seq.unmute", "seq.lock", "seq.unlock", "seq.meta", "seq.unmeta", "seq.frame_all",
              "seq.frame_selected", "seq.prev_cut", "seq.next_cut", "seq.play", "seq.snap",
-             "seq.blue_pencil")
+             "seq.blue_pencil", "seq.export")
 
     def event(self, ev):
         if ev.type() == QtCore.QEvent.ShortcutOverride:
@@ -1550,6 +1550,9 @@ class QtPreview(QtWidgets.QWidget):
             return
         if getattr(bridge, "op_depth", 0):      # a Qt timer inside a running operator (Windows) – later
             self._t.start(50)
+            return
+        if bridge.is_rendering():               # a render / export runs: no preview render inside it
+            self._t.start(400)
             return
         f = self.frame()
         img = None
@@ -2226,6 +2229,14 @@ class PreviewPane(QtWidgets.QWidget):
                       "qt_shell.api.video_sequencer().set_blue_pencil(True)", raw=True)
 
 
+def playcache_pending():
+    try:
+        from . import playcache
+        return bool(playcache.pending_edits())
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------- Python tooltips
 VS_PY = "import qt_shell; vs = qt_shell.api.video_sequencer(); "
 
@@ -2250,6 +2261,7 @@ class VideoSequencer(QtWidgets.QWidget):
         self.hub = hub
         self.meta_path = []          # names of the open metas (Maya-like "groups")
         self.render_version = 0      # +1 on every strip edit made here (drops the preview cache)
+        self.last_export = {}        # the last export: path, format, range, state running / done / cancelled / failed
         self._bl_play = False        # Blender's playback belongs to the sequencer (its Play / Space in its preview)
         self._cp_timer = None        # cached playback (Qt Shell preview, all frames cached)
         self._cp_frame = None
@@ -2404,6 +2416,10 @@ class VideoSequencer(QtWidgets.QWidget):
         py_tag(self.render_chk, "bpy.context.scene.render.use_sequencer = True", raw=True)
         h.addWidget(self.render_chk)
         btn("", "Scene range = all strips", self.range_to_strips, "TIME", py="range_to_strips()")
+        self.export_btn = btn("Export", "Export Video… ({seq.export}) – the edit as MP4 / MOV / MKV / WebM …, "
+                                        "an image sequence or the sound alone",
+                              self.export_video, "EXPORT",
+                              py='export_video()   # export_video("C:/out/edit.mp4", "MP4_H264")')
         self._sep(h, bar)
         self.preview_btn = btn("Preview", "Show / hide the preview", lambda on: self._show_part(0, on), "SEQ_PREVIEW",
                                check=True, py="preview_btn.setChecked(True)")
@@ -2848,6 +2864,7 @@ class VideoSequencer(QtWidgets.QWidget):
               "seq.frame_selected": lambda: self.view.frame_all(selected=True),
               "seq.prev_cut": lambda: self.jump(-1), "seq.next_cut": lambda: self.jump(1),
               "seq.play": self.play_sound, "seq.snap": lambda: self.snap_btn.toggle(),
+              "seq.export": self.export_video,
               "seq.blue_pencil": lambda: self.set_blue_pencil(not self.qtprev.bp.enabled)}.get(aid)
         if fn is None:
             return
@@ -3645,10 +3662,137 @@ class VideoSequencer(QtWidgets.QWidget):
         act("Set Preview Range to Selection", self.preview_range_to_selection, "PREVIEW_RANGE", bool(sel),
             py="preview_range_to_selection()")
         act("Scene Range = All Strips", self.range_to_strips, "TIME", py="range_to_strips()")
+        act("Export Video…\t{seq.export}", self.export_video, "EXPORT", py="export_video()")
         act("Frame All\t{seq.frame_all}", self.view_frame_all, "FULLSCREEN_ENTER", py="view_frame_all()")
         act("Frame Selected\t{seq.frame_selected}", lambda: self.view.frame_all(selected=True), "ZOOM_SELECTED",
             bool(sel), py="view.frame_all(selected=True)")
         return m
+
+    # ---- export
+    def export_video(self, path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True):
+        """Exports the edit: a video (fmt "MP4_H264", "MP4_H265", "MOV_PRORES", "MKV_H264", "WEBM_VP9" …),
+        an image sequence ("SEQ_PNG" …) or the sound alone ("AUDIO_WAV" …) – `seq_export.formats()` lists what
+        this Blender can write. Without a path the Export dialog opens. Rendered by Blender like Render
+        Animation (status bar progress, cancel); the scene's output settings are put back afterwards.
+        Returns True when the export started; `last_export["state"]` goes from "running" to "done" /
+        "cancelled" / "failed" (with `files`)."""
+        from . import app, seq_export
+        win = app._win
+        if win is None or win.is_rendering() or bridge.is_rendering():
+            self.status("Export: a render is running – wait for it or cancel it first.")
+            return False
+        if editor() is None or not all_strips():
+            self.status("Export: there are no strips to export.")
+            return False
+        if path is None:
+            qs = QtCore.QSettings("QtShell", "QtShell")
+            folder = qs.value("sequencer/export_dir", "") or self._dialog_dir()
+            name = os.path.splitext(os.path.basename(bpy.data.filepath))[0] or "edit"
+            dlg = seq_export.ExportDialog(self, folder, name)
+            if dlg.exec() != QtWidgets.QDialog.Accepted:
+                return False
+            v = dlg.values()
+            path, fmt, start, end = v["path"], v["fmt"], v["start"], v["end"]
+            quality, scale, audio = v["quality"], v["scale"], v["audio"]
+        fmt = fmt or "MP4_H264"
+        e = seq_export.entry(fmt)
+        if e is None or fmt not in seq_export.formats():
+            self.status(f"Export: format {fmt} is not available in this Blender.")
+            return False
+        sc = bpy.context.scene
+        start = sc.frame_start if start is None else int(start)
+        end = sc.frame_end if end is None else int(end)
+        if end < start:
+            self.status("Export: the end frame is before the start frame.")
+            return False
+        path = os.path.abspath(os.path.expanduser(path))
+        if not path.lower().endswith(e[2]):
+            path = os.path.splitext(path)[0] + e[2]
+        if self.cached_playing():
+            self.stop_cached_play()
+        elif blender_playing():
+            self.play_sound()
+        self.last_export = {"path": path, "format": fmt, "start": start, "end": end, "state": "running"}
+        if seq_export.kind(fmt) == "audio":
+            try:
+                seq_export.mixdown(fmt, path, start, end)
+            except Exception as ex:
+                self.last_export.update(state="failed", error=str(ex))
+                bridge.log(f"Video Sequencer: export failed:\n{traceback.format_exc()}", "ERROR")
+                self.status(f"Export failed: {ex}")
+                return False
+            watch = seq_export.file_settled(path)
+            self.export_btn.setEnabled(False)
+            self.status(f"Exporting the sound of frames {start}–{end} to {path} …")
+
+            def look(watch=watch, path=path):
+                if watch.done():
+                    self.last_export.update(state="done", files=[path])
+                    msg = f"Exported the sound to {path}  ({os.path.getsize(path) / 1048576:.1f} MB)"
+                elif watch.failed():
+                    self.last_export.update(state="failed", files=[], error="Blender wrote no sound file")
+                    msg = "Export failed: Blender wrote no sound file."
+                    bridge.log(f"Video Sequencer: sound export to {path} wrote no file", "ERROR")
+                else:
+                    QtCore.QTimer.singleShot(200, look)
+                    return
+                self.export_btn.setEnabled(True)
+                self.status(msg)
+                try:
+                    win.statusBar().showMessage(msg, 12000)
+                except Exception:
+                    pass
+            QtCore.QTimer.singleShot(200, look)
+            return True
+        keep = seq_export.snapshot()
+        try:
+            seq_export.apply(fmt, path, start, end, quality, scale, audio)
+        except Exception as ex:
+            seq_export.restore(keep)
+            self.last_export.update(state="failed", error=str(ex))
+            bridge.log(f"Video Sequencer: export settings failed:\n{traceback.format_exc()}", "ERROR")
+            self.status(f"Export failed: {ex}")
+            return False
+        images = seq_export.kind(fmt) == "images"
+
+        def done(cancelled, keep=keep, path=path, fmt=fmt, start=start, end=end):
+            seq_export.restore(keep)
+            try:
+                if bpy.context.scene.frame_current != keep["frame_current"] and not playcache_pending():
+                    bpy.context.scene.frame_set(keep["frame_current"])
+            except Exception:
+                pass
+            files = [f for f in (seq_export.sequence_files(path, fmt, start, end) if images else [path])
+                     if os.path.isfile(f)]
+            if cancelled:
+                self.last_export.update(state="cancelled", files=files)
+                msg = "Export cancelled." + (f" {len(files)} frames were written." if images and files else "")
+            elif not files:
+                self.last_export.update(state="failed", files=[], error="Blender wrote no file")
+                msg = "Export failed: Blender wrote no file (see the Console / error window)."
+                bridge.log(f"Video Sequencer: export to {path} ({fmt}) wrote no file", "ERROR")
+            else:
+                self.last_export.update(state="done", files=files)
+                msg = (f"Exported {len(files)} frames to {os.path.dirname(path)}" if images
+                       else f"Exported to {path}  ({os.path.getsize(path) / 1048576:.1f} MB)")
+            self.status(msg)
+            try:
+                win.statusBar().showMessage(msg, 12000)
+            except Exception:
+                pass
+            self.export_btn.setEnabled(True)
+            self.view.update()
+            self.qtprev.request()
+
+        win._render_done_hooks = list(getattr(win, "_render_done_hooks", ())) + [done]
+        self.export_btn.setEnabled(False)
+        self.status(f"Exporting frames {start}–{end} to {path} …")
+        win.render_image(animation=True)
+        if not win.is_rendering() and self.last_export.get("state") == "running":
+            # the render did not start and the hook was not called (blocking fallback calls it)
+            win._render_done_hooks = [h for h in getattr(win, "_render_done_hooks", ()) if h is not done]
+            done(False)
+        return self.last_export.get("state") in ("running", "done")
 
     def set_tag(self, key):
         for s in self.selected():
