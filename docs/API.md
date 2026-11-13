@@ -4464,6 +4464,9 @@ The methods below belong to the object you get with `vs = qt_shell.api.video_seq
 | [`VideoSequencer.set_annotation_layer_hidden`](#videosequencerset_annotation_layer_hidden) | Hides / shows a layer (default the active one). |
 | [`VideoSequencer.set_annotation_color`](#videosequencerset_annotation_color) | Colour of a layer (default the active one). |
 | [`VideoSequencer.set_annotation_thickness`](#videosequencerset_annotation_thickness) | Stroke thickness of a layer in pixels (default the active one). |
+| [`VideoSequencer.annotation_layer_hidden`](#videosequencerannotation_layer_hidden) | True when a layer is hidden (its track muted). |
+| [`VideoSequencer.ann_track`](#videosequencerann_track) | The track of an annotation layer: an orange strip '✎ name' in its own channel – the layer's notes show from its start to its end; move it to move them, trim it to change where they show, mute it to hide them, delete it to delete the layer. |
+| [`VideoSequencer.sync_ann_tracks`](#videosequencersync_ann_tracks) | Brings the annotation tracks and layers in step at once (Qt Shell also does it a few times a second): new layers get a track, moved / trimmed / muted / deleted tracks change their layers. |
 | [`VideoSequencer.remove_annotation_layer`](#videosequencerremove_annotation_layer) | Deletes a layer with its drawings (default the active one). |
 | [`VideoSequencer.clear_annotation_frame`](#videosequencerclear_annotation_frame) | Deletes the drawing of a layer shown on the current frame (its key at or before the frame). |
 | [`VideoSequencer.cache_all`](#videosequencercache_all) | Cache All Frames: renders the play range into the Qt Shell preview's cache (Esc stops). |
@@ -5298,6 +5301,65 @@ vs = qt_shell.api.video_sequencer()
 n = vs.add_annotation_layer("Thick")
 vs.set_annotation_thickness(8, n)
 vs.remove_annotation_layer(n)
+```
+
+#### VideoSequencer.annotation_layer_hidden
+
+**Synopsis:** `VideoSequencer.annotation_layer_hidden(name=None)`  
+**Returns:** bool
+
+True when a layer is hidden (its track muted).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | str | Layer name; default the active layer. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+print(vs.annotation_layer_hidden())
+```
+
+#### VideoSequencer.ann_track
+
+**Synopsis:** `VideoSequencer.ann_track(name=None)`  
+**Returns:** strip or None
+
+The track of an annotation layer: an orange strip '✎ name' in its own channel – the layer's notes show from its start to its end; move it to move them, trim it to change where they show, mute it to hide them, delete it to delete the layer.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | str | Layer name; default the active layer. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+n = vs.add_annotation_layer("Shot notes")
+s = vs.ann_track(n)
+print(s.channel, s.frame_final_start, s.frame_final_end)
+vs.remove_annotation_layer(n)
+```
+
+#### VideoSequencer.sync_ann_tracks
+
+**Synopsis:** `VideoSequencer.sync_ann_tracks()`  
+**Returns:** None
+
+Brings the annotation tracks and layers in step at once (Qt Shell also does it a few times a second): new layers get a track, moved / trimmed / muted / deleted tracks change their layers.
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+vs.sync_ann_tracks()
 ```
 
 #### VideoSequencer.remove_annotation_layer

@@ -38,6 +38,10 @@ TAG = "qtshell_seq_preview"
 BP_PROP = "qtshell_bp_layer"         # Blue Pencil track strip → the layer it stands for
 BP_START = "qtshell_bp_start"        # where the track started last time (moving it moves the drawings)
 BP_COLOR = "#4f7fe0"
+ANN_PROP = "qtshell_ann_layer"       # annotation track strip (Blender preview) → the annotation layer it stands for
+ANN_START = "qtshell_ann_start"      # where the track started / ended last time (moving it moves the drawings)
+ANN_END = "qtshell_ann_end"
+ANN_COLOR = "#d9893a"
 SLOT_NAME = "Qt Shell preview"      # render slot the Qt preview renders into (the user's slots stay)   # ID property on the preview helper window's screen (found again after a load)
 RULER = 22                    # unscaled px
 HEADER_W = 118                # unscaled px – channel names on the left
@@ -99,9 +103,23 @@ def is_bp_track(s):
         return False
 
 
+def is_ann_track(s):
+    try:
+        return s.get(ANN_PROP) is not None
+    except Exception:
+        return False
+
+
+def is_drawing_track(s):
+    """Blue Pencil or annotation track: a transparent Color strip that stands for a drawing layer."""
+    return is_bp_track(s) or is_ann_track(s)
+
+
 def strip_color(s):
     if is_bp_track(s):
         return QtGui.QColor(BP_COLOR)
+    if is_ann_track(s):
+        return QtGui.QColor(ANN_COLOR)
     tag = getattr(s, "color_tag", "NONE")
     if tag in TAG_COLORS:
         return QtGui.QColor(TAG_COLORS[tag])
@@ -119,6 +137,8 @@ def strip_info(s):
     t = s.type
     if is_bp_track(s):
         return "Blue Pencil drawings"
+    if is_ann_track(s):
+        return "Annotations (Blender preview)"
     try:
         if t == "SCENE":
             cam = getattr(s, "scene_camera", None)
@@ -350,6 +370,51 @@ def video_annotation(create=False):
 
 def annotation_layer_name(lay):
     return getattr(lay, "info", None) or getattr(lay, "name", "") or ""
+
+
+def annotation_layer(name):
+    an = video_annotation()
+    if an is None or not name:
+        return None
+    return next((l for l in an.layers if annotation_layer_name(l) == name), None)
+
+
+def annotation_keys(lay):
+    """Frames with a drawing (keys) of an annotation layer, sorted."""
+    try:
+        return sorted(int(f.frame_number) for f in lay.frames if len(f.strokes))
+    except Exception:
+        return []
+
+
+def ann_tracks():
+    se = editor()
+    return [s for s in coll(se) if is_ann_track(s)] if se is not None else []
+
+
+_ANNOTATING = {"on": False}     # the Annotate tool is on: the active layer stays visible outside its track
+
+
+def update_annotation_visibility(frame=None):
+    """Each annotation layer with a track shows only inside its track (start ≤ frame < end) and when the track
+    isn't muted – Blender's annotations have no range, so the layer's hide flag follows the track."""
+    an = video_annotation()
+    se = editor()
+    if an is None or se is None:
+        return
+    f = bpy.context.scene.frame_current if frame is None else frame
+    tracks = {s.get(ANN_PROP): s for s in coll(se) if is_ann_track(s)}
+    act = active_annotation_layer(an) if _ANNOTATING["on"] else None
+    for lay in an.layers:
+        s = tracks.get(annotation_layer_name(lay))
+        if s is None:
+            continue
+        inside = s.frame_final_start <= f < s.frame_final_end
+        if act is not None and lay == act:
+            inside = True                    # drawing on it: Blender draws only on a visible layer
+        hide = bool(s.mute) or not inside
+        if lay.annotation_hide != hide:
+            lay.annotation_hide = hide
 
 
 def active_annotation_layer(an):
@@ -663,6 +728,10 @@ def _on_frame_post(*_a):
         ts.clear()
     ts.append(now)
     del ts[:-25]
+    try:
+        update_annotation_visibility()
+    except Exception:
+        pass
 
 
 def blender_fps():
@@ -980,6 +1049,18 @@ class SeqView(QtWidgets.QWidget):
                 d = max(3.0, min(r.height() / 4, theme.px(5)))
                 cy = r.bottom() - d - 2
                 for k in bluepencil.keys(lay):
+                    x = self.x_of(k)
+                    if r.left() - d <= x <= r.right() + d:
+                        p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, cy - d), QtCore.QPointF(x + d, cy),
+                                                       QtCore.QPointF(x, cy + d), QtCore.QPointF(x - d, cy)]))
+        if is_ann_track(s):                      # its annotation keys (drawn frames) as diamonds
+            lay = annotation_layer(s.get(ANN_PROP))
+            if lay is not None:
+                p.setPen(QtGui.QPen(QtGui.QColor(60, 35, 10), 1))
+                p.setBrush(QtGui.QColor(255, 255, 255, 120 if muted else 235))
+                d = max(3.0, min(r.height() / 4, theme.px(5)))
+                cy = r.bottom() - d - 2
+                for k in annotation_keys(lay):
                     x = self.x_of(k)
                     if r.left() - d <= x <= r.right() + d:
                         p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x, cy - d), QtCore.QPointF(x + d, cy),
@@ -1725,7 +1806,7 @@ class QtPreview(QtWidgets.QWidget):
         sig = []
         has_scene = False
         for x in strips:
-            if is_bp_track(x):
+            if is_drawing_track(x):
                 continue
             has_scene = has_scene or x.type == "SCENE"
             sig.append((x.as_pointer(), x.type, x.channel, x.frame_final_start, x.frame_final_end, x.mute,
@@ -2372,6 +2453,7 @@ class PreviewPane(QtWidgets.QWidget):
             self.ann_btn.blockSignals(True)
             self.ann_btn.setChecked(False)          # Blender's preview is closed – its tool goes with it
             self.ann_btn.blockSignals(False)
+            _ANNOTATING["on"] = False
         self.stack.setCurrentWidget(self.qt if qt else self.host)
         self.bp_btn.setEnabled(qt)
         self.bp_btn.setVisible(qt)
@@ -2427,7 +2509,7 @@ class PreviewPane(QtWidgets.QWidget):
             act = active_annotation_layer(an)
             for lay in reversed(layers):           # top layer first, like Blender's list
                 name = annotation_layer_name(lay)
-                hidden = getattr(lay, "annotation_hide", False)
+                hidden = ed.annotation_layer_hidden(annotation_layer_name(lay))
                 a = m.addAction(name + ("   (hidden)" if hidden else ""))
                 a.setCheckable(True)
                 a.setChecked(act is not None and lay == act)
@@ -2436,7 +2518,7 @@ class PreviewPane(QtWidgets.QWidget):
                 py_tag(a, f"set_annotation_layer({name!r})")
             m.addSeparator()
             if act is not None:
-                hidden = getattr(act, "annotation_hide", False)
+                hidden = ed.annotation_layer_hidden(annotation_layer_name(act))
                 py_tag(m.addAction(("Show" if hidden else "Hide") + f" “{annotation_layer_name(act)}”",
                                    lambda: ed.set_annotation_layer_hidden(not hidden)),
                        f"set_annotation_layer_hidden({not hidden})")
@@ -2835,6 +2917,10 @@ class VideoSequencer(QtWidgets.QWidget):
                 self.sync_bp_tracks()
             except Exception:
                 bridge.log(f"Video Sequencer: Blue Pencil tracks:\n{traceback.format_exc()}", "WARNING")
+            try:
+                self.sync_ann_tracks()
+            except Exception:
+                bridge.log(f"Video Sequencer: annotation tracks:\n{traceback.format_exc()}", "WARNING")
         w = self.preview.bl_window()
         if w is not None and follow_scene(w):
             self.preview.redraw()
@@ -3086,6 +3172,105 @@ class VideoSequencer(QtWidgets.QWidget):
             self.view.update()
             self.qtprev.update()
 
+    # ---- annotation tracks: each annotation layer of Blender's preview gets its own strip ("✎ name")
+    def _new_ann_track(self, se, name, a, b):
+        c = coll(se)
+        top = max((x.channel for x in c), default=0) + 1
+        s = new_effect(se, "✎ " + name, "COLOR", free_channel(se, a, b, top), a, b - a)
+        s.color = (0.85, 0.54, 0.23)
+        s.blend_alpha = 0.0              # renders nothing – the drawings are Blender's annotations
+        s[ANN_PROP] = name
+        s[ANN_START] = a
+        s[ANN_END] = b
+        return s
+
+    def sync_ann_tracks(self):
+        """One track (strip in its own channel) per annotation layer of Blender's preview, like the Blue Pencil
+        tracks: the layer's drawings show from the track's start to its end. Trim = where they show; move = the
+        drawings move with it; mute = hide; delete the track = delete the layer. Drawing outside the track makes
+        it grow to the new key (+ 1 s hold)."""
+        an = video_annotation()
+        layers = {annotation_layer_name(l): l for l in an.layers} if an is not None else {}
+        se = editor(bool(layers))
+        if se is None:
+            return
+        c = coll(se)
+        changed = False
+        known = getattr(self, "_ann_known", set())
+        tracks = {}
+        for s in list(c):
+            if not is_ann_track(s):
+                continue
+            name = s.get(ANN_PROP)
+            if name not in layers or name in tracks:
+                c.remove(s)                      # its layer is gone (deleted / renamed) or a duplicate
+                changed = True
+                continue
+            tracks[name] = s
+        for name in list(known):                 # a track the user deleted: its layer goes too
+            if name in layers and name not in tracks:
+                an.layers.remove(layers.pop(name))
+                bridge.undo_push("Delete Annotation Layer (track deleted)")
+                changed = True
+        hold = max(int(round(fps())), 1)
+        for name, lay in layers.items():
+            ks = annotation_keys(lay)
+            s = tracks.get(name)
+            if s is None:
+                if ks:
+                    a, b = ks[0], ks[-1] + hold
+                else:
+                    a = bpy.context.scene.frame_current
+                    b = a + 5 * hold
+                tracks[name] = self._new_ann_track(se, name, a, b)
+                changed = True
+                continue
+            a, b = int(s.get(ANN_START, s.frame_final_start)), int(s.get(ANN_END, s.frame_final_end))
+            fs, fe = s.frame_final_start, s.frame_final_end
+            if (fs, fe) != (a, b) and not s.lock:
+                if fe - fs == b - a:             # moved → the drawings move with it
+                    delta = fs - a
+                    frames = sorted(lay.frames, key=lambda f: f.frame_number, reverse=delta > 0)
+                    for fr in frames:            # far end first: no two keys on one frame on the way
+                        fr.frame_number = int(fr.frame_number) + delta
+                    ks = annotation_keys(lay)
+                    bridge.undo_push("Move annotations with the track")
+                else:
+                    bridge.undo_push("Annotation track range")
+                a, b = fs, fe
+                changed = True
+            if ks and (ks[0] < a or ks[-1] >= b):      # drawn outside the track → it grows to the new key
+                na = min(a, ks[0])
+                nb = max(b, ks[-1] + hold)
+                if (na, nb) != (a, b):
+                    a, b = na, nb
+                    if b > s.frame_final_end:
+                        s.frame_final_end = b
+                        s.frame_final_start = a
+                    else:
+                        s.frame_final_start = a
+                        s.frame_final_end = b
+                    changed = True
+            if int(s.get(ANN_START, -10 ** 9)) != a:
+                s[ANN_START] = a
+            if int(s.get(ANN_END, -10 ** 9)) != b:
+                s[ANN_END] = b
+            label = "✎ " + name
+            if s.name != label and not s.name.startswith(label):
+                s.name = label
+        self._ann_known = set(tracks)
+        update_annotation_visibility()
+        if changed:
+            self.view.update()
+            self.preview.redraw()
+
+    def ann_track(self, name=None):
+        """The track (strip) of an annotation layer (default the active one)."""
+        if name is None:
+            lay = active_annotation_layer(video_annotation())
+            name = annotation_layer_name(lay) if lay is not None else None
+        return next((s for s in ann_tracks() if s.get(ANN_PROP) == name), None)
+
     # ---- Blue Pencil (Qt Shell preview)
     def set_blue_pencil(self, on):
         """Blue Pencil on the Qt Shell preview (switches the preview to Qt Shell's)."""
@@ -3130,6 +3315,7 @@ class VideoSequencer(QtWidgets.QWidget):
             if tool not in [x[0] for x in ANNOTATE_TOOLS]:
                 raise ValueError(f"unknown annotate tool {tool!r}")
             QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/annotate_tool", tool)
+        _ANNOTATING["on"] = on
         btn = self.pane.ann_btn
         if btn.isChecked() != on:
             btn.blockSignals(True)
@@ -3141,6 +3327,7 @@ class VideoSequencer(QtWidgets.QWidget):
                 btn.blockSignals(True)
                 btn.setChecked(False)
                 btn.blockSignals(False)
+            _ANNOTATING["on"] = False
             return False
         if on:
             if blender_playing():
@@ -3151,6 +3338,7 @@ class VideoSequencer(QtWidgets.QWidget):
             ok = host.set_tool(self.annotate_tool())
         else:
             ok = host.set_tool("builtin.select_box")
+        update_annotation_visibility()
         self.status("Annotate: draw in the preview" if on else "Annotate off")
         return ok
 
@@ -3186,6 +3374,7 @@ class VideoSequencer(QtWidgets.QWidget):
             lay.thickness = 3
         except Exception:
             pass
+        self.sync_ann_tracks()                      # its own track in a new channel at once
         bridge.undo_push("Add Annotation Layer")
         self._annot_redraw()
         return annotation_layer_name(lay)
@@ -3196,10 +3385,18 @@ class VideoSequencer(QtWidgets.QWidget):
         self._annot_redraw()
 
     def set_annotation_layer_hidden(self, hidden=True, name=None):
+        """Hides / shows a layer – its track is muted / unmuted (the track decides where the layer shows)."""
         _an, lay = self._annotation_layer(name)
-        if lay is not None:
+        if lay is None:
+            return
+        s = self.ann_track(annotation_layer_name(lay))
+        if s is not None:
+            s.mute = bool(hidden)
+            update_annotation_visibility()
+            self.view.update()
+        else:
             lay.annotation_hide = bool(hidden)
-            self._annot_redraw()
+        self._annot_redraw()
 
     def set_annotation_color(self, rgb, name=None):
         _an, lay = self._annotation_layer(name)
@@ -3213,10 +3410,19 @@ class VideoSequencer(QtWidgets.QWidget):
             lay.thickness = int(px)
             self._annot_redraw()
 
+    def annotation_layer_hidden(self, name=None):
+        """True when the layer is hidden (its track muted)."""
+        _an, lay = self._annotation_layer(name)
+        if lay is None:
+            return False
+        s = self.ann_track(annotation_layer_name(lay))
+        return bool(s.mute) if s is not None else bool(lay.annotation_hide)
+
     def remove_annotation_layer(self, name=None):
         an, lay = self._annotation_layer(name)
         if lay is not None:
             an.layers.remove(lay)
+            self.sync_ann_tracks()                  # its track goes too
             bridge.undo_push("Delete Annotation Layer")
             self._annot_redraw()
 

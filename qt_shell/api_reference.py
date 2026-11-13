@@ -1517,6 +1517,24 @@ C("sequencer.VideoSequencer.set_annotation_thickness", "sequencer", "set_annotat
 vs.set_annotation_thickness(8, n)
 vs.remove_annotation_layer(n)""")
 
+C("sequencer.VideoSequencer.annotation_layer_hidden", "sequencer", "annotation_layer_hidden(name=None)", "bool",
+  "True when a layer is hidden (its track muted).", [("name", "str", "Layer name; default the active layer.")],
+  example=VS + "print(vs.annotation_layer_hidden())")
+
+C("sequencer.VideoSequencer.ann_track", "sequencer", "ann_track(name=None)", "strip or None",
+  "The track of an annotation layer: an orange strip '✎ name' in its own channel – the layer's notes show from "
+  "its start to its end; move it to move them, trim it to change where they show, mute it to hide them, delete it "
+  "to delete the layer.", [("name", "str", "Layer name; default the active layer.")],
+  example=VS + """n = vs.add_annotation_layer("Shot notes")
+s = vs.ann_track(n)
+print(s.channel, s.frame_final_start, s.frame_final_end)
+vs.remove_annotation_layer(n)""")
+
+C("sequencer.VideoSequencer.sync_ann_tracks", "sequencer", "sync_ann_tracks()", "None",
+  "Brings the annotation tracks and layers in step at once (Qt Shell also does it a few times a second): new "
+  "layers get a track, moved / trimmed / muted / deleted tracks change their layers.",
+  example=VS + "vs.sync_ann_tracks()")
+
 C("sequencer.VideoSequencer.remove_annotation_layer", "sequencer", "remove_annotation_layer(name=None)", "None",
   "Deletes a layer with its drawings (default the active one).", [("name", "str", "Layer name.")],
   example=VS + """n = vs.add_annotation_layer("Scratch")
