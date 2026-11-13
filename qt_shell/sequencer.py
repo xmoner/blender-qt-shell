@@ -2431,12 +2431,20 @@ class VideoSequencer(QtWidgets.QWidget):
         self.sync.activated.connect(self._set_sync)
         py_tag(self.sync, "bpy.context.scene.sync_mode = 'AUDIO_SYNC'   # 'FRAME_DROP', 'NONE'", raw=True)
         h.addWidget(self.sync)
-        self.follow_chk = QtWidgets.QCheckBox("Play the Timeline and 3D view too", bar)
+        # toggle button (was a check box): on = the Timeline / 3D views play along with the sequencer
+        self.follow_chk = QtWidgets.QToolButton(bar)
+        self.follow_chk.setText("Timeline + 3D")
+        self.follow_chk.setCheckable(True)
+        self.follow_chk.setAutoRaise(True)
+        if blicons.has("LINKED"):
+            self.follow_chk.setIcon(blicons.icon("LINKED"))
+            self.follow_chk.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.follow_chk.setChecked(QtCore.QSettings("QtShell", "QtShell").value("sequencer/follow_playback", True)
                                    not in (False, "false"))
-        self.follow_chk.setToolTip("While the Video Sequencer plays, the Timeline's playhead and the 3D views follow "
-                                   "the frame.\nOff: only the sequencer plays – the Timeline and the 3D views stay as "
-                                   "they are until you stop (faster playback, they catch up afterwards).")
+        self.follow_chk.setToolTip("Play the Timeline and 3D view too – on (highlighted): while the Video Sequencer "
+                                   "plays, the Timeline's playhead and the 3D views follow the frame.\n"
+                                   "Off: only the sequencer plays – the Timeline and the 3D views stay as they are "
+                                   "until you stop (faster playback, they catch up afterwards).")
         self.follow_chk.setFocusPolicy(QtCore.Qt.NoFocus)    # Space must stay Play / Stop, not toggle this
         self.follow_chk.toggled.connect(self._set_follow)
         py_tag(self.follow_chk, "follow_chk.setChecked(False)   # vs.follow_on()")
