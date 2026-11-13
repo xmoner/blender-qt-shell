@@ -4452,6 +4452,8 @@ The methods below belong to the object you get with `vs = qt_shell.api.video_seq
 | [`VideoSequencer.preview_range_to_selection`](#videosequencerpreview_range_to_selection) | Sets the preview range to the selected strips. |
 | [`VideoSequencer.view_frame_all`](#videosequencerview_frame_all) | Fits all strips into the strips view. |
 | [`VideoSequencer.play_sound`](#videosequencerplay_sound) | Play / stop: from the preview cache in real time when it is filled, else Blender's own playback with sound. |
+| [`VideoSequencer.set_follow`](#videosequencerset_follow) | Timeline + 3D On / Off (the two toolbar buttons): True – the Timeline's playhead and the 3D views follow the sequencer's playback; False – only the sequencer plays, the Timeline and the 3D views stay frozen until it stops. |
+| [`VideoSequencer.follow_on`](#videosequencerfollow_on) | True when Timeline + 3D On is chosen (the Timeline and the 3D views play along with the sequencer). |
 | [`VideoSequencer.set_blue_pencil`](#videosequencerset_blue_pencil) | Blue Pencil on the Qt Shell preview (switches the preview to Qt Shell's); drawings go to Video Editing layers. |
 | [`VideoSequencer.cache_all`](#videosequencercache_all) | Cache All Frames: renders the play range into the Qt Shell preview's cache (Esc stops). |
 | [`VideoSequencer.export_video`](#videosequencerexport_video) | Exports the edit – rendered by Blender like Render Animation (progress, cancel); the scene's output settings are put back afterwards. |
@@ -5039,6 +5041,45 @@ import bpy, qt_shell
 vs = qt_shell.api.video_sequencer()
 vs.play_sound()          # play
 vs.play_sound()          # stop
+```
+
+#### VideoSequencer.set_follow
+
+**Synopsis:** `VideoSequencer.set_follow(on=True)`  
+**Returns:** None
+
+Timeline + 3D On / Off (the two toolbar buttons): True – the Timeline's playhead and the 3D views follow the sequencer's playback; False – only the sequencer plays, the Timeline and the 3D views stay frozen until it stops.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `on` | bool | True = Timeline + 3D On, False = Timeline + 3D - Off. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+old = vs.follow_on()
+vs.set_follow(False)          # faster playback: Timeline and 3D views frozen
+print(vs.follow_on())         # False
+vs.set_follow(old)
+```
+
+#### VideoSequencer.follow_on
+
+**Synopsis:** `VideoSequencer.follow_on()`  
+**Returns:** bool
+
+True when Timeline + 3D On is chosen (the Timeline and the 3D views play along with the sequencer).
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+vs = qt_shell.api.video_sequencer()
+print(vs.follow_on())
 ```
 
 #### VideoSequencer.set_blue_pencil

@@ -1441,6 +1441,19 @@ C("sequencer.VideoSequencer.play_sound", "sequencer", "play_sound()", "None",
   "Play / stop: from the preview cache in real time when it is filled, else Blender's own playback with sound.",
   example=VS + "vs.play_sound()          # play\nvs.play_sound()          # stop")
 
+C("sequencer.VideoSequencer.set_follow", "sequencer", "set_follow(on=True)", "None",
+  "Timeline + 3D On / Off (the two toolbar buttons): True – the Timeline's playhead and the 3D views follow the "
+  "sequencer's playback; False – only the sequencer plays, the Timeline and the 3D views stay frozen until it stops.",
+  [("on", "bool", "True = Timeline + 3D On, False = Timeline + 3D - Off.")],
+  example=VS + """old = vs.follow_on()
+vs.set_follow(False)          # faster playback: Timeline and 3D views frozen
+print(vs.follow_on())         # False
+vs.set_follow(old)""")
+
+C("sequencer.VideoSequencer.follow_on", "sequencer", "follow_on()", "bool",
+  "True when Timeline + 3D On is chosen (the Timeline and the 3D views play along with the sequencer).",
+  example=VS + "print(vs.follow_on())")
+
 C("sequencer.VideoSequencer.set_blue_pencil", "sequencer", "set_blue_pencil(on)", "None",
   "Blue Pencil on the Qt Shell preview (switches the preview to Qt Shell's); drawings go to Video Editing layers.",
   [("on", "bool", "On / off.")],

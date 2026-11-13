@@ -2431,24 +2431,39 @@ class VideoSequencer(QtWidgets.QWidget):
         self.sync.activated.connect(self._set_sync)
         py_tag(self.sync, "bpy.context.scene.sync_mode = 'AUDIO_SYNC'   # 'FRAME_DROP', 'NONE'", raw=True)
         h.addWidget(self.sync)
-        # toggle button (was a check box): on = the Timeline / 3D views play along with the sequencer
-        self.follow_chk = QtWidgets.QToolButton(bar)
-        self.follow_chk.setText("Timeline + 3D")
-        self.follow_chk.setCheckable(True)
-        self.follow_chk.setAutoRaise(True)
-        if blicons.has("LINKED"):
-            self.follow_chk.setIcon(blicons.icon("LINKED"))
-            self.follow_chk.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.follow_chk.setChecked(QtCore.QSettings("QtShell", "QtShell").value("sequencer/follow_playback", True)
-                                   not in (False, "false"))
-        self.follow_chk.setToolTip("Play the Timeline and 3D view too – on (highlighted): while the Video Sequencer "
-                                   "plays, the Timeline's playhead and the 3D views follow the frame.\n"
-                                   "Off: only the sequencer plays – the Timeline and the 3D views stay as they are "
-                                   "until you stop (faster playback, they catch up afterwards).")
-        self.follow_chk.setFocusPolicy(QtCore.Qt.NoFocus)    # Space must stay Play / Stop, not toggle this
+        # two buttons (one of them is always on): "Timeline + 3D On" – the Timeline / 3D views play along with the
+        # sequencer; "Timeline + 3D - Off" – only the sequencer plays, the Timeline and both 3D views stay frozen
+        on = QtCore.QSettings("QtShell", "QtShell").value("sequencer/follow_playback", True) not in (False, "false")
+
+        def follow_button(text, icon, tip, py):
+            b = QtWidgets.QToolButton(bar)
+            b.setText(text)
+            b.setCheckable(True)
+            b.setAutoRaise(True)
+            if blicons.has(icon):
+                b.setIcon(blicons.icon(icon))
+                b.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+            b.setToolTip(tip)
+            b.setFocusPolicy(QtCore.Qt.NoFocus)    # Space must stay Play / Stop, not toggle this
+            py_tag(b, py)
+            h.addWidget(b)
+            return b
+
+        self.follow_chk = follow_button(
+            "Timeline + 3D On", "LINKED",
+            "Play the Timeline and 3D view too: while the Video Sequencer plays, the Timeline's playhead and the "
+            "3D views (Qt Shell's and Blender's) follow the frame.", "set_follow(True)   # vs.follow_on()")
+        self.follow_off_btn = follow_button(
+            "Timeline + 3D - Off", "UNLINKED",
+            "Only the Video Sequencer plays: the Timeline's playhead and the 3D views (Qt Shell's and Blender's) "
+            "stay frozen until you stop – faster playback, they catch up afterwards.",
+            "set_follow(False)   # vs.follow_on()")
+        self.follow_group = QtWidgets.QButtonGroup(bar)
+        self.follow_group.setExclusive(True)
+        self.follow_group.addButton(self.follow_chk)
+        self.follow_group.addButton(self.follow_off_btn)
+        (self.follow_chk if on else self.follow_off_btn).setChecked(True)
         self.follow_chk.toggled.connect(self._set_follow)
-        py_tag(self.follow_chk, "follow_chk.setChecked(False)   # vs.follow_on()")
-        h.addWidget(self.follow_chk)
         h.addStretch(1)
         self.render_chk = QtWidgets.QCheckBox("Render uses the Sequencer", bar)
         self.render_chk.setToolTip("Render → Render Animation renders the strips (scene.render.use_sequencer)\n"
@@ -3129,6 +3144,10 @@ class VideoSequencer(QtWidgets.QWidget):
     # ---- the Timeline and 3D views during the sequencer's playback ("play along")
     def follow_on(self):
         return self.follow_chk.isChecked()
+
+    def set_follow(self, on=True):
+        """Timeline + 3D On (True) / Off (False) – the same as clicking one of the two buttons."""
+        (self.follow_chk if on else self.follow_off_btn).setChecked(True)
 
     def _set_follow(self, on):
         QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/follow_playback", bool(on))
