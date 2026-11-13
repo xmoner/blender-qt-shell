@@ -1066,6 +1066,29 @@ class SeqView(QtWidgets.QWidget):
         elif s is not None:
             self.ed.props_focus()
 
+    def qtshell_python_at(self, _w, pos):
+        """Python tooltips: the strip / channel switch / ruler frame under the mouse → (tooltip, command)."""
+        from . import pytips
+        pos = QtCore.QPointF(pos)
+        if pos.x() < self.hw():
+            ch = self.ch_of(pos.y())
+            chans = getattr(editor(), "channels", None)
+            if chans is None or ch < 1 or ch >= len(chans):
+                return None
+            base = f"bpy.context.scene.sequence_editor.channels[{ch}]"
+            for i, attr in enumerate(("mute", "lock")):
+                if self._chan_btn(ch, i).contains(pos):
+                    return (f"{'Mute' if attr == 'mute' else 'Lock'} channel {ch}", f"{base}.{attr} = True")
+            return (f"{chans[ch].name} – double-click to rename", f"{base}.name")
+        if pos.y() < theme.px(RULER):
+            f = int(round(self.f_of(pos.x())))
+            return (f"Frame {f}", f"bpy.context.scene.frame_set({f})")
+        s = self.strip_at(pos)
+        if s is None:
+            return None
+        tip = f"{s.name}  ·  {s.type.replace('_', ' ').title()}  ·  {s.frame_final_start}–{s.frame_final_end}"
+        return (tip, pytips.data_path(s))
+
     def _header_click(self, pos):
         ch = self.ch_of(pos.y())
         se = editor(True)
@@ -2006,6 +2029,7 @@ class PreviewPane(QtWidgets.QWidget):
                              "exactly as rendered, playback with sound.\n"
                              "Qt Shell preview: drawn by Qt Shell – shots through their cameras, colour, text and "
                              "image strips, cross fades – with Blue Pencil on the shot camera.")
+        py_tag(self.mode, "pane.set_mode('qt')   # 'blender'")
         hl.addWidget(self.mode)
         self.bp_btn = QtWidgets.QToolButton(head)
         self.bp_btn.setCheckable(True)
@@ -2022,6 +2046,7 @@ class PreviewPane(QtWidgets.QWidget):
                                 "go to the 3D view's layers of the shot camera, so you see them in the 3D view "
                                 "through that camera and in renders. Hold for the drawing tools.")
         self.bp_btn.toggled.connect(lambda on: self.ed.set_blue_pencil(on))
+        py_tag(self.bp_btn, "set_blue_pencil(True)")
         hl.addWidget(self.bp_btn)
         qs = QtCore.QSettings("QtShell", "QtShell")
         self.clear_btn = QtWidgets.QToolButton(head)
@@ -2031,6 +2056,7 @@ class PreviewPane(QtWidgets.QWidget):
         self.clear_btn.setToolTip("Transparent – the video fades (slider) or disappears, so the Blue Pencil drawings "
                                   "stand alone on a transparent sheet (Qt Shell preview)")
         self.clear_btn.setChecked(qs.value("sequencer/transparent", False) in (True, "true"))
+        py_tag(self.clear_btn, "pane.clear_btn.setChecked(True)   # vs.pane.transparent_on()")
         hl.addWidget(self.clear_btn)
         self.op_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal, head)
         self.op_slider.setRange(0, 100)
@@ -2040,6 +2066,7 @@ class PreviewPane(QtWidgets.QWidget):
         except (TypeError, ValueError):
             self.op_slider.setValue(25)
         self.op_slider.setToolTip("Video opacity while Transparent is on (0 % = only the drawings)")
+        py_tag(self.op_slider, "pane.op_slider.setValue(25)   # per cent")
         hl.addWidget(self.op_slider)
         self.op_label = QtWidgets.QLabel(head)
         self.op_label.setMinimumWidth(theme.px(30))
@@ -2056,10 +2083,11 @@ class PreviewPane(QtWidgets.QWidget):
                                   "strips. Any change to the strips (or to the scene, when shots are in the edit) "
                                   "drops the cache. Hold for Cache All Frames / Flush.")
         cmenu = QtWidgets.QMenu(self.cache_btn)
-        cmenu.addAction("Cache All Frames", lambda: self.ed.cache_all())
-        cmenu.addAction("Flush Cache", lambda: self.qt.flush())
+        py_tag(cmenu.addAction("Cache All Frames", lambda: self.ed.cache_all()), "cache_all()")
+        py_tag(cmenu.addAction("Flush Cache", lambda: self.qt.flush()), "qtprev.flush()")
         cmenu.addSeparator()
         busy = cmenu.addAction("Keep Caching While the Mouse Moves")
+        py_tag(busy, "import qt_shell.playcache as pc; pc.set_while_moving(True)", raw=True)
         busy.setCheckable(True)
         busy.setToolTip("Auto caching goes on while you move the mouse or type – also in Qt Preferences → Viewport")
         from . import playcache
@@ -2072,6 +2100,7 @@ class PreviewPane(QtWidgets.QWidget):
         busy.toggled.connect(playcache.set_while_moving)
         self.cache_btn.setMenu(cmenu)
         self.cache_btn.toggled.connect(self._cache_toggled)
+        py_tag(self.cache_btn, "pane.cache_btn.setChecked(True)   # vs.cache_all(), vs.qtprev.flush()")
         hl.addWidget(self.cache_btn)
         self.auto_btn = QtWidgets.QToolButton(head)
         self.auto_btn.setText("Auto")
@@ -2081,6 +2110,7 @@ class PreviewPane(QtWidgets.QWidget):
                                  "of the play range are cached for the Qt Shell preview – your current frame "
                                  "doesn't change.")
         self.auto_btn.toggled.connect(self._auto_toggled)
+        py_tag(self.auto_btn, "pane.auto_btn.setChecked(True)")
         hl.addWidget(self.auto_btn)
         hl.addStretch(1)
         self.fps_label = QtWidgets.QLabel(head)
@@ -2093,6 +2123,7 @@ class PreviewPane(QtWidgets.QWidget):
         self.fps_btn.setToolTip("Show the playback speed (frames per second / the scene's fps) while playing – "
                                 "red when slower than 90 % of the target. Both previews.")
         self.fps_btn.toggled.connect(self._fps_toggled)
+        py_tag(self.fps_btn, "pane.fps_btn.setChecked(True)   # vs.qtprev.fps_now()")
         hl.addWidget(self.fps_btn)
         self._fps_timer = QtCore.QTimer(self)
         self._fps_timer.setInterval(250)
@@ -2191,6 +2222,23 @@ class PreviewPane(QtWidgets.QWidget):
                 f.setBold(True)
                 a.setFont(f)
             a.triggered.connect(lambda _c=False, t=tid: (bluepencil.set_variant(t), self.ed.set_blue_pencil(True)))
+            py_tag(a, f"import qt_shell, qt_shell.bluepencil as bp; bp.set_variant({tid!r}); "
+                      "qt_shell.api.video_sequencer().set_blue_pencil(True)", raw=True)
+
+
+# ---------------------------------------------------------------- Python tooltips
+VS_PY = "import qt_shell; vs = qt_shell.api.video_sequencer(); "
+
+
+def py_tag(obj, code, raw=False):
+    """Python tooltip / Shift + middle click command of a sequencer button or menu item: `vs.<code>`
+    (raw=True: code as it is, e.g. a bpy property)."""
+    try:
+        from . import pytips
+        pytips.tag(obj, code if raw else VS_PY + "vs." + code)
+    except Exception:
+        pass
+    return obj
 
 
 # ---------------------------------------------------------------- the dock widget
@@ -2282,11 +2330,7 @@ class VideoSequencer(QtWidgets.QWidget):
             else:
                 b.clicked.connect(lambda _=False: fn())
             if py:
-                try:
-                    from . import pytips
-                    pytips.tag(b, py)
-                except Exception:
-                    pass
+                py_tag(b, py, raw=py.startswith("bpy."))
             h.addWidget(b)
             return b
 
@@ -2301,36 +2345,46 @@ class VideoSequencer(QtWidgets.QWidget):
         self.add_menu.aboutToShow.connect(lambda: self._fill_add_menu(self.add_menu))
         add.setMenu(self.add_menu)
         add.setToolTip("Add a strip at the current frame")
+        py_tag(add, 'add_files(["C:/clips/a.mp4"])   # add_camera_shot(camera), add_text(), add_color() …')
         h.addWidget(add)
-        self.up_btn = btn("Up", "Close the open meta strip and go back up", self.exit_meta, "FILE_PARENT")
+        self.up_btn = btn("Up", "Close the open meta strip and go back up", self.exit_meta, "FILE_PARENT",
+                          py="exit_meta()")
         self.up_btn.hide()
         self.path_lab = QtWidgets.QLabel("", bar)
         self.path_lab.setStyleSheet("color:#c9a3ff;")
         h.addWidget(self.path_lab)
         self._sep(h, bar)
-        btn("", "Cut the strips at the current frame ({seq.cut})", lambda: self.run_action("seq.cut"), "ALIGN_CENTER", py="qt_shell.api.video_sequencer().cut()")
-        btn("", "Duplicate ({seq.duplicate})", lambda: self.run_action("seq.duplicate"), "DUPLICATE")
+        btn("", "Cut the strips at the current frame ({seq.cut})", lambda: self.run_action("seq.cut"), "ALIGN_CENTER",
+            py="cut()   # cut(48): at frame 48")
+        btn("", "Duplicate ({seq.duplicate})", lambda: self.run_action("seq.duplicate"), "DUPLICATE",
+            py="duplicate()")
         btn("", "Delete ({seq.delete}) – Ripple Delete closes the gap ({seq.ripple_delete})",
-            lambda: self.run_action("seq.delete"), "TRASH")
-        btn("", "Mute / unmute ({seq.mute} / {seq.unmute})", lambda: self.toggle("mute"), "HIDE_OFF")
-        btn("", "Lock / unlock ({seq.lock} / {seq.unlock})", lambda: self.toggle("lock"), "LOCKED")
+            lambda: self.run_action("seq.delete"), "TRASH", py="delete()   # delete(ripple=True)")
+        btn("", "Mute / unmute ({seq.mute} / {seq.unmute})", lambda: self.toggle("mute"), "HIDE_OFF",
+            py='toggle("mute")   # set_flag("mute", True)')
+        btn("", "Lock / unlock ({seq.lock} / {seq.unlock})", lambda: self.toggle("lock"), "LOCKED",
+            py='toggle("lock")   # set_flag("lock", True)')
         btn("", "Make a meta strip of the selection ({seq.meta}); Separate ({seq.unmeta})",
-            lambda: self.run_action("seq.meta"), "SEQ_STRIP_META")
+            lambda: self.run_action("seq.meta"), "SEQ_STRIP_META", py="make_meta()   # separate_meta()")
         self._sep(h, bar)
         self.snap_btn = btn("", "Snap to strip ends and the current frame ({seq.snap}; Ctrl while dragging inverts)",
-                            self._set_snap, "SNAP_ON", check=True)
+                            self._set_snap, "SNAP_ON", check=True, py="snap_btn.setChecked(True)")
         self.snap_btn.setChecked(self.snap_on)
-        btn("", "Frame All ({seq.frame_all}) – Frame Selected ({seq.frame_selected})", self.view_frame_all, "FULLSCREEN_ENTER")
-        self.sec_btn = btn("s", "Show seconds instead of frames", self._set_seconds, check=True)
+        btn("", "Frame All ({seq.frame_all}) – Frame Selected ({seq.frame_selected})", self.view_frame_all, "FULLSCREEN_ENTER",
+            py="view_frame_all()   # view.frame_all(selected=True)")
+        self.sec_btn = btn("s", "Show seconds instead of frames", self._set_seconds, check=True,
+                           py="sec_btn.setChecked(True)")
         self.sec_btn.setChecked(self.show_seconds)
         self._sep(h, bar)
         self.play_btn = btn("Play", "Play with sound – Blender's own playback in the preview ({seq.play})",
-                            self.play_sound, "PLAY_SOUND" if blicons.has("PLAY_SOUND") else "PLAY")
+                            self.play_sound, "PLAY_SOUND" if blicons.has("PLAY_SOUND") else "PLAY",
+                            py="play_sound()   # play / stop")
         self.sync = QtWidgets.QComboBox(bar)
         for key, label in (("AUDIO_SYNC", "Sync to Audio"), ("FRAME_DROP", "Frame Dropping"), ("NONE", "Play Every Frame")):
             self.sync.addItem(label, key)
         self.sync.setToolTip("Playback sync (Blender's scene.sync_mode): Sync to Audio keeps picture and sound together")
         self.sync.activated.connect(self._set_sync)
+        py_tag(self.sync, "bpy.context.scene.sync_mode = 'AUDIO_SYNC'   # 'FRAME_DROP', 'NONE'", raw=True)
         h.addWidget(self.sync)
         self.follow_chk = QtWidgets.QCheckBox("Play the Timeline and 3D view too", bar)
         self.follow_chk.setChecked(QtCore.QSettings("QtShell", "QtShell").value("sequencer/follow_playback", True)
@@ -2340,19 +2394,21 @@ class VideoSequencer(QtWidgets.QWidget):
                                    "they are until you stop (faster playback, they catch up afterwards).")
         self.follow_chk.setFocusPolicy(QtCore.Qt.NoFocus)    # Space must stay Play / Stop, not toggle this
         self.follow_chk.toggled.connect(self._set_follow)
+        py_tag(self.follow_chk, "follow_chk.setChecked(False)   # vs.follow_on()")
         h.addWidget(self.follow_chk)
         h.addStretch(1)
         self.render_chk = QtWidgets.QCheckBox("Render uses the Sequencer", bar)
         self.render_chk.setToolTip("Render → Render Animation renders the strips (scene.render.use_sequencer)\n"
                                    "– off: the 3D scene is rendered, the strips are ignored")
         self.render_chk.toggled.connect(self._set_use_seq)
+        py_tag(self.render_chk, "bpy.context.scene.render.use_sequencer = True", raw=True)
         h.addWidget(self.render_chk)
-        btn("", "Scene range = all strips", self.range_to_strips, "TIME")
+        btn("", "Scene range = all strips", self.range_to_strips, "TIME", py="range_to_strips()")
         self._sep(h, bar)
         self.preview_btn = btn("Preview", "Show / hide the preview", lambda on: self._show_part(0, on), "SEQ_PREVIEW",
-                               check=True)
+                               check=True, py="preview_btn.setChecked(True)")
         self.props_btn = btn("Properties", "Show / hide the strip properties", lambda on: self._show_part(2, on),
-                             "PROPERTIES", check=True)
+                             "PROPERTIES", check=True, py="props_btn.setChecked(True)")
         return bar
 
     @staticmethod
@@ -3259,16 +3315,21 @@ class VideoSequencer(QtWidgets.QWidget):
         from . import blicons
         m.clear()
 
-        def act(menu, text, fn, icon=None):
+        def act(menu, text, fn, icon=None, py=None):
             a = menu.addAction(text)
             if icon and blicons.has(icon):
                 a.setIcon(blicons.icon(icon))
             a.triggered.connect(lambda _=False: self._guard(fn))
+            if py:
+                py_tag(a, py)
             return a
 
-        act(m, "Movie…", self.add_movie_dialog, "FILE_MOVIE")
-        act(m, "Image / Sequence…", self.add_image_dialog, "FILE_IMAGE")
-        act(m, "Sound…", self.add_sound_dialog, "FILE_SOUND")
+        m.setToolTipsVisible(True)
+        act(m, "Movie…", self.add_movie_dialog, "FILE_MOVIE",
+            'add_movie("C:/clips/a.mp4")   # frame=1, channel=1, with_sound=True')
+        act(m, "Image / Sequence…", self.add_image_dialog, "FILE_IMAGE",
+            'add_images(["C:/img/a_0001.png", "C:/img/a_0002.png"])')
+        act(m, "Sound…", self.add_sound_dialog, "FILE_SOUND", 'add_sound("C:/music/song.wav")')
         m.addSeparator()
         cams = [o for o in bpy.context.scene.objects if o.type == "CAMERA"]
         sm = m.addMenu("Camera Shot (Maya)")
@@ -3279,22 +3340,25 @@ class VideoSequencer(QtWidgets.QWidget):
             sm.addAction("No cameras in the scene").setEnabled(False)
         for cam in sorted(cams, key=lambda o: (o != bpy.context.scene.camera, o.name)):
             a = act(sm, cam.name + ("  (scene camera)" if cam == bpy.context.scene.camera else ""),
-                    lambda c=cam: self.add_camera_shot(c), "OUTLINER_OB_CAMERA")
+                    lambda c=cam: self.add_camera_shot(c), "OUTLINER_OB_CAMERA",
+                    f'add_camera_shot(bpy.data.objects["{cam.name}"])')
             a.setToolTip("A shot of this scene seen through the camera, after the last shot – like a shot in "
                          "Maya's Camera Sequencer.\nLength: the preview range if set, else the scene range.")
         scm = m.addMenu("Scene")
         if blicons.has("SCENE_DATA"):
             scm.setIcon(blicons.icon("SCENE_DATA"))
         for scn in bpy.data.scenes:
-            act(scm, scn.name, lambda s=scn: self.add_scene(s), "SCENE_DATA")
+            act(scm, scn.name, lambda s=scn: self.add_scene(s), "SCENE_DATA",
+                f'add_scene(bpy.data.scenes["{scn.name}"])')
         m.addSeparator()
-        act(m, "Text", self.add_text, "FONT_DATA")
-        act(m, "Color", self.add_color, "COLOR")
-        act(m, "Adjustment Layer", self.add_adjustment, "COLOR")
+        act(m, "Text", self.add_text, "FONT_DATA", "add_text()")
+        act(m, "Color", self.add_color, "COLOR", "add_color()")
+        act(m, "Adjustment Layer", self.add_adjustment, "COLOR", "add_adjustment()")
         tm = m.addMenu("Transition (2 selected strips)")
         sel = self.selected()
         for key, label in TRANSITIONS:
-            a = act(tm, label, lambda k=key: self.add_transition(k), "NODE_COMPOSITING")
+            a = act(tm, label, lambda k=key: self.add_transition(k), "NODE_COMPOSITING",
+                    f"add_transition({key!r})")
             a.setEnabled(len(sel) == 2)
 
     def _guard(self, fn):
@@ -3525,16 +3589,24 @@ class VideoSequencer(QtWidgets.QWidget):
 
     # ---- right-click menu
     def context_menu(self, gpos, frame, channel):
+        m = self.build_context_menu()
+        m.exec(gpos)
+        m.deleteLater()
+
+    def build_context_menu(self):
         from . import blicons, keymap
         m = QtWidgets.QMenu(self)
+        m.setToolTipsVisible(True)
         sel = self.selected()
 
-        def act(text, fn, icon=None, enabled=True):
+        def act(text, fn, icon=None, enabled=True, py=None):
             a = m.addAction(keymap.render(text))
             if icon and blicons.has(icon):
                 a.setIcon(blicons.icon(icon))
             a.setEnabled(enabled)
             a.triggered.connect(lambda _=False: self._guard(fn))
+            if py:
+                py_tag(a, py)
             return a
 
         add = m.addMenu("Add")
@@ -3542,13 +3614,14 @@ class VideoSequencer(QtWidgets.QWidget):
             add.setIcon(blicons.icon("ADD"))
         self._fill_add_menu(add)
         m.addSeparator()
-        act("Cut at the Current Frame\t{seq.cut}", self.cut, "ALIGN_CENTER")
-        act("Duplicate\t{seq.duplicate}", self.duplicate, "DUPLICATE", bool(sel))
-        act("Delete\t{seq.delete}", self.delete, "TRASH", bool(sel))
-        act("Ripple Delete (close the gap)\t{seq.ripple_delete}", lambda: self.delete(ripple=True), "TRASH", bool(sel))
+        act("Cut at the Current Frame\t{seq.cut}", self.cut, "ALIGN_CENTER", py="cut()")
+        act("Duplicate\t{seq.duplicate}", self.duplicate, "DUPLICATE", bool(sel), py="duplicate()")
+        act("Delete\t{seq.delete}", self.delete, "TRASH", bool(sel), py="delete()")
+        act("Ripple Delete (close the gap)\t{seq.ripple_delete}", lambda: self.delete(ripple=True), "TRASH", bool(sel),
+            py="delete(ripple=True)")
         m.addSeparator()
-        act("Mute / Unmute\t{seq.mute}", lambda: self.toggle("mute"), "HIDE_OFF", bool(sel))
-        act("Lock / Unlock\t{seq.lock}", lambda: self.toggle("lock"), "LOCKED", bool(sel))
+        act("Mute / Unmute\t{seq.mute}", lambda: self.toggle("mute"), "HIDE_OFF", bool(sel), py='toggle("mute")')
+        act("Lock / Unlock\t{seq.lock}", lambda: self.toggle("lock"), "LOCKED", bool(sel), py='toggle("lock")')
         tm = m.addMenu("Color Tag")
         for key, label in TAG_NAMES.items():
             a = tm.addAction(label)
@@ -3557,22 +3630,25 @@ class VideoSequencer(QtWidgets.QWidget):
                 pm.fill(QtGui.QColor(TAG_COLORS[key]))
                 a.setIcon(QtGui.QIcon(pm))
             a.triggered.connect(lambda _=False, k=key: self._guard(lambda: self.set_tag(k)))
+            py_tag(a, f"set_tag({key!r})")
             a.setEnabled(bool(sel))
         m.addSeparator()
-        act("Make Meta Strip\t{seq.meta}", self.make_meta, "SEQ_STRIP_META", bool(sel))
+        act("Make Meta Strip\t{seq.meta}", self.make_meta, "SEQ_STRIP_META", bool(sel), py="make_meta()")
         act("Separate Meta Strip\t{seq.unmeta}", self.separate_meta, "SEQ_STRIP_META",
-            any(s.type == "META" for s in sel))
+            any(s.type == "META" for s in sel), py="separate_meta()")
         if sel and sel[-1].type == "META":
-            act("Open Meta Strip (double-click)", lambda: self.enter_meta(sel[-1]), "SEQ_STRIP_META")
+            act("Open Meta Strip (double-click)", lambda: self.enter_meta(sel[-1]), "SEQ_STRIP_META",
+                py="enter_meta(vs.selected()[-1])")
         if self.meta_path:
-            act("Close Meta Strip (Up)", self.exit_meta, "FILE_PARENT")
+            act("Close Meta Strip (Up)", self.exit_meta, "FILE_PARENT", py="exit_meta()")
         m.addSeparator()
-        act("Set Preview Range to Selection", self.preview_range_to_selection, "PREVIEW_RANGE", bool(sel))
-        act("Scene Range = All Strips", self.range_to_strips, "TIME")
-        act("Frame All\t{seq.frame_all}", self.view_frame_all, "FULLSCREEN_ENTER")
+        act("Set Preview Range to Selection", self.preview_range_to_selection, "PREVIEW_RANGE", bool(sel),
+            py="preview_range_to_selection()")
+        act("Scene Range = All Strips", self.range_to_strips, "TIME", py="range_to_strips()")
+        act("Frame All\t{seq.frame_all}", self.view_frame_all, "FULLSCREEN_ENTER", py="view_frame_all()")
         act("Frame Selected\t{seq.frame_selected}", lambda: self.view.frame_all(selected=True), "ZOOM_SELECTED",
-            bool(sel))
-        m.exec(gpos)
+            bool(sel), py="view.frame_all(selected=True)")
+        return m
 
     def set_tag(self, key):
         for s in self.selected():
