@@ -17,6 +17,7 @@ Don't dig through old chat history.
   give `Tag: vX.Y.Z` + `Title: Qt Shell X.Y.Z – <short name>` in one code block and the body
   (Markdown, English: `## New` / `## Fixes` / `## Improvements`, then `## Install`) in a second one.
   Install section: *Download `qt_shell.zip`, then in Blender 5.2: Edit → Preferences → Add-ons → Install from Disk.*
+  **Always** – also when a version could not be tested yet (say so in the reply, not by leaving the release text out; the owner reminded on 2026-11-13).
 - **Every time a task is finished, also give the Czech reply as a `.txt` file to save**: the summary text of the
   final reply to the owner (what's new / what was wrong, how it works, what was tested, what wasn't, restart note –
   in Czech, as written in the chat, **without** the release-text code blocks); file name
