@@ -20,7 +20,8 @@ Don't dig through old chat history.
 - **Every time a task is finished, also give the Czech reply as a `.txt` file to save**: the summary text of the
   final reply to the owner (what's new / what was wrong, how it works, what was tested, what wasn't, restart note –
   in Czech, as written in the chat, **without** the release-text code blocks); file name
-  `Qt Shell - <title> - <version>.txt` (e.g. `Qt Shell - Video Sequencer Qt preview and Blue Pencil - 0.103.0.txt`),
+  `Qt Shell - <version> - <title>.txt` – **version first, then the title** (e.g.
+  `Qt Shell - 0.108.3 - Video Sequencer Python tooltips.txt`; order changed by the owner on 2026-11-13),
   UTF-8; write it to `/mnt/user-data/outputs/release_notes/` and send it with `SendUserFile`
   (the owner asked for this on 2026-11-12 – don't make him repeat it).
 - After an update tell the owner to **restart Blender** (Install from Disk over a running Qt Shell keeps the
@@ -46,7 +47,7 @@ Don't dig through old chat history.
      `Projects project_write` (`path: docs/DEVELOPMENT.md`, `local_path: …`).
 6. Commit + `git push origin main`. Commit message ends with the two attribution lines the session gives
    (`Co-Authored-By: …` and `Claude-Session: …`).
-7. Reply text file: `Qt Shell - <title> - <version>.txt` = the Czech summary of the reply (no release blocks) → `SendUserFile` (see Owner's preferences).
+7. Reply text file: `Qt Shell - <version> - <title>.txt` (version before the title) = the Czech summary of the reply (no release blocks) → `SendUserFile` (see Owner's preferences).
 8. Zip: `rm -f /mnt/user-data/outputs/qt_shell.zip && zip -qr /mnt/user-data/outputs/qt_shell.zip qt_shell -x '*__pycache__*'`,
    send it with `SendUserFile`.
 9. Reply in Czech: what was wrong / what's new, what was tested, what wasn't; then the release text.
