@@ -1696,6 +1696,8 @@ class QtPreview(QtWidgets.QWidget):
             return None
         r = sc.render
         w, _h = self.out_size()
+        if not strips_at(sc.frame_current):      # nothing to show (before / after the strips, a gap, only
+            return self._empty_frame()           # sound): Blender renders no picture there – black, like its preview
         if not self.ed.cache_on() and (getattr(self.ed.hub, "playing", False) or blender_playing()):
             w = min(w, 640)                      # lighter frames while playing (the cache keeps full ones)
         pct = max(1, min(100, int(math.ceil(w * 100.0 / max(1, r.resolution_x)))))
@@ -1731,7 +1733,12 @@ class QtPreview(QtWidgets.QWidget):
             out = bpy.data.images.get("Render Result")
             if rr is None and out is not None:      # the first one: put ours in its own slot next time
                 rr = out
-            image_editor.save_blender_image(out, path, "PNG", depth="8", fast=True)
+            try:
+                image_editor.save_blender_image(out, path, "PNG", depth="8", fast=True)
+            except RuntimeError as ex:       # "Render Result could not be saved": Blender made no picture
+                if "could not be saved" not in str(ex):
+                    raise
+                return self._empty_frame()
         finally:
             if rr is not None and keep_slot is not None:
                 try:
@@ -1740,6 +1747,13 @@ class QtPreview(QtWidgets.QWidget):
                     pass
         img = QtGui.QImage(path)
         return None if img.isNull() else img.convertToFormat(QtGui.QImage.Format_ARGB32_Premultiplied)
+
+    def _empty_frame(self):
+        """A black frame at the output size (frames where Blender's sequencer has no picture)."""
+        w, h = self.out_size()
+        img = QtGui.QImage(max(1, w), max(1, h), QtGui.QImage.Format_ARGB32_Premultiplied)
+        img.fill(QtGui.QColor(0, 0, 0))
+        return img
 
     def compose(self, f, size=None):
         """The edit at frame f as a QImage (size: (w, h), default fits the widget)."""
@@ -2599,7 +2613,7 @@ class VideoSequencer(QtWidgets.QWidget):
             self._set_solo(False)
         if not blender_playing():
             self._bl_play = False
-        elif not self._bl_play and self._preview_hovered():
+        elif not self._bl_play and (self._preview_hovered() or self._preview_screen_playing()):
             self._bl_play = True                 # Space in Blender's preview: it plays there
         if self._bl_play and not self.follow_on():
             self._set_solo(True)
@@ -3179,6 +3193,11 @@ class VideoSequencer(QtWidgets.QWidget):
         else:
             self.hub.seq_solo_frame = None
         self.hub.seq_solo = on
+        try:                                     # Blender's own 3D views redraw every frame of Blender's
+            from . import sculptview             # playback whatever the screen's redraw flags say: the Qt
+            sculptview._set_reason("seqsolo", on)  # view (frozen) is shown instead until the sequencer stops
+        except Exception:
+            bridge.log(f"Video Sequencer: freezing Blender's 3D view:\n{traceback.format_exc()}", "WARNING")
         if not on:                               # catch up with where the playback is now
             try:
                 self.hub.frame_changed.emit(bpy.context.scene.frame_current)
@@ -3198,9 +3217,17 @@ class VideoSequencer(QtWidgets.QWidget):
         must not take it over (sculptview hands Blender's playback in its 3D views to the Timeline)."""
         if not blender_playing():
             return False
-        if not self._bl_play and self._preview_hovered():
+        if not self._bl_play and (self._preview_hovered() or self._preview_screen_playing()):
             self._bl_play = True
         return self._bl_play
+
+    def _preview_screen_playing(self):
+        """Blender's playback was started in the sequencer's preview window (Space there)."""
+        try:
+            return any(w.screen is not None and w.screen.is_animation_playing and w.screen.get(TAG)
+                       for w in bpy.context.window_manager.windows)
+        except Exception:
+            return False
 
     def _redraw_flags(self, screen):
         """Which editors Blender's playback redraws (set on the screen it starts in): the 3D views only when
@@ -3365,6 +3392,10 @@ class VideoSequencer(QtWidgets.QWidget):
         except Exception:
             pass
         w, a = (host.bl_window(), host.area()) if host is not None else (None, None)
+        if not self.follow_on():
+            # frozen before Blender's playback starts: Blender's embedded 3D view is put away first, so the
+            # playback isn't started in its region (Blender redraws the region it starts in on every frame)
+            self._set_solo(True)
         try:
             self._bl_play = True                 # before: sculptview's watcher must leave it alone
             if w is not None and a is not None:
@@ -3377,6 +3408,7 @@ class VideoSequencer(QtWidgets.QWidget):
                     bpy.ops.screen.animation_play()
         except Exception as ex:
             self._bl_play = False
+            self._set_solo(False)
             bridge.log(f"Video Sequencer: playback with sound failed ({ex}) – the Timeline plays", "WARNING")
             try:
                 from . import app

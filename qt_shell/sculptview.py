@@ -43,7 +43,8 @@ signals = _Signals()
 _views = {}             # Qt view → NativeView embedded in it (one per visible view of a split layout)
 _timer = None
 _watch = None           # checks for Blender's own playback started in the embedded view, follows the active view
-_reasons = set()        # why Blender's views are hidden for a while (the Qt views shown): "playback", "bluepencil"
+_reasons = set()        # why Blender's views are hidden for a while (the Qt views shown): "playback", "bluepencil",
+#                         "seqsolo" (the Video Sequencer plays with Timeline + 3D - Off: views frozen)
 _bp_handle = None       # draw handler showing Blue Pencil drawings in Blender's view
 _bp_tex = {}            # space pointer → (key, GPUTexture) of the drawings last drawn there
 _bp_version = 0         # bumped when drawings / Blue Pencil settings change
@@ -147,18 +148,19 @@ def _set_reason(name, on):
     after = bool(_reasons)
     if before == after:
         return
+    focus = name != "seqsolo"     # the Video Sequencer keeps the keyboard (Space stops its playback)
     for v in _all():
         if v.stale:
             continue
         try:
             if after:
-                v.suspend()
+                v.suspend(focus=focus)
             else:
                 v.resume()
         except Exception as ex:
             bridge.log(f"Blender's viewport: switching to the Qt view failed ({ex})", "WARNING")
     bridge.preferred_view3d = None if after else _preferred
-    if after:
+    if after and focus:
         _focus_qt()
     _timeline_update()
 
@@ -986,7 +988,7 @@ class NativeView:
                 rv.view_perspective = "CAMERA"
 
     # ---- cached playback: the Qt view for a while
-    def suspend(self):
+    def suspend(self, focus=True):
         self._back()                             # camera + shading → the Qt view
         bridge.preferred_view3d = None
         try:
@@ -994,13 +996,14 @@ class NativeView:
         except Exception:
             pass
         vp = self.vp
-        try:
-            vp.setFocus()                        # Space stops playback in Qt now
-            if sys.platform == "win32":
-                import ctypes
-                ctypes.windll.user32.SetFocus(int(vp.window().winId()))
-        except Exception:
-            pass
+        if focus:
+            try:
+                vp.setFocus()                    # Space stops playback in Qt now
+                if sys.platform == "win32":
+                    import ctypes
+                    ctypes.windll.user32.SetFocus(int(vp.window().winId()))
+            except Exception:
+                pass
         vp.request_redraw()
 
     def resume(self):
