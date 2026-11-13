@@ -686,21 +686,25 @@ No `unregister()` is needed here – Unload removes what `register()` added.
 
 ## 14. Version history
 
+Oldest first. `qt_shell.api.API_VERSION` is the last row.
+
 | API | Qt Shell | Changes |
 |---|---|---|
-| 1.14 | 0.109.0 | Video Sequencer `export_video(path, fmt, start, end, quality, scale, audio)`, `last_export`; `qt_shell.seq_export.formats()`. |
-| 1.13 | 0.102.0 | `video_sequencer()` – the Video Sequencer: add movies / sounds / images / scenes / camera shots / text / colour / adjustment / transitions, cut, delete (ripple), duplicate, move, trim, meta strips, play with sound. |
+| 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
+| 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
 | 1.2 | 0.9.0 – 0.9.1 | `set_viewport_layout()`, `viewport_layout()`, `viewports()`; overlays drawn in every view. 0.9.1: `status_history()`, status messages also in the Console. |
 | 1.3 | 0.31.1 | `outliner()` – the Outliner from a script (modes, search, options, columns, collections, parenting, visibility). |
 | 1.4 | 0.33.0 | `render_view()` – the Render View window (slots, channels, zoom, save, clipboard). |
 | 1.5 | 0.34.0 | `set_tool()`, `active_tool()`, `TOOLS` – the 3D viewport's toolbar tools (incl. Annotate, Measure, Add); Render View: `set_tool()`, annotations (`add_annotation`, `annotations`, `clear_annotations`, `undo_annotation`, `set_annotation_style`), `set_overlays`, `set_gizmos`, `set_toolbar`. |
-| 1.10 | 0.68.0 | Render View `set_tool("BLUE_PENCIL", variant)`, `picture()`, `has_drawings()`; Animation Player `set_blue_pencil()`; `bluepencil.ImageBPTools`, `bluepencil.set_variant()`, `bluepencil.paint_layers()`. |
-| 1.9 | 0.64.0 | `image_editor()` – the Image editor: sources (compositor Viewer, render result, rendered animation, images), live compositor updates, channels, zoom, frames / playback, export image / animation (MP4, image sequences). |
-| 1.8 | 0.58.0 | `run_op(idname, invoke=False, **props)` – a Blender operator run like Qt Shell's menus (3D view context, Qt-handled operators, undo). |
-| 1.7 | 0.53.1 | `uv_editor()` – the UV editor: component mode, Blender UV operators in a UV editor context, projections, unwrap / layout, move / rotate / flip / align / normalize, texel density, display toggles, image. |
 | 1.6 | 0.36.0 | `timeline()` – the Timeline: view range / zoom, play / stop / step, loop mode, preview range, frame rate, seconds, key selection / moving, markers. |
-| 1.1 | 0.8.0 | `owner()`, `current_owner()`, `owned()`, `cleanup()`; `"script"` event; registrations survive opening another .blend; script manager (`qt_shell.scripts`). |
-| 1.0 | 0.6.0 | First version: docks, menu actions, status, view control, overlays, events. |
+| 1.7 | 0.53.1 | `uv_editor()` – the UV editor: component mode, Blender UV operators in a UV editor context, projections, unwrap / layout, move / rotate / flip / align / normalize, texel density, display toggles, image. |
+| 1.8 | 0.58.0 | `run_op(idname, invoke=False, **props)` – a Blender operator run like Qt Shell's menus (3D view context, Qt-handled operators, undo). |
+| 1.9 | 0.64.0 | `image_editor()` – the Image editor: sources (compositor Viewer, render result, rendered animation, images), live compositor updates, channels, zoom, frames / playback, export image / animation (MP4, image sequences). |
+| 1.10 | 0.68.0 | Render View `set_tool("BLUE_PENCIL", variant)`, `picture()`, `has_drawings()`; Animation Player `set_blue_pencil()`; `bluepencil.ImageBPTools`, `bluepencil.set_variant()`, `bluepencil.paint_layers()`. |
+| 1.11 | 0.71.0 | Animation Player `export_animation(path, kind, start, end, blue_pencil)` – Save Animation clean or with Blue Pencil burnt in; `bluepencil.has_drawings()`, `bluepencil.paint_layers(…, always=True)`. |
+| 1.12 | 0.72.0 | `check_for_updates()` (Help → Check for Qt Shell Updates… dialog), `latest_release()` – the newest GitHub release. |
+| 1.13 | 0.102.0 | `video_sequencer()` – the Video Sequencer: add movies / sounds / images / scenes / camera shots / text / colour / adjustment / transitions, cut, delete (ripple), duplicate, move, trim, meta strips, play with sound. |
+| 1.14 | 0.109.0 | Video Sequencer `export_video(path, fmt, start, end, quality, scale, audio)`, `last_export`; `qt_shell.seq_export.formats()`. |
 
 Check the version in your code:
 

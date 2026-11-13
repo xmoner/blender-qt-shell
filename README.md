@@ -91,7 +91,7 @@ Most add-ons need nothing special: Qt Shell runs Blender's own UI code, so these
 - **menu entries** appended to Blender menus (`bpy.types.VIEW3D_MT_add.append(...)`, `TOPBAR_MT_file`, …),
 - **operators** (menus, F3 search, panel buttons).
 
-For things that only exist in Qt Shell, use the API (`API_VERSION = (1, 7)`):
+For things that only exist in Qt Shell, use the API (`API_VERSION = (1, 14)`):
 
 ```python
 import qt_shell.api as qs
