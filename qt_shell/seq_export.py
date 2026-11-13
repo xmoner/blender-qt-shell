@@ -258,6 +258,15 @@ class file_settled:
 
 
 # ---------------------------------------------------------------- dialog
+def annotation_layers_exist():
+    try:
+        from . import sequencer
+        an = sequencer.video_annotation()
+        return an is not None and len(an.layers) > 0
+    except Exception:
+        return False
+
+
 class ExportDialog(QtWidgets.QDialog):
     """Format, quality, size, frames, sound and file of a Video Sequencer export."""
 
@@ -316,6 +325,12 @@ class ExportDialog(QtWidgets.QDialog):
         self.audio = QtWidgets.QCheckBox("Include the sound", self)
         self.audio.setChecked(True)
         lay.addRow("Sound", self.audio)
+        self.annotations = QtWidgets.QCheckBox("Burn in the annotation layers (Blender preview)", self)
+        self.annotations.setToolTip(
+            "The notes drawn with Annotate in Blender's preview go into the picture – each layer only where its "
+            "track is, hidden (muted) layers left out.\nThe frames are then rendered like Blender's preview "
+            "(Viewport Render of the sequencer) – effects and strips look the same.")
+        lay.addRow("Annotations", self.annotations)
         row = QtWidgets.QHBoxLayout()
         self.path = QtWidgets.QLineEdit(os.path.join(folder, name + ".mp4"), self)
         row.addWidget(self.path, 1)
@@ -344,8 +359,10 @@ class ExportDialog(QtWidgets.QDialog):
             i = combo.findData(v)
             combo.setCurrentIndex(i if i >= 0 else max(0, combo.findData(default)))
         self.audio.setChecked(qs.value("sequencer/export_audio", True) not in (False, "false"))
+        self.annotations.setChecked(qs.value("sequencer/export_annotations", False) in (True, "true"))
         self.fmt.currentIndexChanged.connect(lambda _i: self._fmt_changed())
         self.scale.currentIndexChanged.connect(lambda _i: self._info())
+        self.annotations.toggled.connect(lambda _on: self._info())
         self._fmt_changed()
         self.resize(theme.px(600), self.sizeHint().height())
 
@@ -356,7 +373,8 @@ class ExportDialog(QtWidgets.QDialog):
     def values(self):
         return dict(path=self.path.text().strip(), fmt=self.fmt.currentData(), start=self.start.value(),
                     end=self.end.value(), quality=self.quality.currentData(), scale=self.scale.currentData(),
-                    audio=self.audio.isChecked())
+                    audio=self.audio.isChecked(),
+                    annotations=self.annotations.isChecked() and self.annotations.isEnabled())
 
     def _fmt_changed(self):
         fmt = self.fmt.currentData()
@@ -365,6 +383,10 @@ class ExportDialog(QtWidgets.QDialog):
         self.quality.setEnabled((k == "video" and e[4] not in NO_CRF) or fmt in ("SEQ_JPEG", "SEQ_WEBP"))
         self.scale.setEnabled(k != "audio")
         self.audio.setEnabled(k == "video")
+        has_notes = annotation_layers_exist()
+        self.annotations.setEnabled(k != "audio" and has_notes)
+        if not has_notes:
+            self.annotations.setToolTip("No annotation layers yet – draw with Annotate in the Blender preview first")
         p = self.path.text().strip()
         if p:
             self.path.setText(os.path.splitext(p)[0] + e[2])
@@ -380,6 +402,8 @@ class ExportDialog(QtWidgets.QDialog):
             e = entry(fmt)
             base = os.path.basename(os.path.splitext(self.path.text().strip() or "edit")[0])
             txt += f"  ·  files {base}_{self.start.value():04d}{e[2]} …"
+        if kind(fmt) != "audio" and self.annotations.isChecked() and self.annotations.isEnabled():
+            txt += "  ·  with the annotations – Viewport Render of the sequencer, progress window with Cancel"
         elif kind(fmt) == "video":
             txt += "  ·  rendered by Blender – cancel from the status bar"
         self.info.setText(txt)
@@ -404,5 +428,6 @@ class ExportDialog(QtWidgets.QDialog):
         qs.setValue("sequencer/export_quality", v["quality"])
         qs.setValue("sequencer/export_scale", int(v["scale"]))
         qs.setValue("sequencer/export_audio", bool(v["audio"]))
+        qs.setValue("sequencer/export_annotations", bool(self.annotations.isChecked()))
         qs.setValue("sequencer/export_dir", os.path.dirname(v["path"]))
         self.accept()

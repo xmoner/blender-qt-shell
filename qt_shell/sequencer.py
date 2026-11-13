@@ -4343,11 +4343,14 @@ class VideoSequencer(QtWidgets.QWidget):
         return m
 
     # ---- export
-    def export_video(self, path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True):
+    def export_video(self, path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True,
+                     annotations=False):
         """Exports the edit: a video (fmt "MP4_H264", "MP4_H265", "MOV_PRORES", "MKV_H264", "WEBM_VP9" …),
         an image sequence ("SEQ_PNG" …) or the sound alone ("AUDIO_WAV" …) – `seq_export.formats()` lists what
         this Blender can write. Without a path the Export dialog opens. Rendered by Blender like Render
         Animation (status bar progress, cancel); the scene's output settings are put back afterwards.
+        annotations=True burns the annotation layers of Blender's preview in (each only where its track is):
+        the frames are then rendered like Blender's preview (Viewport Render of the sequencer).
         Returns True when the export started; `last_export["state"]` goes from "running" to "done" /
         "cancelled" / "failed" (with `files`)."""
         from . import app, seq_export
@@ -4368,6 +4371,7 @@ class VideoSequencer(QtWidgets.QWidget):
             v = dlg.values()
             path, fmt, start, end = v["path"], v["fmt"], v["start"], v["end"]
             quality, scale, audio = v["quality"], v["scale"], v["audio"]
+            annotations = v.get("annotations", False)
         fmt = fmt or "MP4_H264"
         e = seq_export.entry(fmt)
         if e is None or fmt not in seq_export.formats():
@@ -4386,7 +4390,8 @@ class VideoSequencer(QtWidgets.QWidget):
             self.stop_cached_play()
         elif blender_playing():
             self.play_sound()
-        self.last_export = {"path": path, "format": fmt, "start": start, "end": end, "state": "running"}
+        self.last_export = {"path": path, "format": fmt, "start": start, "end": end, "state": "running",
+                            "annotations": bool(annotations)}
         if seq_export.kind(fmt) == "audio":
             try:
                 seq_export.mixdown(fmt, path, start, end)
@@ -4458,6 +4463,11 @@ class VideoSequencer(QtWidgets.QWidget):
             self.view.update()
             self.qtprev.request()
 
+        if annotations:
+            self.export_btn.setEnabled(False)
+            self.status(f"Exporting frames {start}–{end} with the annotations to {path} …")
+            return self._export_viewport(start, end, done,
+                                         seq_export.sequence_files(path, fmt, start, end) if images else None)
         win._render_done_hooks = list(getattr(win, "_render_done_hooks", ())) + [done]
         self.export_btn.setEnabled(False)
         self.status(f"Exporting frames {start}–{end} to {path} …")
@@ -4467,6 +4477,123 @@ class VideoSequencer(QtWidgets.QWidget):
             win._render_done_hooks = [h for h in getattr(win, "_render_done_hooks", ()) if h is not done]
             done(False)
         return self.last_export.get("state") in ("running", "done")
+
+    def _export_viewport(self, start, end, done, files=None):
+        """The export with the annotations burnt in: Blender's Viewport Render of the sequencer
+        (render.opengl animation, sequencer=True) in a hidden helper window whose sequencer preview shows the
+        scene's video annotations – Blender draws them into every frame. Progress dialog; Cancel closes the
+        helper window (that stops Blender's render)."""
+        from . import app
+        win = app._win
+        helper = win._render_helper_window()
+        if helper is None:
+            done(False)
+            self.last_export.update(state="failed", error="no helper window")
+            self.status("Export failed: no Blender window to render the annotations in.")
+            return False
+        try:
+            area = max(helper.screen.areas, key=lambda a: a.width * a.height)
+            area.type = "SEQUENCE_EDITOR"
+            follow_scene(helper)
+            sp = area.spaces.active
+            an = video_annotation()
+            with bpy.context.temp_override(window=helper, screen=helper.screen, area=area):
+                sp.view_type = "PREVIEW"
+                if an is not None:
+                    sp.annotation = an
+                sp.preview_overlay.show_annotation = True
+                sp.show_overlays = True
+            update_annotation_visibility()
+            region = next(r for r in area.regions if r.type == "PREVIEW")
+            if bpy.context.scene.frame_current == end and not playcache_pending():
+                # Blender puts the frame back when it is done – that's how the end is seen (put back afterwards)
+                bpy.context.scene.frame_set(start if start != end else end - 1)
+            orig = bpy.context.scene.frame_current
+            view = bpy.context.preferences.view
+            old_display = view.render_display_type
+            view.render_display_type = "NONE"        # no render window of Blender's own
+            try:
+                with bpy.context.temp_override(window=helper, screen=helper.screen, area=area, region=region):
+                    res = bpy.ops.render.opengl("INVOKE_DEFAULT", animation=True, sequencer=True)
+            finally:
+                view.render_display_type = old_display
+        except Exception as ex:
+            win.close_blender_window(helper)
+            bridge.log(f"Video Sequencer: export with annotations failed:\n{traceback.format_exc()}", "ERROR")
+            done(False)
+            self.last_export.update(state="failed", error=str(ex))
+            self.status(f"Export failed: {ex}")
+            return False
+        if "RUNNING_MODAL" not in res:           # rendered at once (or not at all)
+            win.close_blender_window(helper)
+            done(False)
+            return self.last_export.get("state") == "done"
+        total = max(1, end - start + 1)
+        dlg = QtWidgets.QProgressDialog("Exporting with the annotations …", "Cancel", 0, total, self)
+        dlg.setWindowTitle("Export Video")
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        state = {"cancelled": False}
+        dlg.canceled.connect(lambda: state.update(cancelled=True))
+        self._export_dlg = dlg
+        timer = QtCore.QTimer(self)
+        timer.setInterval(150)
+
+        prog = {"reached": False, "back": 0}
+
+        @bpy.app.handlers.persistent
+        def _seen(scene, *_a):                   # every frame Blender renders (a timer could miss them)
+            if scene.frame_current >= end:
+                prog["reached"] = True
+        bpy.app.handlers.frame_change_post.append(_seen)
+
+        def unhook():
+            try:
+                bpy.app.handlers.frame_change_post.remove(_seen)
+            except ValueError:
+                pass
+
+        def running():
+            """Blender's Viewport Render is still at work. Its operator can stay listed a while after the last
+            frame (it ends on a later event of the hidden window) – when the frame went past the end and came
+            back to where it was (Blender puts it back when it is done), it is finished."""
+            try:
+                if helper.as_pointer() not in {w.as_pointer() for w in bpy.context.window_manager.windows}:
+                    return False
+                if not any(op.bl_idname == "RENDER_OT_opengl"
+                           for w in bpy.context.window_manager.windows for op in w.modal_operators):
+                    return False
+            except Exception:
+                return False
+            f = bpy.context.scene.frame_current
+            if f >= end or (files and os.path.isfile(files[-1])):
+                prog["reached"] = True
+            if prog["reached"] and f == orig and f != end:
+                prog["back"] += 1
+                return prog["back"] < 3
+            return True
+
+        def tick():
+            if dlg.wasCanceled():                 # Cancel button, Esc or dlg.cancel()
+                state["cancelled"] = True
+            if state["cancelled"] or not running():
+                cancelled = state["cancelled"]
+                timer.stop()
+                unhook()
+                win.close_blender_window(helper)
+                dlg.blockSignals(True)            # closing it emits canceled()
+                dlg.close()
+                done(cancelled)
+                return
+            f = bpy.context.scene.frame_current
+            dlg.setValue(max(0, min(total, f - start)))
+            dlg.setLabelText(f"Exporting with the annotations – frame {f} of {start}–{end}")
+
+        timer.timeout.connect(tick)
+        timer.start()
+        dlg.show()
+        return True
 
     def set_tag(self, key):
         for s in self.selected():

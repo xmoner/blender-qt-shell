@@ -5424,7 +5424,7 @@ vs.pane.set_mode("blender")
 
 #### VideoSequencer.export_video
 
-**Synopsis:** `VideoSequencer.export_video(path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True)`  
+**Synopsis:** `VideoSequencer.export_video(path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True, annotations=False)`  
 **Returns:** bool
 
 Exports the edit – rendered by Blender like Render Animation (progress, cancel); the scene's output settings are put back afterwards. Without a path the Export dialog opens. last_export["state"] goes from "running" to "done", "cancelled" or "failed" (with "files").
@@ -5438,6 +5438,7 @@ Exports the edit – rendered by Blender like Render Animation (progress, cancel
 | `quality` | str | "LOSSLESS", "HIGH", "MEDIUM" or "LOW". |
 | `scale` | int | Per cent of the scene resolution. |
 | `audio` | bool | Include the sound (video formats). |
+| `annotations` | bool | Burn in the annotation layers of Blender's preview (each only where its track is, muted layers left out) – rendered like Blender's preview (Viewport Render), progress window with Cancel. |
 
 **Example** (✔ tested)
 

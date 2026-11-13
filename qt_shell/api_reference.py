@@ -1550,7 +1550,8 @@ C("sequencer.VideoSequencer.cache_all", "sequencer", "cache_all()", "int – fra
   example=VS + 'vs.pane.set_mode("qt")\nvs.add_color()\nvs.cache_all()\nvs.pane.set_mode("blender")')
 
 C("sequencer.VideoSequencer.export_video", "sequencer",
-  'export_video(path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True)', "bool",
+  'export_video(path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True, '
+  'annotations=False)', "bool",
   "Exports the edit – rendered by Blender like Render Animation (progress, cancel); the scene's output settings "
   "are put back afterwards. Without a path the Export dialog opens. last_export[\"state\"] goes from \"running\" "
   "to \"done\", \"cancelled\" or \"failed\" (with \"files\").",
@@ -1560,7 +1561,10 @@ C("sequencer.VideoSequencer.export_video", "sequencer",
                   "AUDIO_FLAC, AUDIO_OGG (qt_shell.seq_export.formats() = what this Blender can write)."),
    ("start", "int", "First frame; default the scene start."), ("end", "int", "Last frame; default the scene end."),
    ("quality", "str", '"LOSSLESS", "HIGH", "MEDIUM" or "LOW".'), ("scale", "int", "Per cent of the scene resolution."),
-   ("audio", "bool", "Include the sound (video formats).")],
+   ("audio", "bool", "Include the sound (video formats)."),
+   ("annotations", "bool", "Burn in the annotation layers of Blender's preview (each only where its track is, "
+                           "muted layers left out) – rendered like Blender's preview (Viewport Render), "
+                           "progress window with Cancel.")],
   example=VS + '''vs.add_color()
 vs.export_video("C:/out/edit.mp4", "MP4_H264", start=1, end=24, quality="MEDIUM", scale=50)
 print(vs.last_export["state"])          # running … then done''')
