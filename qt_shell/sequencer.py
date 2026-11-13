@@ -41,6 +41,7 @@ BP_COLOR = "#4f7fe0"
 ANN_PROP = "qtshell_ann_layer"       # annotation track strip (Blender preview) → the annotation layer it stands for
 ANN_START = "qtshell_ann_start"      # where the track started / ended last time (moving it moves the drawings)
 ANN_END = "qtshell_ann_end"
+ANN_HOLD = "qtshell_ann_hold"        # frames the last drawing of the layer stays after its key (the track's end)
 ANN_COLOR = "#d9893a"
 SLOT_NAME = "Qt Shell preview"      # render slot the Qt preview renders into (the user's slots stay)   # ID property on the preview helper window's screen (found again after a load)
 RULER = 22                    # unscaled px
@@ -395,24 +396,38 @@ def ann_tracks():
 _ANNOTATING = {"on": False}     # the Annotate tool is on: the active layer stays visible outside its track
 
 
+def set_annotation_end_key(lay, end):
+    """An empty key at the track's end: Blender shows a drawing until the next key, so the notes end exactly
+    where the track ends – in Blender's preview, while playing and while drawing (no hiding needed, so drawing
+    after the end still works: the new key makes the track grow). Other empty keys go (not the current frame's:
+    Blender's Annotate may be filling it right now). Returns True when something changed."""
+    cur = bpy.context.scene.frame_current
+    empties = [fr for fr in lay.frames if not len(fr.strokes)]
+    keep = next((fr for fr in empties if int(fr.frame_number) == end), None)
+    changed = False
+    for fr in empties:
+        if fr is not keep and int(fr.frame_number) != cur:
+            lay.frames.remove(fr)
+            changed = True
+    if keep is None and not any(int(fr.frame_number) == end for fr in lay.frames):
+        lay.frames.new(end)
+        changed = True
+    return changed
+
+
 def update_annotation_visibility(frame=None):
-    """Each annotation layer with a track shows only inside its track (start ≤ frame < end) and when the track
-    isn't muted – Blender's annotations have no range, so the layer's hide flag follows the track."""
+    """A muted track hides its annotation layer (where the layer shows is its keys + the empty end key)."""
     an = video_annotation()
     se = editor()
     if an is None or se is None:
         return
     f = bpy.context.scene.frame_current if frame is None else frame
     tracks = {s.get(ANN_PROP): s for s in coll(se) if is_ann_track(s)}
-    act = active_annotation_layer(an) if _ANNOTATING["on"] else None
     for lay in an.layers:
         s = tracks.get(annotation_layer_name(lay))
         if s is None:
             continue
-        inside = s.frame_final_start <= f < s.frame_final_end
-        if act is not None and lay == act:
-            inside = True                    # drawing on it: Blender draws only on a visible layer
-        hide = bool(s.mute) or not inside
+        hide = bool(s.mute)                  # where it shows: its keys + the empty end key (set_annotation_end_key)
         if lay.annotation_hide != hide:
             lay.annotation_hide = hide
 
@@ -3212,19 +3227,27 @@ class VideoSequencer(QtWidgets.QWidget):
                 an.layers.remove(layers.pop(name))
                 bridge.undo_push("Delete Annotation Layer (track deleted)")
                 changed = True
-        hold = max(int(round(fps())), 1)
+        default_hold = max(int(round(fps())), 1)
         for name, lay in layers.items():
             ks = annotation_keys(lay)
             s = tracks.get(name)
             if s is None:
                 if ks:
-                    a, b = ks[0], ks[-1] + hold
-                else:
+                    a, b = ks[0], ks[-1] + default_hold
+                else:                            # no drawing yet: a 1 s placeholder at the current frame
                     a = bpy.context.scene.frame_current
-                    b = a + 5 * hold
+                    b = a + default_hold
                 tracks[name] = self._new_ann_track(se, name, a, b)
+                tracks[name][ANN_HOLD] = default_hold
+                try:
+                    lay.use_annotation_onion_skinning = False   # ghosts of other keys would show outside the track
+                except Exception:
+                    pass
                 changed = True
                 continue
+            hold = max(1, int(s.get(ANN_HOLD, default_hold)))
+            if getattr(lay, "use_annotation_onion_skinning", False):
+                lay.use_annotation_onion_skinning = False      # ghosts would show outside the track
             a, b = int(s.get(ANN_START, s.frame_final_start)), int(s.get(ANN_END, s.frame_final_end))
             fs, fe = s.frame_final_start, s.frame_final_end
             if (fs, fe) != (a, b) and not s.lock:
@@ -3234,23 +3257,27 @@ class VideoSequencer(QtWidgets.QWidget):
                     for fr in frames:            # far end first: no two keys on one frame on the way
                         fr.frame_number = int(fr.frame_number) + delta
                     ks = annotation_keys(lay)
+                    a, b = fs, fe
                     bridge.undo_push("Move annotations with the track")
-                else:
-                    bridge.undo_push("Annotation track range")
-                a, b = fs, fe
+                elif fe != b and ks:             # end trimmed → how long the last drawing stays
+                    hold = max(1, fe - ks[-1])
+                    s[ANN_HOLD] = hold
+                    bridge.undo_push("Annotation track end")
+                elif not ks:                     # an empty layer's placeholder: any range
+                    a, b = fs, fe
                 changed = True
-            if ks and (ks[0] < a or ks[-1] >= b):      # drawn outside the track → it grows to the new key
-                na = min(a, ks[0])
-                nb = max(b, ks[-1] + hold)
-                if (na, nb) != (a, b):
-                    a, b = na, nb
-                    if b > s.frame_final_end:
-                        s.frame_final_end = b
-                        s.frame_final_start = a
-                    else:
-                        s.frame_final_start = a
-                        s.frame_final_end = b
+            if ks:                               # the track fits the drawings: first one … last one + hold
+                a, b = ks[0], ks[-1] + hold
+                if set_annotation_end_key(lay, b):
                     changed = True
+            if (s.frame_final_start, s.frame_final_end) != (a, b):
+                if b > s.frame_final_end:
+                    s.frame_final_end = b
+                    s.frame_final_start = a
+                else:
+                    s.frame_final_start = a
+                    s.frame_final_end = b
+                changed = True
             if int(s.get(ANN_START, -10 ** 9)) != a:
                 s[ANN_START] = a
             if int(s.get(ANN_END, -10 ** 9)) != b:
@@ -3434,11 +3461,14 @@ class VideoSequencer(QtWidgets.QWidget):
         f = bpy.context.scene.frame_current
         key = None
         for fr in lay.frames:
+            if not len(fr.strokes):
+                continue                            # the empty end key isn't a drawing
             if fr.frame_number <= f and (key is None or fr.frame_number > key.frame_number):
                 key = fr
         if key is None:
             return False
         lay.frames.remove(key)
+        self.sync_ann_tracks()                      # the track fits the drawings left
         bridge.undo_push("Delete Annotation Drawing")
         self._annot_redraw()
         return True
