@@ -29,6 +29,7 @@ Time bar:
 - Click elsewhere sets the current frame (scrubbing). Cached frames show as a green line.
 """
 import time
+import traceback
 
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -982,6 +983,7 @@ class Timeline(QtWidgets.QWidget):
         if self.loop_mode not in [m[0] for m in LOOP_MODES]:
             self.loop_mode = "LOOP"
         self._dir = 1                     # playback direction (1 forwards, -1 backwards)
+        self._seq_osc = False             # Oscillate stopped the sequencer's sound going backwards
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(4, 2, 4, 2)
         lay.setSpacing(2)
@@ -1780,6 +1782,7 @@ class Timeline(QtWidgets.QWidget):
         bridge.undo_push("Frame Rate")
         if self.is_playing():                 # keep playing at the new speed from the shown frame
             self._restart_clock(getattr(self, "_play_frame", bpy.context.scene.frame_current))
+            self._seq_sound(getattr(self, "_play_frame", None) if self._dir > 0 else None)
         mw = getattr(self.hub, "main_window", None)
         props = getattr(mw, "properties", None)
         if props is not None:
@@ -1845,9 +1848,11 @@ class Timeline(QtWidgets.QWidget):
             if d != self._dir:                    # turn around without stopping
                 self._dir = d
                 self._restart_clock(getattr(self, "_play_frame", bpy.context.scene.frame_current))
+                self._seq_sound(getattr(self, "_play_frame", None) if d > 0 else None)
                 self._update_play_buttons()
                 return
             self._set_playing(False)
+            self._seq_sound(None)
             self._end_cached_display()
             self._update_play_buttons()
             self.sync()
@@ -1863,7 +1868,23 @@ class Timeline(QtWidgets.QWidget):
         self._play_frame = f
         self._restart_clock(f)
         self._set_playing(True)
+        self._seq_sound(f if d > 0 else None)
         self._update_play_buttons()
+
+    def _sequencer(self):
+        mw = getattr(self.hub, "main_window", None)
+        return getattr(mw, "sequencer", None)
+
+    def _seq_sound(self, frame):
+        """The Video Sequencer's sound plays along with the Timeline (its Timeline + 3D On button)."""
+        self._seq_osc = False
+        vs = self._sequencer()
+        if vs is None:
+            return
+        try:
+            vs.timeline_sound(frame)
+        except Exception:
+            bridge.log(f"Timeline: Video Sequencer sound:\n{traceback.format_exc()}", "WARNING")
 
     def play(self, reverse=False):
         if not self.is_playing() or self._dir != (-1 if reverse else 1):
@@ -1932,6 +1953,17 @@ class Timeline(QtWidgets.QWidget):
             QtCore.QTimer.singleShot(0, lambda: self.is_playing() and self.toggle_play(self._dir < 0))
             return
         self._play_frame = f
+        vs = self._sequencer()
+        if vs is not None and (vs._tl_audio or self._seq_osc):
+            if self._dir < 0:                    # Oscillate turned around: no sound backwards
+                if vs._tl_audio:
+                    vs.timeline_sound(None)
+                    self._seq_osc = True
+            elif self._seq_osc:
+                self._seq_osc = False
+                vs.timeline_sound(f)
+            else:                                # the loop started over (dropped frames: drift check)
+                vs.timeline_sound_tick(f, jumped=f < shown)
         views = self._views()
         if self._cache_ready(views, f) and self._cache_show(views, f):
             # cached playback: draw from the cache, the scene stays where it is (no evaluation)
@@ -1995,6 +2027,7 @@ class Timeline(QtWidgets.QWidget):
 
     def stop(self):
         self._set_playing(False)
+        self._seq_sound(None)
         self._end_cached_display()
         self._update_play_buttons()
 

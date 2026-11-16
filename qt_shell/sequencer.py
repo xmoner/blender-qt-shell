@@ -2621,6 +2621,8 @@ class VideoSequencer(QtWidgets.QWidget):
         self._cp_timer = None        # cached playback (Qt Shell preview, all frames cached)
         self._cp_frame = None
         self._audio = None
+        self._tl_audio = False       # the sound plays for the Qt Timeline's playback ("Timeline + 3D On")
+        self._tl_t0 = self._tl_f0 = 0
         self.snap_on = QtCore.QSettings("QtShell", "QtShell").value("sequencer/snap", True) not in (False, "false")
         self.show_seconds = QtCore.QSettings("QtShell", "QtShell").value("sequencer/seconds", False) in (True, "true")
         lay = QtWidgets.QVBoxLayout(self)
@@ -3747,6 +3749,9 @@ class VideoSequencer(QtWidgets.QWidget):
 
     def _set_follow(self, on):
         QtCore.QSettings("QtShell", "QtShell").setValue("sequencer/follow_playback", bool(on))
+        tl = self._timeline()
+        if tl is not None and tl.is_playing():   # the Timeline plays now: its sound on / off with the button
+            self.timeline_sound(getattr(tl, "_play_frame", None) if on and tl._dir > 0 else None)
         host = PreviewHost.current
         w = host.bl_window() if host is not None else None
         if w is not None:
@@ -3861,6 +3866,7 @@ class VideoSequencer(QtWidgets.QWidget):
         self._cp_t0 = time.perf_counter()
         self._cp_loop = -1
         self._cp_frame = start
+        self._tl_audio = False               # the cached playback's own sound from here on
         if self._cp_timer is None:
             self._cp_timer = QtCore.QTimer(self)
             self._cp_timer.setTimerType(QtCore.Qt.PreciseTimer)
@@ -3940,6 +3946,38 @@ class VideoSequencer(QtWidgets.QWidget):
                 self._audio = aud.Device().play(mixed)
         except Exception as ex:
             bridge.log(f"Video Sequencer: cached playback without sound ({ex})", "WARNING")
+
+    # ---- the sequencer's sound while the Qt Timeline plays (Timeline + 3D On, the sequencer on screen)
+    def timeline_sound_wanted(self):
+        """The Qt Timeline's playback plays the sequencer's sound strips: Timeline + 3D On, the Video Sequencer
+        is shown, the scene's audio isn't muted and the sequencer doesn't play by itself."""
+        try:
+            return (self.follow_on() and self.isVisible() and not self.cached_playing()
+                    and not blender_playing() and not bpy.context.scene.use_audio)
+        except Exception:
+            return False
+
+    def timeline_sound(self, frame=None):
+        """Sound of the Timeline's playback from frame on (None = stop it)."""
+        if frame is None or not self.timeline_sound_wanted():
+            if self._tl_audio:
+                self._tl_audio = False
+                self._audio_stop()
+            return
+        self._audio_play(int(frame))
+        self._tl_audio = True
+        self._tl_t0, self._tl_f0 = time.perf_counter(), int(frame)
+
+    def timeline_sound_tick(self, frame, jumped=False):
+        """The Timeline showed frame: the sound starts again after a jump (loop) or when it drifted
+        more than a second away (Play Every Frame on a slow scene)."""
+        if not self._tl_audio:
+            return
+        if self._audio is None and not jumped:   # nothing to hear from here on until the loop restarts
+            return
+        drift = abs(self._tl_f0 + (time.perf_counter() - self._tl_t0) * fps() - frame)
+        if jumped or drift > fps():
+            self.timeline_sound(frame)
 
     def _audio_stop(self):
         h, self._audio = getattr(self, "_audio", None), None
