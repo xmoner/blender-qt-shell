@@ -176,6 +176,55 @@ def time_locked(s):
     return getattr(s, "input_count", 0) > 0
 
 
+def strip_owner(s):
+    """The editor or meta strip whose collection holds s."""
+    try:
+        m = s.parent_meta()
+        if m is not None:
+            return m
+    except Exception:
+        pass
+    return editor()
+
+
+def channel_locked(s):
+    """The channel s lies on is locked (channel header lock) – Blender treats its strips as locked."""
+    owner = strip_owner(s)
+    chans = getattr(owner, "channels", None)
+    try:
+        return bool(chans is not None and s.channel < len(chans) and chans[s.channel].lock)
+    except Exception:
+        return False
+
+
+def connected(s):
+    """Strips connected to s (Blender 4.3+: picture + sound added together move / cut as one)."""
+    try:
+        return list(getattr(s, "connections", None) or [])
+    except Exception:
+        return []
+
+
+def strip_locked(s):
+    """Locked like Blender sees it: its own Lock or its channel's lock."""
+    return bool(s.lock) or channel_locked(s)
+
+
+def lock_reason(s):
+    """Why Blender refuses to edit s (Cut: "Strip is locked."), or None: the strip's Lock, its channel's lock, or
+    the lock of a connected strip (Blender cuts connected strips together) / its channel."""
+    if channel_locked(s):                         # (Blender reports .lock True for these too)
+        return f"channel {s.channel} of “{s.name}” is locked"
+    if s.lock:
+        return f"“{s.name}” is locked"
+    for c in connected(s):
+        if channel_locked(c):
+            return f"channel {c.channel} of the connected strip “{c.name}” is locked"
+        if c.lock:
+            return f"the connected strip “{c.name}” is locked"
+    return None
+
+
 def free_channel(container, start, end, above=1, skip=()):
     """Lowest channel ≥ above where [start, end) is free."""
     taken = {}
@@ -1049,7 +1098,7 @@ class SeqView(QtWidgets.QWidget):
         g.setColorAt(1, fill)
         p.setBrush(g)
         p.drawRoundedRect(r, 3, 3)
-        if s.lock:
+        if strip_locked(s):
             p.setBrush(QtGui.QBrush(QtGui.QColor(0, 0, 0, 90), QtCore.Qt.BDiagPattern))
             p.drawRoundedRect(r, 3, 3)
         if getattr(s, "input_count", 0) >= 2 or s.type in ("CROSS", "GAMMA_CROSS", "WIPE"):
@@ -1179,15 +1228,15 @@ class SeqView(QtWidgets.QWidget):
             self.ed.select([s], extend=False)
         else:
             self.ed.set_active(s)
-        if s.lock:
-            self.ed.status(f"“{s.name}” is locked")
+        if strip_locked(s):
+            self.ed.status(lock_reason(s) + " – Lock / Unlock in the toolbar unlocks it")
             return
         if part in ("l", "r"):
             self._drag = {"mode": "trim_" + part, "strip": s, "p0": pos,
                           "orig": s.frame_final_start if part == "l" else s.frame_final_end}
             self._drag["new"] = self._drag["orig"]
         else:
-            sel = [x for x in self.strips() if x.select and not x.lock]
+            sel = [x for x in self.strips() if x.select and not strip_locked(x)]
             self._drag = {"mode": "move", "strips": sel, "p0": pos, "df": 0, "dch": 0, "dx_px": 0.0,
                           "lo": min(x.frame_final_start for x in sel), "hi": max(x.frame_final_end for x in sel),
                           "chmin": min(x.channel for x in sel), "moved": False}
@@ -1460,10 +1509,14 @@ class StripProps(QtWidgets.QScrollArea):
         head = QtWidgets.QLabel(f"<b>{s.type.replace('_', ' ').title()}</b> strip", w)
         lay.addWidget(head)
         self._section(lay, "Strip")
+        fixed = time_locked(s)                   # transitions: In / Out / Duration come from the inputs
         for prop, label in (("name", "Name"), ("channel", "Channel"),
                             ("frame_final_start", "In"), ("frame_final_end", "Out"),
                             ("frame_final_duration", "Duration"), ("color_tag", "Color Tag"),
                             ("mute", "Mute"), ("lock", "Lock")):
+            if fixed and prop.startswith("frame_final"):
+                self._info_row(lay, label, str(getattr(s, prop)), "Set by the strips the transition joins")
+                continue
             self._row(lay, label, s, prop)
         t = s.type
         if t != "SOUND":
@@ -1534,6 +1587,17 @@ class StripProps(QtWidgets.QScrollArea):
         lab.setFont(f)
         lab.setStyleSheet("color:#d0d0d0; border-bottom:1px solid #444; padding-top:6px; padding-bottom:2px;")
         lay.addWidget(lab)
+
+    def _info_row(self, lay, label, text, tip=""):
+        row = QtWidgets.QHBoxLayout()
+        lab = QtWidgets.QLabel(label, self.widget())
+        lab.setMinimumWidth(theme.px(78))
+        row.addWidget(lab)
+        val = QtWidgets.QLabel(text, self.widget())
+        val.setStyleSheet("color:#9a9a9a;")
+        val.setToolTip(tip)
+        row.addWidget(val, 1)
+        lay.addLayout(row)
 
     def _row(self, lay, label, data, prop):
         if not hasattr(data, prop):
@@ -3148,7 +3212,7 @@ class VideoSequencer(QtWidgets.QWidget):
             start = int(s.get(BP_START, a))
             end = int(s.get("qtshell_bp_end", b))
             fs, fe = s.frame_final_start, s.frame_final_end
-            if (fs, fe) != (start, end) and not s.lock:
+            if (fs, fe) != (start, end) and not strip_locked(s):
                 if fe - fs == end - start:               # moved → the drawings move with it
                     delta = fs - start
                     if ks and not bluepencil.move_keys(lay, {k: k + delta for k in ks}):
@@ -3252,7 +3316,7 @@ class VideoSequencer(QtWidgets.QWidget):
                 lay.use_annotation_onion_skinning = False      # ghosts would show outside the track
             a, b = int(s.get(ANN_START, s.frame_final_start)), int(s.get(ANN_END, s.frame_final_end))
             fs, fe = s.frame_final_start, s.frame_final_end
-            if (fs, fe) != (a, b) and not s.lock:
+            if (fs, fe) != (a, b) and not strip_locked(s):
                 if fe - fs == b - a:             # moved → the drawings move with it
                     delta = fs - a
                     frames = sorted(lay.frames, key=lambda f: f.frame_number, reverse=delta > 0)
@@ -3535,27 +3599,42 @@ class VideoSequencer(QtWidgets.QWidget):
         """Splits the selected strips (none selected: all unlocked strips) at the frame – K in Blender."""
         f = bpy.context.scene.frame_current if frame is None else int(frame)
         pool = self.selected() or self.view.strips()
-        todo = [s for s in pool if not s.lock and not is_bp_track(s) and s.frame_final_start < f < s.frame_final_end]
+        todo = [s for s in pool if not is_bp_track(s) and s.frame_final_start < f < s.frame_final_end]
         if not todo:
             self.status("Nothing to cut at the current frame")
             return 0
-        n = 0
-        for s in todo:
+        n, skipped = 0, []
+        names = [s.name for s in todo]
+        c = self.container()
+        for name in names:
+            s = coll(c).get(name) if c is not None else None
+            if s is None or not (s.frame_final_start < f < s.frame_final_end):
+                continue                          # already cut together with a connected strip
+            why = lock_reason(s)
+            if why:
+                skipped.append(why)
+                continue
+            group = 1 + len([x for x in connected(s) if x.frame_final_start < f < x.frame_final_end])
             try:
                 s.split(frame=f, split_method="SOFT")
-                n += 1
+                n += group                        # connected strips are cut with it
             except TypeError:
                 s.split(f, "SOFT")
-                n += 1
+                n += group
             except Exception as ex:
-                bridge.log(f"Video Sequencer: cut of {s.name} failed ({ex})", "WARNING")
-        bridge.undo_push("Cut Strips")
-        self.status(f"Cut {n} strip(s) at frame {f}")
+                skipped.append(f"“{name}”: {str(ex).strip()}")
+                bridge.log(f"Video Sequencer: cut of {name} failed ({str(ex).strip()})", "WARNING")
+        if n:
+            bridge.undo_push("Cut Strips")
+        msg = f"Cut {n} strip(s) at frame {f}"
+        if skipped:
+            msg += " – not cut: " + "; ".join(dict.fromkeys(skipped)) + " (Lock / Unlock in the toolbar unlocks it)"
+        self.status(msg)
         self.after_edit()
         return n
 
     def delete(self, ripple=False):
-        sel = [s for s in self.selected() if not s.lock]
+        sel = [s for s in self.selected() if not strip_locked(s)]
         if not sel:
             return 0
         c = self.container()
@@ -3570,7 +3649,7 @@ class VideoSequencer(QtWidgets.QWidget):
                     bridge.log(f"Video Sequencer: delete {n} failed ({ex})", "WARNING")
         if ripple:
             for ch, start, dur in gaps:          # later strips on the channel move left (latest gap first)
-                later = sorted((s for s in coll(c) if s.channel == ch and s.frame_final_start >= start and not s.lock),
+                later = sorted((s for s in coll(c) if s.channel == ch and s.frame_final_start >= start and not strip_locked(s)),
                                key=lambda s: s.frame_final_start)
                 for s in later:
                     s.frame_start -= dur
@@ -3601,18 +3680,36 @@ class VideoSequencer(QtWidgets.QWidget):
         return len(new)
 
     def set_flag(self, attr, on):
+        """Mute / lock the selected strips. Lock includes the connected strips (Blender edits them together);
+        Unlock also unlocks the channels they lie on – Blender treats a locked channel's strips as locked."""
         sel = self.selected()
-        for s in sel:
+        todo = list(sel)
+        if attr == "lock":
+            for s in sel:
+                todo += [c for c in connected(s) if c not in todo]
+        for s in todo:
             setattr(s, attr, on)
+        chans = []
+        if attr == "lock" and not on:
+            for s in todo:
+                if channel_locked(s):
+                    owner = strip_owner(s)
+                    owner.channels[s.channel].lock = False
+                    chans.append(s.channel)
         if sel:
             bridge.undo_push(f"{'' if on else 'Un'}{attr.title()} Strips")
+            if chans:
+                self.status(f"Unlocked – also channel(s) {', '.join(map(str, sorted(set(chans))))}")
         self.after_edit()
 
     def toggle(self, attr):
         sel = self.selected()
         if not sel:
             return
-        on = not all(getattr(s, attr) for s in sel)
+        if attr == "lock":
+            on = not all(strip_locked(s) for s in sel)
+        else:
+            on = not all(getattr(s, attr) for s in sel)
         self.set_flag(attr, on)
 
     def move_strips(self, strips, df, dch):
@@ -3663,7 +3760,7 @@ class VideoSequencer(QtWidgets.QWidget):
         self.view.update()
 
     def make_meta(self):
-        sel = [s for s in self.selected() if not s.lock]
+        sel = [s for s in self.selected() if not strip_locked(s)]
         if not sel:
             return None
         c = self.container()
