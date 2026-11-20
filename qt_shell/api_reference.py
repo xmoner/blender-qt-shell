@@ -1551,7 +1551,7 @@ C("sequencer.VideoSequencer.cache_all", "sequencer", "cache_all()", "int – fra
 
 C("sequencer.VideoSequencer.export_video", "sequencer",
   'export_video(path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True, '
-  'annotations=False)', "bool",
+  'annotations=False, blue_pencil=False)', "bool",
   "Exports the edit – rendered by Blender like Render Animation (progress, cancel); the scene's output settings "
   "are put back afterwards. Without a path the Export dialog opens. last_export[\"state\"] goes from \"running\" "
   "to \"done\", \"cancelled\" or \"failed\" (with \"files\").",
@@ -1564,7 +1564,10 @@ C("sequencer.VideoSequencer.export_video", "sequencer",
    ("audio", "bool", "Include the sound (video formats)."),
    ("annotations", "bool", "Burn in the annotation layers of Blender's preview (each only where its track is, "
                            "muted layers left out) – rendered like Blender's preview (Viewport Render), "
-                           "progress window with Cancel.")],
+                           "progress window with Cancel."),
+   ("blue_pencil", "bool", "Burn in the Video Editing Blue Pencil layers of the Qt Shell preview (each only where its "
+                           "track is, hidden layers left out) – the frames are rendered to PNG, drawn on, then "
+                           "encoded by Blender with the sound.")],
   example=VS + '''vs.add_color()
 vs.export_video("C:/out/edit.mp4", "MP4_H264", start=1, end=24, quality="MEDIUM", scale=50)
 print(vs.last_export["state"])          # running … then done''')

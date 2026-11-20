@@ -154,10 +154,10 @@ def _set(owner, prop, value):
         return False
 
 
-def apply(fmt, path, start, end, quality="HIGH", scale=100, audio=True):
+def apply(fmt, path, start, end, quality="HIGH", scale=100, audio=True, scene=None):
     """Sets the scene's output for the export (video / image sequence). Returns the path Blender is given."""
     e = entry(fmt)
-    sc = bpy.context.scene
+    sc = scene or bpy.context.scene
     r = sc.render
     ims = r.image_settings
     sc.frame_start, sc.frame_end = int(start), int(end)
@@ -267,6 +267,91 @@ def annotation_layers_exist():
         return False
 
 
+def blue_pencil_drawings_exist():
+    """Video Editing (Qt Shell preview) Blue Pencil layers with strokes."""
+    try:
+        from . import bluepencil
+        return bluepencil.has_drawings("", "VIDEO")
+    except Exception:
+        return False
+
+
+def burn_blue_pencil(files_by_frame, progress=None):
+    """Paints the Video Editing Blue Pencil layers (each only inside its track, hidden layers left out) into
+    the PNG files {frame: path} in place. progress(n, total) → False cancels. Returns the number of frames."""
+    from PySide6 import QtGui
+    from . import bluepencil
+    n = 0
+    items = sorted(files_by_frame.items())
+    for i, (f, fp) in enumerate(items):
+        if progress is not None and progress(i, len(items)) is False:
+            raise RuntimeError("cancelled")
+        q = QtGui.QImage(fp)
+        if q.isNull():
+            raise RuntimeError(f"Cannot read {fp}")
+        q = q.convertToFormat(QtGui.QImage.Format_RGBA8888)
+        p = QtGui.QPainter(q)
+        try:
+            bluepencil.paint_layers(p, "", QtCore.QRectF(0, 0, q.width(), q.height()), int(f), ghosts=False,
+                                    space="VIDEO", always=True)
+        finally:
+            p.end()
+        if not q.save(fp, "PNG"):
+            raise RuntimeError(f"Cannot write {fp}")
+        n += 1
+    return n
+
+
+def encode_frames(files, fmt, path, start, quality="HIGH", sound=None, fps=None):
+    """Writes the frames (PNG files, display colours, one per frame from `start`) as fmt to path with
+    Blender in a temporary scene (removed after): a video – with the sound file `sound` when given – or an
+    image sequence named like a normal export. Blocking."""
+    from PySide6 import QtGui
+    first = QtGui.QImage(files[0])
+    if first.isNull():
+        raise RuntimeError(f"Cannot read {files[0]}")
+    src = bpy.context.scene
+    fps = fps or (src.render.fps, src.render.fps_base)
+    tmp = bpy.data.scenes.new("QtShell Export")
+    folder = os.path.dirname(files[0])
+    try:
+        r = tmp.render
+        r.fps, r.fps_base = fps
+        r.resolution_x, r.resolution_y, r.resolution_percentage = first.width(), first.height(), 100
+        end = int(start) + len(files) - 1
+        try:                                            # the frames already are display colours
+            tmp.view_settings.view_transform = "Standard"
+            tmp.view_settings.look = "None"
+            tmp.view_settings.exposure = 0.0
+            tmp.view_settings.gamma = 1.0
+        except Exception:
+            pass
+        se = tmp.sequence_editor_create()
+        coll = se.strips if hasattr(se, "strips") else se.sequences
+        strip = coll.new_image("frames", files[0], 1, int(start))
+        for p in files[1:]:
+            if os.path.dirname(p) != folder:
+                raise RuntimeError("All frames must be in one folder")
+            strip.elements.append(os.path.basename(p))
+        try:
+            strip.colorspace_settings.name = "sRGB"
+        except Exception:
+            pass
+        if sound and os.path.isfile(sound):
+            coll.new_sound("sound", sound, 2, int(start))
+        apply(fmt, path, start, end, quality, 100, audio=bool(sound), scene=tmp)
+        with bridge.blender_context(scene=tmp):
+            bpy.ops.render.render(animation=True, scene=tmp.name)
+    finally:
+        try:
+            win = bpy.context.window_manager.windows[0]
+            if win.scene != src:
+                win.scene = src
+        except Exception:
+            pass
+        bpy.data.scenes.remove(tmp)
+
+
 class ExportDialog(QtWidgets.QDialog):
     """Format, quality, size, frames, sound and file of a Video Sequencer export."""
 
@@ -331,6 +416,12 @@ class ExportDialog(QtWidgets.QDialog):
             "track is, hidden (muted) layers left out.\nThe frames are then rendered like Blender's preview "
             "(Viewport Render of the sequencer) – effects and strips look the same.")
         lay.addRow("Annotations", self.annotations)
+        self.blue_pencil = QtWidgets.QCheckBox("Burn in the Blue Pencil layers (Qt Shell preview)", self)
+        self.blue_pencil.setToolTip(
+            "The Video Editing Blue Pencil drawings (Qt Shell preview → Blue Pencil) go into the picture – each "
+            "layer only where its track is, hidden (muted) layers left out.\nThe frames are rendered first, the "
+            "drawings are painted on them, then Blender encodes the file (with the sound).")
+        lay.addRow("Blue Pencil", self.blue_pencil)
         row = QtWidgets.QHBoxLayout()
         self.path = QtWidgets.QLineEdit(os.path.join(folder, name + ".mp4"), self)
         row.addWidget(self.path, 1)
@@ -360,9 +451,11 @@ class ExportDialog(QtWidgets.QDialog):
             combo.setCurrentIndex(i if i >= 0 else max(0, combo.findData(default)))
         self.audio.setChecked(qs.value("sequencer/export_audio", True) not in (False, "false"))
         self.annotations.setChecked(qs.value("sequencer/export_annotations", False) in (True, "true"))
+        self.blue_pencil.setChecked(qs.value("sequencer/export_blue_pencil", False) in (True, "true"))
         self.fmt.currentIndexChanged.connect(lambda _i: self._fmt_changed())
         self.scale.currentIndexChanged.connect(lambda _i: self._info())
         self.annotations.toggled.connect(lambda _on: self._info())
+        self.blue_pencil.toggled.connect(lambda _on: self._info())
         self._fmt_changed()
         self.resize(theme.px(600), self.sizeHint().height())
 
@@ -374,7 +467,8 @@ class ExportDialog(QtWidgets.QDialog):
         return dict(path=self.path.text().strip(), fmt=self.fmt.currentData(), start=self.start.value(),
                     end=self.end.value(), quality=self.quality.currentData(), scale=self.scale.currentData(),
                     audio=self.audio.isChecked(),
-                    annotations=self.annotations.isChecked() and self.annotations.isEnabled())
+                    annotations=self.annotations.isChecked() and self.annotations.isEnabled(),
+                    blue_pencil=self.blue_pencil.isChecked() and self.blue_pencil.isEnabled())
 
     def _fmt_changed(self):
         fmt = self.fmt.currentData()
@@ -387,6 +481,11 @@ class ExportDialog(QtWidgets.QDialog):
         self.annotations.setEnabled(k != "audio" and has_notes)
         if not has_notes:
             self.annotations.setToolTip("No annotation layers yet – draw with Annotate in the Blender preview first")
+        has_bp = blue_pencil_drawings_exist()
+        self.blue_pencil.setEnabled(k != "audio" and has_bp)
+        if not has_bp:
+            self.blue_pencil.setToolTip("No Blue Pencil drawings yet – draw with Blue Pencil in the Qt Shell "
+                                        "preview first")
         p = self.path.text().strip()
         if p:
             self.path.setText(os.path.splitext(p)[0] + e[2])
@@ -402,8 +501,13 @@ class ExportDialog(QtWidgets.QDialog):
             e = entry(fmt)
             base = os.path.basename(os.path.splitext(self.path.text().strip() or "edit")[0])
             txt += f"  ·  files {base}_{self.start.value():04d}{e[2]} …"
+        bp = kind(fmt) != "audio" and self.blue_pencil.isChecked() and self.blue_pencil.isEnabled()
         if kind(fmt) != "audio" and self.annotations.isChecked() and self.annotations.isEnabled():
             txt += "  ·  with the annotations – Viewport Render of the sequencer, progress window with Cancel"
+            if bp:
+                txt += "  ·  + Blue Pencil"
+        elif bp:
+            txt += "  ·  with Blue Pencil – frames rendered, drawn on, then encoded"
         elif kind(fmt) == "video":
             txt += "  ·  rendered by Blender – cancel from the status bar"
         self.info.setText(txt)
@@ -429,5 +533,6 @@ class ExportDialog(QtWidgets.QDialog):
         qs.setValue("sequencer/export_scale", int(v["scale"]))
         qs.setValue("sequencer/export_audio", bool(v["audio"]))
         qs.setValue("sequencer/export_annotations", bool(self.annotations.isChecked()))
+        qs.setValue("sequencer/export_blue_pencil", bool(self.blue_pencil.isChecked()))
         qs.setValue("sequencer/export_dir", os.path.dirname(v["path"]))
         self.accept()

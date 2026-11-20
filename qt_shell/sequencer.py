@@ -4479,16 +4479,19 @@ class VideoSequencer(QtWidgets.QWidget):
 
     # ---- export
     def export_video(self, path=None, fmt=None, start=None, end=None, quality="HIGH", scale=100, audio=True,
-                     annotations=False):
+                     annotations=False, blue_pencil=False):
         """Exports the edit: a video (fmt "MP4_H264", "MP4_H265", "MOV_PRORES", "MKV_H264", "WEBM_VP9" …),
         an image sequence ("SEQ_PNG" …) or the sound alone ("AUDIO_WAV" …) – `seq_export.formats()` lists what
         this Blender can write. Without a path the Export dialog opens. Rendered by Blender like Render
         Animation (status bar progress, cancel); the scene's output settings are put back afterwards.
         annotations=True burns the annotation layers of Blender's preview in (each only where its track is):
         the frames are then rendered like Blender's preview (Viewport Render of the sequencer).
+        blue_pencil=True burns the Video Editing Blue Pencil layers of the Qt Shell preview in (each only where
+        its track is): the frames are rendered to PNG first, drawn on, then encoded by Blender with the sound.
         Returns True when the export started; `last_export["state"]` goes from "running" to "done" /
         "cancelled" / "failed" (with `files`)."""
         from . import app, seq_export
+        _then, self._export_then = getattr(self, "_export_then", None), None   # a step of a Blue Pencil export
         win = app._win
         if win is None or win.is_rendering() or bridge.is_rendering():
             self.status("Export: a render is running – wait for it or cancel it first.")
@@ -4507,6 +4510,7 @@ class VideoSequencer(QtWidgets.QWidget):
             path, fmt, start, end = v["path"], v["fmt"], v["start"], v["end"]
             quality, scale, audio = v["quality"], v["scale"], v["audio"]
             annotations = v.get("annotations", False)
+            blue_pencil = v.get("blue_pencil", False)
         fmt = fmt or "MP4_H264"
         e = seq_export.entry(fmt)
         if e is None or fmt not in seq_export.formats():
@@ -4525,8 +4529,10 @@ class VideoSequencer(QtWidgets.QWidget):
             self.stop_cached_play()
         elif blender_playing():
             self.play_sound()
-        self.last_export = {"path": path, "format": fmt, "start": start, "end": end, "state": "running",
-                            "annotations": bool(annotations)}
+        if blue_pencil and seq_export.kind(fmt) != "audio" and seq_export.blue_pencil_drawings_exist():
+            return self._export_blue_pencil(path, fmt, start, end, quality, scale, audio, annotations)
+        self.last_export = rec = {"path": path, "format": fmt, "start": start, "end": end, "state": "running",
+                                  "annotations": bool(annotations)}
         if seq_export.kind(fmt) == "audio":
             try:
                 seq_export.mixdown(fmt, path, start, end)
@@ -4579,16 +4585,19 @@ class VideoSequencer(QtWidgets.QWidget):
             files = [f for f in (seq_export.sequence_files(path, fmt, start, end) if images else [path])
                      if os.path.isfile(f)]
             if cancelled:
-                self.last_export.update(state="cancelled", files=files)
+                rec.update(state="cancelled", files=files)
                 msg = "Export cancelled." + (f" {len(files)} frames were written." if images and files else "")
             elif not files:
-                self.last_export.update(state="failed", files=[], error="Blender wrote no file")
+                rec.update(state="failed", files=[], error="Blender wrote no file")
                 msg = "Export failed: Blender wrote no file (see the Console / error window)."
                 bridge.log(f"Video Sequencer: export to {path} ({fmt}) wrote no file", "ERROR")
             else:
-                self.last_export.update(state="done", files=files)
+                rec.update(state="done", files=files)
                 msg = (f"Exported {len(files)} frames to {os.path.dirname(path)}" if images
                        else f"Exported to {path}  ({os.path.getsize(path) / 1048576:.1f} MB)")
+            if _then is not None:                       # a step of a bigger export (Blue Pencil burn-in)
+                _then(rec["state"], files)
+                return
             self.status(msg)
             try:
                 win.statusBar().showMessage(msg, 12000)
@@ -4612,6 +4621,126 @@ class VideoSequencer(QtWidgets.QWidget):
             win._render_done_hooks = [h for h in getattr(win, "_render_done_hooks", ()) if h is not done]
             done(False)
         return self.last_export.get("state") in ("running", "done")
+
+    def _export_blue_pencil(self, path, fmt, start, end, quality, scale, audio, annotations):
+        """Export with the Blue Pencil layers burnt in: the frames are rendered to a temporary PNG sequence
+        (with the annotations when asked), the drawings are painted on them, the sound is mixed down, and
+        Blender encodes the final file (`seq_export.encode_frames`). Temporary files are removed."""
+        import shutil
+        import tempfile
+        from . import app, seq_export
+        win = app._win
+        tmp = tempfile.mkdtemp(prefix="qtshell_seq_bp_")
+        inner = os.path.join(tmp, "frame.png")
+        images = seq_export.kind(fmt) == "images"
+        info = {"path": path, "format": fmt, "start": start, "end": end, "state": "running",
+                "annotations": bool(annotations), "blue_pencil": True}
+        state = {"dlg": None}
+
+        def finish(st, files=(), msg="", error=None):
+            shutil.rmtree(tmp, ignore_errors=True)
+            if state["dlg"] is not None:
+                state["dlg"].blockSignals(True)
+                state["dlg"].close()
+                state["dlg"].deleteLater()
+                state["dlg"] = None
+            info.update(state=st, files=list(files))
+            if error:
+                info["error"] = error
+            self.last_export = info
+            self.export_btn.setEnabled(True)
+            self.status(msg)
+            try:
+                win.statusBar().showMessage(msg, 12000)
+            except Exception:
+                pass
+            self.view.update()
+            self.qtprev.request()
+
+        def encode(frames, sound=None):
+            try:
+                if state["dlg"] is not None:
+                    state["dlg"].setLabelText("Encoding the file…")
+                    QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ExcludeUserInputEvents)
+                seq_export.encode_frames([frames[f] for f in sorted(frames)], fmt, path, start, quality, sound)
+            except Exception as ex:
+                bridge.log(f"Video Sequencer: Blue Pencil export failed:\n{traceback.format_exc()}", "ERROR")
+                finish("failed", msg=f"Export failed: {ex}", error=str(ex))
+                return
+            files = [f for f in (seq_export.sequence_files(path, fmt, start, end) if images else [path])
+                     if os.path.isfile(f)]
+            if not files:
+                finish("failed", msg="Export failed: Blender wrote no file.", error="Blender wrote no file")
+                return
+            finish("done", files, (f"Exported {len(files)} frames with Blue Pencil to {os.path.dirname(path)}"
+                                   if images else f"Exported with Blue Pencil to {path}  "
+                                                  f"({os.path.getsize(path) / 1048576:.1f} MB)"))
+
+        def rendered(st, _files):
+            if st != "done":
+                finish(st, msg="Export cancelled." if st == "cancelled" else "Export failed: the frames were "
+                       "not rendered (see the Console / error window).")
+                return
+            names = seq_export.sequence_files(inner, "SEQ_PNG", start, end)
+            frames = {start + i: f for i, f in enumerate(names) if os.path.isfile(f)}
+            if len(frames) != len(names):
+                finish("failed", msg="Export failed: not every frame was rendered.", error="missing frames")
+                return
+            dlg = QtWidgets.QProgressDialog("Burning in Blue Pencil…", "Cancel", 0, len(frames), win)
+            dlg.setWindowTitle("Export Video")
+            dlg.setWindowModality(QtCore.Qt.WindowModal)
+            dlg.setMinimumDuration(0)
+            state["dlg"] = dlg
+
+            def prog(i, total):
+                dlg.setValue(i)
+                QtWidgets.QApplication.processEvents(QtCore.QEventLoop.ExcludeUserInputEvents)
+                return not dlg.wasCanceled()
+            try:
+                seq_export.burn_blue_pencil(frames, prog)
+            except Exception as ex:
+                if dlg.wasCanceled():
+                    finish("cancelled", msg="Export cancelled.")
+                else:
+                    bridge.log(f"Video Sequencer: Blue Pencil burn-in failed:\n{traceback.format_exc()}", "ERROR")
+                    finish("failed", msg=f"Export failed: {ex}", error=str(ex))
+                return
+            dlg.setValue(len(frames))
+            if seq_export.kind(fmt) == "video" and audio:
+                wav = os.path.join(tmp, "sound.wav")
+                try:
+                    seq_export.mixdown("AUDIO_WAV", wav, start, end)
+                except Exception:
+                    bridge.log(f"Video Sequencer: sound mixdown failed:\n{traceback.format_exc()}", "WARNING")
+                    encode(frames)
+                    return
+                watch = seq_export.file_settled(wav)
+                dlg.setLabelText("Mixing the sound…")
+
+                def look():
+                    if watch.done():
+                        encode(frames, wav)
+                    elif watch.failed():
+                        bridge.log("Video Sequencer: the sound mixdown wrote no file – exported without sound",
+                                   "WARNING")
+                        encode(frames)
+                    else:
+                        QtCore.QTimer.singleShot(200, look)
+                QtCore.QTimer.singleShot(200, look)
+                return
+            encode(frames)
+
+        self.export_btn.setEnabled(False)
+        self.status(f"Exporting frames {start}–{end} with Blue Pencil to {path} …")
+        self._export_then = rendered
+        ok = self.export_video(inner, "SEQ_PNG", start, end, quality, scale, False, annotations)
+        if not ok and info["state"] == "running":
+            finish("failed", msg="Export failed: the frames could not be rendered.", error="render did not start")
+            return False
+        if info["state"] == "running":
+            self.last_export = info
+            self.export_btn.setEnabled(False)
+        return True
 
     def _export_viewport(self, start, end, done, files=None):
         """The export with the annotations burnt in: Blender's Viewport Render of the sequencer
