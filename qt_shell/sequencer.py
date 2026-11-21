@@ -205,6 +205,27 @@ def connected(s):
         return []
 
 
+def channel_muted(s):
+    """The channel s lies on is muted (channel header ◌) – Blender neither shows nor plays its strips."""
+    owner = strip_owner(s)
+    chans = getattr(owner, "channels", None)
+    try:
+        return bool(chans is not None and s.channel < len(chans) and chans[s.channel].mute)
+    except Exception:
+        return False
+
+
+def strip_muted(s):
+    """Muted like Blender sees it: its own Mute or its channel's mute (or a muted meta strip around it)."""
+    if s.mute or channel_muted(s):
+        return True
+    try:
+        m = s.parent_meta()
+        return m is not None and strip_muted(m)
+    except Exception:
+        return False
+
+
 def strip_locked(s):
     """Locked like Blender sees it: its own Lock or its channel's lock."""
     return bool(s.lock) or channel_locked(s)
@@ -476,7 +497,7 @@ def update_annotation_visibility(frame=None):
         s = tracks.get(annotation_layer_name(lay))
         if s is None:
             continue
-        hide = bool(s.mute)                  # where it shows: its keys + the empty end key (set_annotation_end_key)
+        hide = strip_muted(s)                # (track or its channel muted) where it shows: its keys + the empty end key (set_annotation_end_key)
         if lay.annotation_hide != hide:
             lay.annotation_hide = hide
 
@@ -993,7 +1014,7 @@ class SeqView(QtWidgets.QWidget):
         p.fillRect(QtCore.QRectF(0, rul, hw, h - rul), QtGui.QColor("#202020"))
         p.setPen(QtGui.QColor("#333333"))
         p.drawLine(hw, rul, hw, h)
-        chans = getattr(se, "channels", None) if se is not None else None
+        chans = self._channels(se)
         p.setFont(small)
         for ch in range(first, last + 1):
             y = self.y_of(ch)
@@ -1089,7 +1110,7 @@ class SeqView(QtWidgets.QWidget):
 
     def _paint_strip(self, p, s, r, is_active, small):
         col = strip_color(s)
-        muted = s.mute
+        muted = strip_muted(s)
         fill = QtGui.QColor(col)
         fill.setAlpha(90 if muted else 225)
         p.setPen(QtCore.Qt.NoPen)
@@ -1339,10 +1360,21 @@ class SeqView(QtWidgets.QWidget):
         tip = f"{s.name}  ·  {s.type.replace('_', ' ').title()}  ·  {s.frame_final_start}–{s.frame_final_end}"
         return (tip, pytips.data_path(s))
 
+    def _channels(self, se=None):
+        """Channels of what the view shows: the open meta strip's own, else the editor's."""
+        try:
+            c = self.ed.container()
+            ch = getattr(c, "channels", None)
+            if ch is not None:
+                return ch
+        except Exception:
+            pass
+        return getattr(se, "channels", None) if se is not None else None
+
     def _header_click(self, pos):
         ch = self.ch_of(pos.y())
         se = editor(True)
-        chans = getattr(se, "channels", None)
+        chans = self._channels(se)
         if chans is None or ch >= len(chans):
             return
         for i, attr in enumerate(("mute", "lock")):
@@ -1662,13 +1694,8 @@ def strips_at(frame):
     chans = getattr(se, "channels", None)
     out = []
     for s in coll(se):
-        if s.mute or s.type == "SOUND" or not (s.frame_final_start <= frame < s.frame_final_end):
+        if strip_muted(s) or s.type == "SOUND" or not (s.frame_final_start <= frame < s.frame_final_end):
             continue
-        try:
-            if chans is not None and s.channel < len(chans) and chans[s.channel].mute:
-                continue
-        except Exception:
-            pass
         out.append(s)
     return sorted(out, key=lambda s: s.channel)
 
@@ -1888,7 +1915,7 @@ class QtPreview(QtWidgets.QWidget):
             if is_drawing_track(x):
                 continue
             has_scene = has_scene or x.type == "SCENE"
-            sig.append((x.as_pointer(), x.type, x.channel, x.frame_final_start, x.frame_final_end, x.mute,
+            sig.append((x.as_pointer(), x.type, x.channel, x.frame_final_start, x.frame_final_end, strip_muted(x),
                         getattr(x, "blend_type", ""), round(float(getattr(x, "blend_alpha", 1.0)), 4)))
         se = editor()
         chans = tuple(c.mute for c in se.channels) if se is not None and hasattr(se, "channels") else ()
@@ -3225,7 +3252,7 @@ class VideoSequencer(QtWidgets.QWidget):
                     commit_msg = commit_msg or "Blue Pencil track range"
                 lay["range"] = [a, b]
                 changed = True
-            vis = not s.mute
+            vis = not strip_muted(s)                # its track or the track's channel muted → hidden
             if lay.get("visible", True) != vis:
                 lay["visible"] = vis
                 edited = True
@@ -4027,7 +4054,7 @@ class VideoSequencer(QtWidgets.QWidget):
             r = fps()
             mixed = None
             for s in all_strips():
-                if s.type != "SOUND" or s.mute or s.sound is None or s.frame_final_end <= frame:
+                if s.type != "SOUND" or strip_muted(s) or s.sound is None or s.frame_final_end <= frame:
                     continue
                 st = max(s.frame_final_start, frame)
                 pos = (st - s.frame_start) / r + float(getattr(s, "sound_offset", 0.0) or 0.0)
