@@ -1493,6 +1493,66 @@ class SeqView(QtWidgets.QWidget):
 
 
 # ---------------------------------------------------------------- properties of the active strip
+class _EffectiveFlag:
+    """The Mute / Lock checkbox of Strip properties: shows what Blender applies – the strip's own flag or its
+    channel's (Lock: also a connected strip's). Unchecking clears the strip's flag and that of its channel."""
+
+    def __init__(self, props, s, attr, box):
+        self.props, self.s, self.attr, self.box = props, s, attr, box
+
+    def widget_ok(self):
+        try:
+            import shiboken6
+            return shiboken6.isValid(self.box)
+        except Exception:
+            return True
+
+    def _state(self):
+        s = self.s
+        if self.attr == "mute":
+            on = strip_muted(s)
+            why = (f"Muted by channel {s.channel} (channel header) – unchecking unmutes the channel"
+                   if on and not s.mute and channel_muted(s) else
+                   "Muted by the meta strip around it" if on and not s.mute else "")
+        else:
+            on = strip_locked(s) or bool(lock_reason(s))
+            why = "" if (s.lock and not channel_locked(s)) or not on else \
+                (lock_reason(s) or "") + " – unchecking unlocks it"
+        return on, why
+
+    def refresh(self):
+        on, why = self._state()
+        self.box.blockSignals(True)
+        self.box.setChecked(on)
+        self.box.blockSignals(False)
+        tip = {"mute": "Mute: the strip is not shown / played.",
+               "lock": "Lock: the strip can't be moved, trimmed or cut."}[self.attr]
+        self.box.setToolTip(tip + (f"\n{why}" if why else ""))
+        self.box.setText("(channel)" if why.startswith(("Muted by channel", "channel")) else
+                         "(connected strip)" if "connected strip" in why else "")
+
+    def apply(self, on):
+        s = self.s
+        try:
+            todo = [s] + (connected(s) if self.attr == "lock" else [])
+            for x in todo:
+                setattr(x, self.attr, bool(on))
+            chans = []
+            if not on:
+                for x in todo:
+                    if (channel_muted(x) if self.attr == "mute" else channel_locked(x)):
+                        setattr(strip_owner(x).channels[x.channel], self.attr, False)
+                        chans.append(x.channel)
+            bridge.undo_push(f"{'' if on else 'Un'}{self.attr.title()} Strip")
+            if chans:
+                self.props.ed.status(f"{'Unmuted' if self.attr == 'mute' else 'Unlocked'} – also channel(s) "
+                                     f"{', '.join(map(str, sorted(set(chans))))}")
+        except Exception:
+            bridge.log(f"Video Sequencer: {self.attr}:\n{traceback.format_exc()}", "WARNING")
+        self.props.ed.after_edit(props=False)
+        self.refresh()
+
+
 class StripProps(QtWidgets.QScrollArea):
     def __init__(self, ed, parent=None):
         super().__init__(parent)
@@ -1548,6 +1608,9 @@ class StripProps(QtWidgets.QScrollArea):
                             ("mute", "Mute"), ("lock", "Lock")):
             if fixed and prop.startswith("frame_final"):
                 self._info_row(lay, label, str(getattr(s, prop)), "Set by the strips the transition joins")
+                continue
+            if prop in ("mute", "lock"):                 # what Blender applies: the strip's or its channel's
+                self._flag_row(lay, label, s, prop)
                 continue
             self._row(lay, label, s, prop)
         t = s.type
@@ -1619,6 +1682,19 @@ class StripProps(QtWidgets.QScrollArea):
         lab.setFont(f)
         lab.setStyleSheet("color:#d0d0d0; border-bottom:1px solid #444; padding-top:6px; padding-bottom:2px;")
         lay.addWidget(lab)
+
+    def _flag_row(self, lay, label, s, attr):
+        row = QtWidgets.QHBoxLayout()
+        lab = QtWidgets.QLabel(label, self.widget())
+        lab.setMinimumWidth(theme.px(78))
+        row.addWidget(lab)
+        box = QtWidgets.QCheckBox(self.widget())
+        row.addWidget(box, 1)
+        lay.addLayout(row)
+        b = _EffectiveFlag(self, s, attr, box)
+        box.toggled.connect(b.apply)
+        self._bindings.append(b)
+        b.refresh()
 
     def _info_row(self, lay, label, text, tip=""):
         row = QtWidgets.QHBoxLayout()
@@ -3536,7 +3612,7 @@ class VideoSequencer(QtWidgets.QWidget):
         if lay is None:
             return False
         s = self.ann_track(annotation_layer_name(lay))
-        return bool(s.mute) if s is not None else bool(lay.annotation_hide)
+        return strip_muted(s) if s is not None else bool(lay.annotation_hide)
 
     def remove_annotation_layer(self, name=None):
         an, lay = self._annotation_layer(name)
