@@ -1889,6 +1889,25 @@ def fix_self_shots(sc=None):
     return len(todo)
 
 
+def esc_down():
+    """Esc pressed while one of this Blender's windows is in front – polled, because long work loops (Cache All
+    Frames) only let Qt handle non-input events. Windows only (elsewhere always False)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        if not (u.GetAsyncKeyState(0x1B) & 0x8001):     # down now, or pressed since the last call
+            return False
+        u.GetForegroundWindow.restype = wintypes.HWND
+        pid = wintypes.DWORD()
+        u.GetWindowThreadProcessId(u.GetForegroundWindow(), ctypes.byref(pid))
+        return pid.value == os.getpid()
+    except Exception:
+        return False
+
+
 def shot_at(frame):
     """The topmost scene strip (shot) at a frame, or None."""
     shots = [s for s in strips_at(frame) if s.type == "SCENE" and s.scene is not None]
@@ -3294,16 +3313,28 @@ class VideoSequencer(QtWidgets.QWidget):
         if blender_playing():
             self.play_sound()
         app_ = QtWidgets.QApplication.instance()
+        esc_down()                                   # forget an Esc pressed before
+        stopped = []
 
         def progress(f, n, total):
-            self.status(f"Caching frame {f} ({n}/{total})…")
+            if esc_down():
+                stopped.append(f)
+                return False
+            self.status(f"Caching frame {f} ({n}/{total})…  Esc stops")
             app_.processEvents(QtCore.QEventLoop.ExcludeUserInputEvents)
+            if esc_down():
+                stopped.append(f)
+                return False
             return True
 
         n = self.qtprev.cache_frames(self._play_range(), progress=progress)
         self.qtprev.request()
         mb = sum(img.sizeInBytes() for img in self.qtprev.cache.values()) / 1048576
-        self.status(f"Cached {len(self.qtprev.cache)} frame(s) of the Video Sequencer ({mb:.0f} MB)")
+        self.last_cache_stopped = bool(stopped)
+        if stopped:
+            self.status(f"Caching stopped (Esc) – {len(self.qtprev.cache)} frame(s) cached ({mb:.0f} MB)")
+        else:
+            self.status(f"Cached {len(self.qtprev.cache)} frame(s) of the Video Sequencer ({mb:.0f} MB)")
         return n
 
     def _auto_cache_step(self):
