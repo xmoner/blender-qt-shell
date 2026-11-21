@@ -1776,6 +1776,119 @@ def strips_at(frame):
     return sorted(out, key=lambda s: s.channel)
 
 
+# ---------------------------------------------------------------- the scene Camera Shots show
+SHOTS_OF = "qtshell_shots_of"          # on the shots scene: the name of the scene it mirrors
+SHOTS_SCENE = "qtshell_shots_scene"    # on the scene: the name of its shots scene
+
+
+def is_shot_scene(scn):
+    try:
+        return bool(scn is not None and scn.get(SHOTS_OF))
+    except Exception:
+        return False
+
+
+def shot_scene(sc=None, create=True):
+    """The linked copy of sc that Camera Shots show. Blender never renders a scene strip of the scene whose
+    sequencer holds it (it would render itself – recursion guard), so a shot of this scene was black in both
+    previews and in renders. The copy shares every collection and object (and the world), so it always shows
+    the scene as it is; `sync_shot_scene` keeps its links, camera, frame range and render settings in step."""
+    sc = sc or bpy.context.scene
+    if sc is None or is_shot_scene(sc):
+        return None
+    shots = bpy.data.scenes.get(sc.get(SHOTS_SCENE, "") or "")
+    if shots is None or shots.get(SHOTS_OF) is None:
+        shots = next((x for x in bpy.data.scenes if x.get(SHOTS_OF) == sc.name and x != sc), None)
+    if shots is None:
+        if not create:
+            return None
+        shots = bpy.data.scenes.new(f"{sc.name} · Shots")
+    shots[SHOTS_OF] = sc.name
+    sc[SHOTS_SCENE] = shots.name
+    sync_shot_scene(sc, shots)
+    return shots
+
+
+def sync_shot_scene(sc, shots):
+    """Links the scene's collections / objects into its shots scene (and drops what the scene no longer has),
+    and copies the settings a shot render uses. Cheap when nothing changed."""
+    root, mine = sc.collection, shots.collection
+    want = {c.as_pointer(): c for c in root.children}
+    for c in list(mine.children):
+        if c.as_pointer() not in want:
+            mine.children.unlink(c)
+    have = {c.as_pointer() for c in mine.children}
+    for p, c in want.items():
+        if p not in have:
+            mine.children.link(c)
+    want = {o.as_pointer(): o for o in root.objects}
+    for o in list(mine.objects):
+        if o.as_pointer() not in want:
+            mine.objects.unlink(o)
+    have = {o.as_pointer() for o in mine.objects}
+    for p, o in want.items():
+        if p not in have:
+            mine.objects.link(o)
+    for attr in ("world", "camera", "frame_start", "frame_end"):
+        try:
+            if getattr(shots, attr) != getattr(sc, attr):
+                setattr(shots, attr, getattr(sc, attr))
+        except Exception:
+            pass
+    r, rs = sc.render, shots.render
+    for attr in ("engine", "resolution_x", "resolution_y", "pixel_aspect_x", "pixel_aspect_y", "fps", "fps_base",
+                 "film_transparent"):
+        try:
+            if getattr(rs, attr) != getattr(r, attr):
+                setattr(rs, attr, getattr(r, attr))
+        except Exception:
+            pass
+    for attr in ("view_transform", "look", "exposure", "gamma"):
+        try:
+            if getattr(shots.view_settings, attr) != getattr(sc.view_settings, attr):
+                setattr(shots.view_settings, attr, getattr(sc.view_settings, attr))
+        except Exception:
+            pass
+    try:
+        d, ds = sc.display.shading, shots.display.shading
+        for attr in ("light", "color_type", "show_shadows", "show_cavity", "studio_light"):
+            if getattr(ds, attr) != getattr(d, attr):
+                setattr(ds, attr, getattr(d, attr))
+    except Exception:
+        pass
+
+
+def fix_self_shots(sc=None):
+    """Camera shots of the scene itself (made before 0.117.3, or by hand) point at its shots scene instead,
+    keeping their place, length and camera. Returns the number changed."""
+    sc = sc or bpy.context.scene
+    se = sc.sequence_editor if sc is not None else None
+    if se is None or is_shot_scene(sc):
+        return 0
+    todo = [x for x in all_strips() if x.type == "SCENE" and x.scene == sc
+            and getattr(x, "scene_input", "CAMERA") == "CAMERA"]
+    if not todo:
+        shots = shot_scene(sc, create=False)
+        if shots is not None:
+            sync_shot_scene(sc, shots)
+        return 0
+    shots = shot_scene(sc)
+    for x in todo:
+        keep = (x.frame_start, x.frame_final_start, x.frame_final_end, x.channel, x.scene_camera)
+        x.scene = shots
+        try:
+            if x.frame_start != keep[0]:
+                x.frame_start = keep[0]
+            x.frame_final_start, x.frame_final_end = keep[1], keep[2]
+            if x.scene_camera != keep[4]:
+                x.scene_camera = keep[4]
+            if x.channel != keep[3]:
+                x.channel = keep[3]
+        except Exception:
+            pass
+    return len(todo)
+
+
 def shot_at(frame):
     """The topmost scene strip (shot) at a frame, or None."""
     shots = [s for s in strips_at(frame) if s.type == "SCENE" and s.scene is not None]
@@ -3105,6 +3218,13 @@ class VideoSequencer(QtWidgets.QWidget):
                 self.sync_ann_tracks()
             except Exception:
                 bridge.log(f"Video Sequencer: annotation tracks:\n{traceback.format_exc()}", "WARNING")
+            try:
+                if fix_self_shots():
+                    self.after_edit()
+                    self.status("Camera shots now show the scene's shots scene (Blender doesn't render a scene "
+                                "strip of its own scene)")
+            except Exception:
+                bridge.log(f"Video Sequencer: camera shots:\n{traceback.format_exc()}", "WARNING")
         w = self.preview.bl_window()
         if w is not None and follow_scene(w):
             self.preview.redraw()
@@ -4276,7 +4396,7 @@ class VideoSequencer(QtWidgets.QWidget):
         scm = m.addMenu("Scene")
         if blicons.has("SCENE_DATA"):
             scm.setIcon(blicons.icon("SCENE_DATA"))
-        for scn in bpy.data.scenes:
+        for scn in [x for x in bpy.data.scenes if not is_shot_scene(x)]:
             act(scm, scn.name, lambda s=scn: self.add_scene(s), "SCENE_DATA",
                 f'add_scene(bpy.data.scenes["{scn.name}"])')
         m.addSeparator()
@@ -4445,7 +4565,8 @@ class VideoSequencer(QtWidgets.QWidget):
         shots = [s for s in coll(c) if s.type == "SCENE" and getattr(s, "scene_camera", None) is not None]
         at = max((s.frame_final_end for s in shots), default=sc.frame_start)
         ch = min((s.channel for s in shots), default=1)
-        s = coll(c).new_scene(name=cam.name, scene=sc, channel=free_channel(c, at, at + 1, ch),
+        shots_sc = shot_scene(sc)                  # not sc itself: Blender won't render a strip of its own scene
+        s = coll(c).new_scene(name=cam.name, scene=shots_sc, channel=free_channel(c, at, at + 1, ch),
                               frame_start=at - (start - sc.frame_start))
         s.scene_camera = cam
         try:
