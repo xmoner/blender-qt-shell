@@ -117,6 +117,23 @@ def ensure_view3d():
     return find_view3d()
 
 
+def spare_area(prefer=("DOPESHEET_EDITOR", "GRAPH_EDITOR", "IMAGE_EDITOR", "PROPERTIES")):
+    """(window, area) of a hidden Blender window that may be switched to another editor for a moment
+    (sequencer / UV operators) – never a 3D view. Searches every window, Blender's main one first: the
+    3D view Qt Shell works through can be a helper window with only that view (Blender's embedded viewport),
+    which has nothing to borrow. Preferred editor types first. (None, None) when there is none."""
+    wm = bpy.context.window_manager
+    if wm is None:
+        return None, None
+    wins = [w for w in wm.windows if w.screen is not None]
+    for t in tuple(prefer) + (None,):                # in the order asked, then anything but a 3D view
+        for w in wins:
+            for a in w.screen.areas:
+                if a.type != "VIEW_3D" and (t is None or a.type == t):
+                    return w, a
+    return None, None
+
+
 @contextmanager
 def blender_context(**extra):
     """temp_override onto a 3D view – bpy.context and bpy.ops then behave as in the editor."""

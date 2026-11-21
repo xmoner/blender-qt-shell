@@ -334,14 +334,11 @@ class seq_context:
         if host is not None:
             win, area = host.bl_window(), host.area()
         if area is None:
-            found = bridge.ensure_view3d()
-            if not found:
+            if not bridge.ensure_view3d():
                 raise RuntimeError("No Blender window.")
-            win = found[0]
-            area = next((a for a in win.screen.areas if a.type in ("DOPESHEET_EDITOR", "GRAPH_EDITOR",
-                                                                   "IMAGE_EDITOR", "PROPERTIES")), None)
+            win, area = bridge.spare_area()          # not the window of Blender's embedded 3D view
             if area is None:
-                area = next(a for a in win.screen.areas if a.type != "VIEW_3D")
+                raise RuntimeError("No Blender editor area to borrow for the sequencer.")
             old = area.ui_type
             area.ui_type = "SEQUENCE_EDITOR"
             self._restore.append(lambda a=area, o=old: setattr(a, "ui_type", o))
@@ -2320,6 +2317,13 @@ class QtPreview(QtWidgets.QWidget):
         from . import burnin
         from .viewport import eevee_samples
         sc = s.scene
+        if is_shot_scene(sc):                        # a camera shot: its "· Shots" scene mirrors this scene
+            sc = bpy.data.scenes.get(sc.get(SHOTS_OF, "") or "") or bpy.context.scene
+        if sc != bpy.context.scene:
+            # another scene isn't evaluated in any window – drawing it offscreen crashes Blender
+            # (BKE_view_layer_active_object_get): Blender's own preview / render shows it
+            self.notes.append(f"“{s.name}”: scene {sc.name} – shown in Blender's preview")
+            return None
         cam = getattr(s, "scene_camera", None) or sc.camera
         if cam is None:
             self.notes.append(f"“{s.name}”: no camera")
@@ -2331,7 +2335,7 @@ class QtPreview(QtWidgets.QWidget):
         if space is None:
             return None
         view, proj = burnin.camera_mats(sc, cam, w, h)
-        vl = bpy.context.view_layer if sc == bpy.context.scene else sc.view_layers[0]
+        vl = bpy.context.view_layer
         off = gpu.types.GPUOffScreen(w, h)
         ov = getattr(space, "overlay", None)
         keep = getattr(ov, "show_overlays", None)

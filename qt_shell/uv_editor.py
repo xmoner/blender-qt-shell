@@ -180,14 +180,11 @@ def checker_image():
 @contextmanager
 def uv_context(image=None):
     """A UV editor area of the hidden Blender window for bpy.ops.uv.* (the timeline area for a moment)."""
-    found = bridge.ensure_view3d()
-    if not found:
+    if not bridge.ensure_view3d():
         raise RuntimeError("No Blender window.")
-    win = found[0]
-    area = next((a for a in win.screen.areas if a.type in ("DOPESHEET_EDITOR", "IMAGE_EDITOR", "GRAPH_EDITOR")),
-                None)
+    win, area = bridge.spare_area(("DOPESHEET_EDITOR", "IMAGE_EDITOR", "GRAPH_EDITOR"))
     if area is None:
-        area = next(a for a in win.screen.areas if a.type not in ("VIEW_3D",))
+        raise RuntimeError("No Blender editor area to borrow for the UV editor.")
     old = area.ui_type
     try:
         area.ui_type = "UV"
