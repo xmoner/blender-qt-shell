@@ -328,6 +328,92 @@ def show_panel(space=None):
     d.raise_()
 
 
+# ---------------------------------------------------------------- Timeline ticks
+TL_COLOR = "#ff9f1a"          # annotation ticks – orange (Blue Pencil's are blue)
+TL_SEL_OUTLINE = "#2b1600"
+
+
+def timeline_place():
+    """The place whose active annotation layer shows its drawings as ticks in the Timeline, or None: the 3D view's
+    while the Annotate tool is on, the Video Sequencer's while Annotate is on in its preview, else the Annotations
+    panel's tab while the panel is shown."""
+    try:
+        if PLACES["VIEW3D"].tool_on():
+            return PLACES["VIEW3D"]
+        if PLACES["VIDEO"].tool_on():
+            return PLACES["VIDEO"]
+        mw = _mw()
+        panel = getattr(mw, "annotations", None)
+        if panel is not None and panel.isVisible():
+            return panel.place()
+    except Exception:
+        pass
+    return None
+
+
+def timeline_keys():
+    """(layer, frames with a drawing) of the active annotation layer for the Timeline, or (None, [])."""
+    pl = timeline_place()
+    if pl is None:
+        return None, []
+    try:
+        lay = pl.active()
+    except Exception:
+        lay = None
+    if lay is None:
+        return None, []
+    return lay, keys(lay)
+
+
+def timeline_y(bar):
+    """Centre line of the annotation ticks: under the Blue Pencil ticks when those are shown too."""
+    y = bar.ruler_h() + theme.px(11)
+    try:
+        from . import bluepencil
+        if bluepencil.active_layer() is not None and bluepencil.timeline_visible():
+            y += theme.px(11)
+    except Exception:
+        pass
+    return y
+
+
+def paint_timeline(bar, p):
+    """Annotation frame ticks of the active layer in the Timeline – orange, longer and thicker than Blue Pencil's
+    blue ones, so the two can be told apart."""
+    lay, ks = timeline_keys()
+    if lay is None or not ks:
+        return
+    y = timeline_y(bar)
+    hw, hh = theme.px(5), theme.px(9)
+    cur = bpy.context.scene.frame_current
+    p.save()
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    for k in ks:
+        x = bar.frame_to_x(k)
+        if x < -10 or x > bar.width() + 10:
+            continue
+        p.setPen(QtGui.QPen(QtGui.QColor("#ffffff" if k == cur else TL_SEL_OUTLINE), 1.2))
+        p.setBrush(QtGui.QColor(TL_COLOR))
+        p.drawRoundedRect(QtCore.QRectF(x - hw, y - hh, 2 * hw, 2 * hh), 2.0, 2.0)
+    p.restore()
+
+
+_tl_sig = None
+
+
+def _timeline_poll():
+    """Repaint the Timeline when the annotation ticks it should show change (strokes, layer, tool)."""
+    global _tl_sig
+    lay, ks = timeline_keys()
+    sig = (layer_name(lay) if lay is not None else None, tuple(ks))
+    if sig != _tl_sig:
+        _tl_sig = sig
+        try:
+            _mw().timeline.bar.update()
+        except Exception:
+            pass
+
+
 def _swatch(color, size):
     pm = QtGui.QPixmap(size, size)
     pm.fill(QtGui.QColor(color))
@@ -542,6 +628,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.sync(force=True)
 
     def _poll(self):
+        _timeline_poll()
         if self.isVisible():
             self.sync()
 

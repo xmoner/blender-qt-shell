@@ -564,6 +564,11 @@ class TimeBar(QtWidgets.QWidget):
             p.setBrush(QtGui.QColor(scol if k in self.sel else col))
             p.drawPolygon(poly)
         try:
+            from . import annotate_panel
+            annotate_panel.paint_timeline(self, p)  # annotation frame ticks (active layer) – orange, bigger
+        except Exception as ex:
+            bridge.log(f"Annotation timeline: {ex}", "WARNING")
+        try:
             from . import bluepencil
             bluepencil.paint_timeline(self, p)      # Blue Pencil frame ticks (active layer)
         except Exception as ex:
