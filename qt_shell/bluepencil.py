@@ -932,9 +932,39 @@ def paint_timeline(bar, p):
         if x < -10 or x > bar.width() + 10:
             continue
         col = "#e04040" if k in clash else ("#ffffff" if k in _tl_sel else base)
-        p.setBrush(QtGui.QColor(col))
-        p.drawRoundedRect(QtCore.QRectF(x - hw, y - hh, 2 * hw, 2 * hh), 1.5, 1.5)
+        r = QtCore.QRectF(x - hw, y - hh, 2 * hw, 2 * hh)
+        if not lay["frames"].get(str(k)):              # blank key: hollow – nothing is drawn from here on
+            p.setPen(QtGui.QPen(QtGui.QColor(col), max(1.5, theme.px(2))))
+            p.setBrush(QtGui.QColor("#1b1b1b"))
+            p.drawRoundedRect(r.adjusted(0.75, 0.75, -0.75, -0.75), 1.5, 1.5)
+            p.setPen(QtGui.QPen(QtGui.QColor("#0d1a2e"), 1))
+        else:
+            p.setBrush(QtGui.QColor(col))
+            p.drawRoundedRect(r, 1.5, 1.5)
     p.restore()
+
+
+def blank_keys(layer):
+    """Frames of a layer's blank keys (keys without strokes – nothing is shown from there to the next key)."""
+    return sorted(int(k) for k, v in layer["frames"].items() if not v)
+
+
+def insert_blank_key(f=None):
+    """A blank key on the active layer at frame f (default the current one): the drawing before it stops
+    showing there – an "empty" frame in the viewport. A key with a drawing on that frame is left alone."""
+    lay = active_layer()
+    if not _editable(lay):
+        return False
+    f = _frame_arg(f)
+    if lay["frames"].get(str(f)):
+        _status(f"Blue Pencil: frame {f} has a drawing – delete it first to make it blank")
+        return False
+    if str(f) in lay["frames"]:
+        _status(f"Blue Pencil: frame {f} is blank already")
+        return False
+    lay["frames"][str(f)] = []
+    commit("Insert Blank Key")
+    return True
 
 
 def timeline_press(bar, ev):

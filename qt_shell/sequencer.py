@@ -463,17 +463,47 @@ def ann_tracks():
 _ANNOTATING = {"on": False}     # the Annotate tool is on: the active layer stays visible outside its track
 
 
-def set_annotation_end_key(lay, end):
+ANN_BLANKS = "qtshell_ann_blanks"     # ID prop of video_annotation(): {layer name: "f1,f2"} – blank keys the user made
+
+
+def ann_blanks(name):
+    """Frames of the blank keys the user put on a video annotation layer (kept by the track sync)."""
+    an = video_annotation()
+    try:
+        txt = str(an.get(ANN_BLANKS, {}).get(name, "")) if an is not None else ""
+        return sorted({int(x) for x in txt.split(",") if x.strip()})
+    except Exception:
+        return []
+
+
+def set_ann_blanks(name, frames, old_name=None):
+    """Stores the blank keys of a video annotation layer (old_name: the layer was renamed)."""
+    an = video_annotation()
+    if an is None:
+        return
+    d = {k: str(v) for k, v in dict(an.get(ANN_BLANKS, {})).items()}
+    if old_name is not None:
+        d.pop(old_name, None)
+    frames = sorted({int(f) for f in frames})
+    if frames:
+        d[name] = ",".join(str(f) for f in frames)
+    else:
+        d.pop(name, None)
+    an[ANN_BLANKS] = d
+
+
+def set_annotation_end_key(lay, end, keep=()):
     """An empty key at the track's end: Blender shows a drawing until the next key, so the notes end exactly
     where the track ends – in Blender's preview, while playing and while drawing (no hiding needed, so drawing
     after the end still works: the new key makes the track grow). Other empty keys go (not the current frame's:
     Blender's Annotate may be filling it right now). Returns True when something changed."""
     cur = bpy.context.scene.frame_current
+    keep_set = {int(k) for k in keep if int(k) < end}      # the user's blank keys inside the track stay
     empties = [fr for fr in lay.frames if not len(fr.strokes)]
     keep = next((fr for fr in empties if int(fr.frame_number) == end), None)
     changed = False
     for fr in empties:
-        if fr is not keep and int(fr.frame_number) != cur:
+        if fr is not keep and int(fr.frame_number) != cur and int(fr.frame_number) not in keep_set:
             lay.frames.remove(fr)
             changed = True
     if keep is None and not any(int(fr.frame_number) == end for fr in lay.frames):
@@ -3582,6 +3612,9 @@ class VideoSequencer(QtWidgets.QWidget):
                     frames = sorted(lay.frames, key=lambda f: f.frame_number, reverse=delta > 0)
                     for fr in frames:            # far end first: no two keys on one frame on the way
                         fr.frame_number = int(fr.frame_number) + delta
+                    bl = ann_blanks(name)
+                    if bl:
+                        set_ann_blanks(name, [k + delta for k in bl])
                     ks = annotation_keys(lay)
                     a, b = fs, fe
                     bridge.undo_push("Move annotations with the track")
@@ -3594,7 +3627,12 @@ class VideoSequencer(QtWidgets.QWidget):
                 changed = True
             if ks:                               # the track fits the drawings: first one … last one + hold
                 a, b = ks[0], ks[-1] + hold
-                if set_annotation_end_key(lay, b):
+                bl = ann_blanks(name)
+                live = [k for k in bl if a < k < b and any(int(fr.frame_number) == k and not len(fr.strokes)
+                                                           for fr in lay.frames)]
+                if live != bl:
+                    set_ann_blanks(name, live)   # blanks outside the track or drawn over are forgotten
+                if set_annotation_end_key(lay, b, keep=live):
                     changed = True
             if (s.frame_final_start, s.frame_final_end) != (a, b):
                 if b > s.frame_final_end:

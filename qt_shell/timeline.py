@@ -868,8 +868,52 @@ class TimeBar(QtWidgets.QWidget):
             m.deleteLater()
             return
         tl.fill_key_menu(m)
+        self._drawing_key_menu(m, self.x_to_frame(pos.x()))
         m.exec(gpos)
         m.deleteLater()
+
+    def _drawing_key_menu(self, m, f):
+        """Blank keys of the Blue Pencil / annotation layer shown in the Timeline, at the clicked frame f: from a
+        blank key on nothing of the layer is drawn (an "empty" frame in the viewport)."""
+        from . import annotate_panel, bluepencil
+        items = []
+        try:
+            lay = bluepencil.active_layer()
+            if lay is not None and bluepencil.timeline_visible():
+                if str(f) in lay["frames"] and not lay["frames"][str(f)]:
+                    items.append((f"Blue Pencil: Remove Blank Key at {f}",
+                                  lambda: bluepencil.delete_frame(f),
+                                  f"from qt_shell import bluepencil; bluepencil.delete_frame({f})"))
+                else:
+                    items.append((f"Blue Pencil: Insert Blank Key at {f}",
+                                  lambda: bluepencil.insert_blank_key(f),
+                                  f"from qt_shell import bluepencil; bluepencil.insert_blank_key({f})"))
+        except Exception:
+            pass
+        try:
+            pl, alay, blanks = annotate_panel.timeline_blank_keys()
+            if pl is not None and alay is not None:
+                sp = pl.space
+                if f in blanks:
+                    items.append((f"Annotation: Remove Blank Key at {f}", lambda: pl.delete_blank(pl.active(), f),
+                                  f"from qt_shell import annotate_panel as ap; pl = ap.PLACES['{sp}']; "
+                                  f"pl.delete_blank(pl.active(), {f})"))
+                else:
+                    items.append((f"Annotation: Insert Blank Key at {f}", lambda: pl.insert_blank(pl.active(), f),
+                                  f"from qt_shell import annotate_panel as ap; pl = ap.PLACES['{sp}']; "
+                                  f"pl.insert_blank(pl.active(), {f})"))
+        except Exception:
+            pass
+        if not items:
+            return
+        m.addSeparator()
+        for text, fn, cmd in items:
+            a = m.addAction(icons.icon("bp_frame_insert"), text)
+            a.setToolTip("A blank key: the drawing before it stops showing from this frame on (an empty frame). "
+                         "Shown as a hollow tick.")
+            a.triggered.connect(lambda _c=False, fn=fn: (fn(), annotate_panel._timeline_poll(force=True),
+                                                          self.update()))
+            pytips.tag(a, cmd)
 
     # --- keys
     _KEYS = ("timeline.delete_keys", "timeline.select_all", "timeline.deselect_all", "timeline.copy_keys",

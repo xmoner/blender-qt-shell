@@ -28,6 +28,13 @@ def _settings():
     return QtCore.QSettings("QtShell", "QtShell")
 
 
+def _status(msg):
+    try:
+        _mw().statusBar().showMessage(msg, 5000)
+    except Exception:
+        pass
+
+
 def _mw():
     from . import app
     return getattr(app, "_win", None)
@@ -41,6 +48,14 @@ def keys(lay):
     """Frames with a drawing on a layer (empty keys – a track's end key – left out), sorted."""
     try:
         return sorted(int(f.frame_number) for f in lay.frames if len(f.strokes))
+    except Exception:
+        return []
+
+
+def empty_keys(lay):
+    """Frames of a layer's keys without strokes."""
+    try:
+        return sorted(int(f.frame_number) for f in lay.frames if not len(f.strokes))
     except Exception:
         return []
 
@@ -137,6 +152,9 @@ class Place:
         lay.info = new
         if self.space == "VIDEO":                  # its track follows the name
             from . import sequencer
+            bl = sequencer.ann_blanks(old)
+            if bl:
+                sequencer.set_ann_blanks(new, bl, old_name=old)
             for s in sequencer.ann_tracks():
                 if s.get(sequencer.ANN_PROP) == old:
                     s[sequencer.ANN_PROP] = new
@@ -183,6 +201,73 @@ class Place:
     def set_thickness(self, lay, px):
         lay.thickness = int(px)
         self.redraw()
+
+    # -- blank keys: from a blank key on, nothing of the layer is shown (until its next drawing)
+    def blank_keys(self, lay):
+        """Frames of the layer's blank keys (Video Sequencer: the ones the user made – not the track's end key)."""
+        if lay is None:
+            return []
+        empties = empty_keys(lay)
+        if self.space == "VIDEO":
+            from . import sequencer
+            return [k for k in sequencer.ann_blanks(layer_name(lay)) if k in empties]
+        return empties
+
+    def insert_blank(self, lay, f=None):
+        """A blank key at frame f (default the current one): the drawing before it stops showing there – an
+        empty frame in the viewport / preview. Refused when a drawing is on that frame."""
+        if lay is None:
+            return False
+        f = int(bpy.context.scene.frame_current if f is None else f)
+        fr = next((x for x in lay.frames if int(x.frame_number) == f), None)
+        if fr is not None and len(fr.strokes):
+            _status(f"Annotations: frame {f} has a drawing – delete it first to make it blank")
+            return False
+        if self.space == "VIDEO":
+            from . import sequencer
+            name = layer_name(lay)
+            if f in sequencer.ann_blanks(name):
+                _status(f"Annotations: frame {f} is blank already")
+                return False
+            ks = keys(lay)
+            if not ks or f <= ks[0]:
+                _status("Annotations: a blank key goes after a drawing of the layer (inside its track)")
+                return False
+            if fr is None:
+                lay.frames.new(f)
+            sequencer.set_ann_blanks(name, sequencer.ann_blanks(name) + [f])
+            vs = self._vs()
+            if vs is not None:
+                vs.sync_ann_tracks()
+        else:
+            if fr is not None:
+                _status(f"Annotations: frame {f} is blank already")
+                return False
+            lay.frames.new(f)
+        bridge.undo_push("Insert Blank Annotation Key")
+        self.redraw()
+        return True
+
+    def delete_blank(self, lay, f=None):
+        """Removes the blank key at frame f (default the current one) – the drawing before it shows on again."""
+        if lay is None:
+            return False
+        f = int(bpy.context.scene.frame_current if f is None else f)
+        if f not in self.blank_keys(lay):
+            return False
+        fr = next((x for x in lay.frames if int(x.frame_number) == f and not len(x.strokes)), None)
+        if fr is not None:
+            lay.frames.remove(fr)
+        if self.space == "VIDEO":
+            from . import sequencer
+            name = layer_name(lay)
+            sequencer.set_ann_blanks(name, [k for k in sequencer.ann_blanks(name) if k != f])
+            vs = self._vs()
+            if vs is not None:
+                vs.sync_ann_tracks()
+        bridge.undo_push("Delete Blank Annotation Key")
+        self.redraw()
+        return True
 
     # -- drawings of the active layer
     def delete_drawing(self, lay):
@@ -387,6 +472,20 @@ def timeline_keys():
     return lay, keys(lay)
 
 
+def timeline_blank_keys():
+    """(place, layer, blank key frames) of the active annotation layer shown in the Timeline, or (None, None, [])."""
+    pl = timeline_place()
+    if pl is None:
+        return None, None, []
+    try:
+        lay = pl.active()
+    except Exception:
+        lay = None
+    if lay is None:
+        return pl, None, []
+    return pl, lay, pl.blank_keys(lay)
+
+
 def timeline_y(bar):
     """Centre line of the annotation ticks: under the Blue Pencil ticks when those are shown too."""
     from .timeline import tick_half
@@ -404,7 +503,8 @@ def paint_timeline(bar, p):
     """Annotation frame ticks of the active layer in the Timeline – orange, longer and thicker than Blue Pencil's
     blue ones, so the two can be told apart."""
     lay, ks = timeline_keys()
-    if lay is None or not ks:
+    _pl, _lay, blanks = timeline_blank_keys()
+    if lay is None or not (ks or blanks):
         return
     y = timeline_y(bar)
     from .timeline import tick_half, tick_style
@@ -420,6 +520,14 @@ def paint_timeline(bar, p):
         p.setPen(QtGui.QPen(QtGui.QColor("#ffffff" if k == cur else TL_SEL_OUTLINE), 1.2))
         p.setBrush(fill)
         p.drawRoundedRect(QtCore.QRectF(x - hw, y - hh, 2 * hw, 2 * hh), 2.0, 2.0)
+    for k in blanks:                    # blank keys: hollow – nothing of the layer shows from there on
+        x = bar.frame_to_x(k)
+        if x < -10 or x > bar.width() + 10:
+            continue
+        r = QtCore.QRectF(x - hw, y - hh, 2 * hw, 2 * hh).adjusted(0.75, 0.75, -0.75, -0.75)
+        p.setPen(QtGui.QPen(QtGui.QColor("#ffffff") if k == cur else fill, max(1.5, theme.px(2))))
+        p.setBrush(QtGui.QColor("#1b1b1b"))
+        p.drawRoundedRect(r, 2.0, 2.0)
     p.restore()
 
 
@@ -430,7 +538,7 @@ def _timeline_poll(force=False):
     """Repaint the Timeline when the annotation ticks it should show change (strokes, layer, tool, mode)."""
     global _tl_sig
     lay, ks = timeline_keys()
-    sig = (layer_name(lay) if lay is not None else None, tuple(ks))
+    sig = (layer_name(lay) if lay is not None else None, tuple(ks), tuple(timeline_blank_keys()[2]))
     if sig != _tl_sig or force:
         _tl_sig = sig
         try:
@@ -614,6 +722,14 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.del_draw_btn.setToolTip("Deletes the active layer's drawing shown on the current frame")
         self.del_draw_btn.clicked.connect(lambda _c=False: self._delete_drawing())
         drow2.addWidget(self.del_draw_btn)
+        self.blank_btn = QtWidgets.QPushButton("Blank Key", inner)
+        self.blank_btn.setToolTip("Inserts a blank key on the current frame: the drawing before it stops showing "
+                                  "here – an empty frame (hollow tick in the Timeline). Again on a blank key "
+                                  "removes it. Right-click in the Timeline does the same at any frame.")
+        self.blank_btn.clicked.connect(lambda _c=False: self._toggle_blank())
+        pytips.tag(self.blank_btn, "from qt_shell import annotate_panel as ap; pl = ap.PLACES['VIEW3D']; "
+                                   "pl.insert_blank(pl.active())")
+        drow2.addWidget(self.blank_btn)
         self.clear_btn = QtWidgets.QPushButton("Clear Layer", inner)
         self.clear_btn.setToolTip("Deletes every drawing of the active layer (the layer stays)")
         self.clear_btn.clicked.connect(lambda _c=False: self._clear_layer())
@@ -677,7 +793,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         act = pl.active()
         return (self.space(), pl.tool_on(), pl.tool_index(), bpy.context.scene.frame_current,
                 tuple((layer_name(l), pl.hidden(l), tuple(round(c, 3) for c in l.color), int(l.thickness),
-                       tuple(keys(l))) for l in lays),
+                       tuple(keys(l)), tuple(empty_keys(l))) for l in lays),
                 layer_name(act) if act is not None else None,
                 pl.placement() if self.space() == "VIEW3D" else None,
                 pl.shown() if self.space() == "VIEW3D" else None)
@@ -734,7 +850,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.layer_list.blockSignals(False)
         has = act is not None
         for w in (self.del_btn, self.up_btn, self.down_btn, self.color_btn, self.thick, self.prev_btn,
-                  self.next_btn, self.del_draw_btn, self.clear_btn):
+                  self.next_btn, self.del_draw_btn, self.clear_btn, self.blank_btn):
             w.setEnabled(has)
         c = tuple(act.color)[:3] if has else NOTE_BLUE
         pm = QtGui.QPixmap(theme.px(28), theme.px(14))
@@ -753,6 +869,11 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         else:
             txt = ", ".join(f"[{k}]" if k == f else str(k) for k in ks[:40])
             self.keys_lbl.setText(f"On frames: {txt}{' …' if len(ks) > 40 else ''}")
+        bl = self.place().blank_keys(act) if has else []
+        if bl:
+            self.keys_lbl.setText(self.keys_lbl.text() + "\nBlank keys: " +
+                                  ", ".join(f"[{k}]" if k == f else str(k) for k in bl[:40]))
+        self.blank_btn.setText("Remove Blank Key" if f in bl else "Blank Key")
         self.prev_btn.setEnabled(has and any(k < f for k in ks))
         self.next_btn.setEnabled(has and any(k > f for k in ks))
         self.hint.setText("Notes over Blender's preview – the Video Sequencer switches to Blender preview to draw; "
@@ -857,6 +978,17 @@ class AnnotationPanel(QtWidgets.QScrollArea):
             from . import bluepencil
             bluepencil.go_to(tgt)
             self.sync(force=True)
+
+    def _toggle_blank(self):
+        pl = self.place()
+        lay = pl.active()
+        f = bpy.context.scene.frame_current
+        if f in pl.blank_keys(lay):
+            pl.delete_blank(lay, f)
+        else:
+            pl.insert_blank(lay, f)
+        self.sync(force=True)
+        _timeline_poll(force=True)
 
     def _delete_drawing(self):
         if not self.place().delete_drawing(self.place().active()):
