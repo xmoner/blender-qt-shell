@@ -2820,6 +2820,8 @@ class PreviewPane(QtWidgets.QWidget):
             m.clear()
         ed = self.ed
         py_tag(m.addAction("New Annotation Layer…", self._new_annotation_layer), "add_annotation_layer('Notes')")
+        py_tag(m.addAction("Annotations Panel…", lambda: __import__(__package__ + ".annotate_panel", fromlist=["x"])
+                           .show_panel("VIDEO")), "qt_shell.annotate_panel.show_panel('VIDEO')")
         an = video_annotation()
         layers = list(an.layers) if an is not None else []
         if layers:

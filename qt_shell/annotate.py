@@ -69,7 +69,8 @@ def note_layer(create=False):
     an = scene_annotation(create)
     if an is None:
         return None
-    act = getattr(an.layers, "active", None)
+    from .sequencer import active_annotation_layer   # Blender 5: layers.active_note / active_index
+    act = active_annotation_layer(an)
     if act is not None and layer_name(act) != RULER_LAYER:
         return act
     for lay in reversed(list(an.layers)):
@@ -948,6 +949,11 @@ def create_primitive(kind, center, rot, size):
 
 
 # ---------------------------------------------------------------- tool header (3D header)
+def _open_panel():
+    from . import annotate_panel
+    annotate_panel.show_panel("VIEW3D")
+
+
 class ToolHeader(QtWidgets.QWidget):
     """Options of the active tool in the 3D header (Blender shows them in its tool header):
     Annotate – colour, thickness, placement (and the eraser radius); Add – orientation, base, aspect and
@@ -994,6 +1000,13 @@ class ToolHeader(QtWidgets.QWidget):
         self.radius.setToolTip("Eraser radius (Ctrl + mouse wheel in the view)")
         self.radius.valueChanged.connect(lambda v: self.state.set_eraser_radius(v))
         a.addWidget(self.radius)
+        self.panel_btn = QtWidgets.QToolButton(self.ann)
+        self.panel_btn.setText("Layers…")
+        self.panel_btn.setAutoRaise(True)
+        self.panel_btn.setToolTip("Annotations panel – layers, colours, drawings (like the Blue Pencil panel)")
+        pytips.tag(self.panel_btn, "qt_shell.annotate_panel.show_panel('VIEW3D')")
+        self.panel_btn.clicked.connect(lambda _c=False: _open_panel())
+        a.addWidget(self.panel_btn)
         lay.addWidget(self.ann)
         # add primitive
         self.addw = QtWidgets.QWidget(self)

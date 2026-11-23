@@ -629,6 +629,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._dock("bluepencil", "Blue Pencil", self.bluepencil, QtCore.Qt.RightDockWidgetArea)
         self.docks["bluepencil"].hide()
         self._bp_panel_shown = False
+        # Annotations panel (3D Viewport / Video Sequencer notes: tools, colour, layers, drawings) – like Blue Pencil
+        from .annotate_panel import AnnotationPanel
+        self.annotations = AnnotationPanel(hub)
+        self._dock("annotations", "Annotations", self.annotations, QtCore.Qt.RightDockWidgetArea)
+        self.docks["annotations"].hide()
+        self._ann_panel_shown = False
         from .sculpt_panel import SculptPanel
         self.sculpt_panel = SculptPanel(hub)
         self._dock("sculpt", "Sculpt", self.sculpt_panel, QtCore.Qt.RightDockWidgetArea)
@@ -1998,6 +2004,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._bp_panel_shown = True
             if not self.docks["bluepencil"].isVisible():
                 bluepencil.show_panel()
+        from . import gizmo as _gz
+        if _gz.tool_state(self.hub).tool == "ANNOTATE" and not self._ann_panel_shown:
+            self._ann_panel_shown = True          # the first time Annotate is picked its panel opens
+            if not self.docks["annotations"].isVisible():
+                from . import annotate_panel
+                annotate_panel.show_panel("VIEW3D")
 
     def view_animation(self, source=None):
         """Render → View Animation (Ctrl+F11): the Animation Player (rendered frames + timeline).
