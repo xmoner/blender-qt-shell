@@ -888,19 +888,22 @@ def timeline_visible():
 
 
 def _tl_y(bar):
-    return bar.ruler_h() + theme.px(7)
+    from .timeline import tick_half
+    return bar.ruler_h() + theme.px(2) + tick_half("bp")[1]
 
 
 def timeline_key_at(bar, pos):
     lay = active_layer()
     if lay is None or not timeline_visible():
         return None
-    if abs(pos.y() - _tl_y(bar)) > theme.px(6):
+    from .timeline import tick_half
+    hw, hh = tick_half("bp")
+    if abs(pos.y() - _tl_y(bar)) > hh + theme.px(1):
         return None
     best = None
     for k in keys(lay):
         dx = abs(bar.frame_to_x(k) - pos.x())
-        if dx <= theme.px(6) and (best is None or dx < best[0]):
+        if dx <= max(hw + theme.px(1), theme.px(4)) and (best is None or dx < best[0]):
             best = (dx, k)
     return best[1] if best else None
 
@@ -912,7 +915,9 @@ def paint_timeline(bar, p):
     drag = getattr(bar, "_bp_drag", None)
     ks = keys(lay)
     y = _tl_y(bar)
-    hw, hh = theme.px(3), theme.px(5)
+    from .timeline import tick_half, tick_style
+    hw, hh = tick_half("bp")
+    base = tick_style("bp")["color"]
     moved = {}
     clash = set()
     if drag is not None and drag["delta"]:
@@ -926,7 +931,7 @@ def paint_timeline(bar, p):
         x = bar.frame_to_x(moved.get(k, k))
         if x < -10 or x > bar.width() + 10:
             continue
-        col = "#e04040" if k in clash else ("#ffffff" if k in _tl_sel else "#5aa0ff")
+        col = "#e04040" if k in clash else ("#ffffff" if k in _tl_sel else base)
         p.setBrush(QtGui.QColor(col))
         p.drawRoundedRect(QtCore.QRectF(x - hw, y - hh, 2 * hw, 2 * hh), 1.5, 1.5)
     p.restore()

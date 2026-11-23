@@ -329,8 +329,7 @@ def show_panel(space=None):
 
 
 # ---------------------------------------------------------------- Timeline ticks
-TL_COLOR = "#ff9f1a"          # annotation ticks – orange (Blue Pencil's are blue)
-TL_SEL_OUTLINE = "#2b1600"
+TL_SEL_OUTLINE = "#2b1600"    # tick look (length / width / colour): timeline.tick_style("ann") – Qt Preferences
 
 
 def timeline_place():
@@ -367,11 +366,12 @@ def timeline_keys():
 
 def timeline_y(bar):
     """Centre line of the annotation ticks: under the Blue Pencil ticks when those are shown too."""
-    y = bar.ruler_h() + theme.px(11)
+    from .timeline import tick_half
+    y = bar.ruler_h() + theme.px(2) + tick_half("ann")[1]
     try:
         from . import bluepencil
         if bluepencil.active_layer() is not None and bluepencil.timeline_visible():
-            y += theme.px(11)
+            y += 2 * tick_half("bp")[1] + theme.px(3)
     except Exception:
         pass
     return y
@@ -384,7 +384,9 @@ def paint_timeline(bar, p):
     if lay is None or not ks:
         return
     y = timeline_y(bar)
-    hw, hh = theme.px(5), theme.px(9)
+    from .timeline import tick_half, tick_style
+    hw, hh = tick_half("ann")
+    fill = QtGui.QColor(tick_style("ann")["color"])
     cur = bpy.context.scene.frame_current
     p.save()
     p.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -393,7 +395,7 @@ def paint_timeline(bar, p):
         if x < -10 or x > bar.width() + 10:
             continue
         p.setPen(QtGui.QPen(QtGui.QColor("#ffffff" if k == cur else TL_SEL_OUTLINE), 1.2))
-        p.setBrush(QtGui.QColor(TL_COLOR))
+        p.setBrush(fill)
         p.drawRoundedRect(QtCore.QRectF(x - hw, y - hh, 2 * hw, 2 * hh), 2.0, 2.0)
     p.restore()
 

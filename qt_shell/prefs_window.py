@@ -43,7 +43,7 @@ def _hint(parent_lay, text, parent):
 
 
 class QtPreferences(QtWidgets.QDialog):
-    PAGES = ("Interface", "Window", "Viewport", "Shelf", "Shortcuts", "Text Editor", "Scripts", "System")
+    PAGES = ("Interface", "Window", "Viewport", "Timeline", "Shelf", "Shortcuts", "Text Editor", "Scripts", "System")
 
     def __init__(self, win):
         super().__init__(win)
@@ -62,7 +62,8 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addWidget(self.nav)
         lay.addWidget(self.stack, 1)
         self._builders = {"Interface": self._page_interface, "Window": self._page_window,
-                          "Viewport": self._page_viewport, "Shelf": self._page_shelf,
+                          "Viewport": self._page_viewport, "Timeline": self._page_timeline,
+                          "Shelf": self._page_shelf,
                           "Shortcuts": self._page_shortcuts,
                           "Text Editor": self._page_text,
                           "Scripts": self._page_scripts, "System": self._page_system}
@@ -348,6 +349,85 @@ class QtPreferences(QtWidgets.QDialog):
                                  "Circle, Lasso · Space Cursor · G Move · R Rotate · S Scale – again: Scale Cage · "
                                  "T Transform · D Annotate · M Measure · A Add). Hold or right click a toolbar button with a small triangle for its "
                                  "variants."), page)
+
+    def _page_timeline(self, page, lay):
+        """Look of the frame ticks Blue Pencil and annotations draw in the Timeline."""
+        from . import timeline, pytips
+        self.tick_rows = {}
+        for kind, title, hint in (
+                ("bp", "Blue Pencil frame ticks",
+                 "Frames with a Blue Pencil drawing on the active layer (default blue, 6 × 10 px)."),
+                ("ann", "Annotation frame ticks",
+                 "Frames with an annotation drawing on the active layer (default orange, 10 × 18 px) – shown "
+                 "under the Blue Pencil ticks when both are visible.")):
+            _section(lay, title, page)
+            st = timeline.tick_style(kind)
+            grid = QtWidgets.QGridLayout()
+            grid.setHorizontalSpacing(theme.px(8))
+            spins = {}
+            for row, (key, label, tip) in enumerate((("length", "Length", "Height of a tick"),
+                                                     ("width", "Thickness", "Width of a tick"))):
+                grid.addWidget(QtWidgets.QLabel(label, page), row, 0)
+                sp = QtWidgets.QSpinBox(page)
+                lo, hi = timeline.TICK_RANGE[key]
+                sp.setRange(lo, hi)
+                sp.setSuffix(" px")
+                sp.setValue(st[key])
+                sp.setToolTip(f"{tip} (default {timeline.TICK_DEFAULTS[kind][key]} px)")
+                sp.valueChanged.connect(lambda v, k=kind, key=key: timeline.set_tick_style(k, **{key: v}))
+                pytips.tag(sp, f"from qt_shell import timeline; timeline.set_tick_style('{kind}', {key}={st[key]})")
+                grid.addWidget(sp, row, 1)
+                spins[key] = sp
+            grid.addWidget(QtWidgets.QLabel("Colour", page), 2, 0)
+            cbtn = QtWidgets.QPushButton(page)
+            cbtn.setToolTip("Colour of the ticks – click to choose any colour")
+            cbtn.setFixedWidth(theme.px(90))
+            pytips.tag(cbtn, f"from qt_shell import timeline; timeline.set_tick_style('{kind}', color='{st['color']}')")
+            cbtn.clicked.connect(lambda _c=False, k=kind, b=cbtn: self._pick_tick_color(k, b))
+            grid.addWidget(cbtn, 2, 1)
+            reset = QtWidgets.QPushButton("Reset", page)
+            reset.setToolTip("Back to the default length, thickness and colour")
+            reset.clicked.connect(lambda _c=False, k=kind: self._reset_ticks(k))
+            grid.addWidget(reset, 2, 2)
+            grid.setColumnStretch(3, 1)
+            lay.addLayout(grid)
+            _hint(lay, hint, page)
+            self.tick_rows[kind] = (spins, cbtn)
+            self._show_tick_color(kind)
+        _hint(lay, "Changes apply right away. The ticks show while the tool is on (Blue Pencil: also per the panel's "
+                   "Timeline frames setting) or while the Annotations panel is open.", page)
+
+    def _show_tick_color(self, kind):
+        from . import timeline
+        _spins, b = self.tick_rows[kind]
+        c = timeline.tick_style(kind)["color"]
+        pm = QtGui.QPixmap(theme.px(40), theme.px(12))
+        pm.fill(QtGui.QColor(c))
+        b.setIcon(QtGui.QIcon(pm))
+        b.setText(c)
+
+    def _pick_tick_color(self, kind, btn):
+        from . import timeline, colorpicker
+        old = timeline.tick_style(kind)["color"]
+
+        def changed(c):
+            timeline.set_tick_style(kind, color=c.name())
+            try:
+                self._show_tick_color(kind)
+            except RuntimeError:
+                pass
+        colorpicker.pick(btn, QtGui.QColor(old), changed, title="Tick colour")
+
+    def _reset_ticks(self, kind):
+        from . import timeline
+        timeline.reset_tick_style(kind)
+        st = timeline.tick_style(kind)
+        spins, _b = self.tick_rows[kind]
+        for key, sp in spins.items():
+            sp.blockSignals(True)
+            sp.setValue(st[key])
+            sp.blockSignals(False)
+        self._show_tick_color(kind)
 
     def _page_shelf(self, page, lay):
         from . import shelf, pytips

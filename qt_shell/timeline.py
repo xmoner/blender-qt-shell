@@ -79,6 +79,68 @@ def set_setting(key, value):
     _qs().setValue(f"timeline/{key}", ("true" if value else "false") if isinstance(value, bool) else value)
 
 
+# Frame ticks of Blue Pencil ("bp") and annotations ("ann") in the Timeline: length (height) and width in
+# unscaled px, colour – Qt Preferences → Timeline (QSettings timeline/tick_<kind>_length / _width / _color)
+TICK_DEFAULTS = {"bp": {"length": 10, "width": 6, "color": "#5aa0ff"},
+                 "ann": {"length": 18, "width": 10, "color": "#ff9f1a"}}
+TICK_RANGE = {"length": (4, 40), "width": (2, 24)}
+
+
+def tick_style(kind):
+    """{'length', 'width', 'color'} of a tick kind ('bp' / 'ann') – sizes in unscaled px, colour '#rrggbb'."""
+    d = TICK_DEFAULTS[kind]
+    out = {}
+    for key in ("length", "width"):
+        try:
+            v = int(setting(f"tick_{kind}_{key}", d[key]))
+        except (TypeError, ValueError):
+            v = d[key]
+        lo, hi = TICK_RANGE[key]
+        out[key] = max(lo, min(hi, v))
+    c = str(setting(f"tick_{kind}_color", d["color"]))
+    out["color"] = c if QtGui.QColor(c).isValid() else d["color"]
+    return out
+
+
+def tick_half(kind):
+    """(half width, half length) of a tick kind in screen px (interface scale applied)."""
+    st = tick_style(kind)
+    return theme.px(st["width"]) / 2.0, theme.px(st["length"]) / 2.0
+
+
+def set_tick_style(kind, length=None, width=None, color=None):
+    """Change the look of the Blue Pencil ('bp') or annotation ('ann') ticks; None keeps a value. Repaints the
+    Timeline. Example: set_tick_style('ann', length=24, width=12, color='#ff9f1a')."""
+    if kind not in TICK_DEFAULTS:
+        raise ValueError("kind must be 'bp' or 'ann'")
+    for key, v in (("length", length), ("width", width)):
+        if v is not None:
+            lo, hi = TICK_RANGE[key]
+            set_setting(f"tick_{kind}_{key}", max(lo, min(hi, int(v))))
+    if color is not None:
+        c = QtGui.QColor(color)
+        if not c.isValid():
+            raise ValueError(f"not a colour: {color!r}")
+        set_setting(f"tick_{kind}_color", c.name())
+    _repaint_bar()
+
+
+def reset_tick_style(kind=None):
+    """Back to the default look (both kinds when kind is None)."""
+    for k in ([kind] if kind else list(TICK_DEFAULTS)):
+        for key in ("length", "width", "color"):
+            _qs().remove(f"timeline/tick_{k}_{key}")
+    _repaint_bar()
+
+
+def _repaint_bar():
+    try:
+        from . import app
+        app._win.timeline.bar.update()
+    except Exception:
+        pass
+
+
 def play_range(scene=None):
     """(start, end) of playback: the preview range when it is on, else the scene range."""
     sc = scene or bpy.context.scene
