@@ -332,10 +332,31 @@ def show_panel(space=None):
 TL_SEL_OUTLINE = "#2b1600"    # tick look (length / width / colour): timeline.tick_style("ann") – Qt Preferences
 
 
+TL_MODES = (("ACTIVE", "When the tool is active"), ("ALWAYS", "Always"), ("OFF", "Off"))
+
+
+def timeline_mode():
+    """When annotation ticks show in the Timeline: ACTIVE (tool on or panel open, default) / ALWAYS / OFF –
+    the panel's Display → Timeline frames (QSettings annotations/timeline_frames)."""
+    v = str(_settings().value("annotations/timeline_frames", "ACTIVE"))
+    return v if v in dict(TL_MODES) else "ACTIVE"
+
+
+def set_timeline_mode(mode):
+    """Set when annotation ticks show in the Timeline: 'ACTIVE', 'ALWAYS' or 'OFF'."""
+    if mode not in dict(TL_MODES):
+        raise ValueError("mode must be ACTIVE, ALWAYS or OFF")
+    _settings().setValue("annotations/timeline_frames", mode)
+    _timeline_poll(force=True)
+
+
 def timeline_place():
     """The place whose active annotation layer shows its drawings as ticks in the Timeline, or None: the 3D view's
     while the Annotate tool is on, the Video Sequencer's while Annotate is on in its preview, else the Annotations
-    panel's tab while the panel is shown."""
+    panel's tab while the panel is shown (Always: that tab's place also when the panel is hidden; Off: None)."""
+    mode = timeline_mode()
+    if mode == "OFF":
+        return None
     try:
         if PLACES["VIEW3D"].tool_on():
             return PLACES["VIEW3D"]
@@ -343,8 +364,10 @@ def timeline_place():
             return PLACES["VIDEO"]
         mw = _mw()
         panel = getattr(mw, "annotations", None)
-        if panel is not None and panel.isVisible():
+        if panel is not None and (panel.isVisible() or mode == "ALWAYS"):
             return panel.place()
+        if mode == "ALWAYS":
+            return PLACES.get(str(_settings().value("annotations/space", "VIEW3D")), PLACES["VIEW3D"])
     except Exception:
         pass
     return None
@@ -403,12 +426,12 @@ def paint_timeline(bar, p):
 _tl_sig = None
 
 
-def _timeline_poll():
-    """Repaint the Timeline when the annotation ticks it should show change (strokes, layer, tool)."""
+def _timeline_poll(force=False):
+    """Repaint the Timeline when the annotation ticks it should show change (strokes, layer, tool, mode)."""
     global _tl_sig
     lay, ks = timeline_keys()
     sig = (layer_name(lay) if lay is not None else None, tuple(ks))
-    if sig != _tl_sig:
+    if sig != _tl_sig or force:
         _tl_sig = sig
         try:
             _mw().timeline.bar.update()
@@ -597,6 +620,20 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         drow2.addWidget(self.clear_btn)
         drow2.addStretch(1)
         v.addLayout(drow2)
+        # display
+        head("Display")
+        dl = QtWidgets.QFormLayout()
+        dl.setContentsMargins(0, 0, 0, 0)
+        self.tl_combo = QtWidgets.QComboBox(inner)
+        for ident, name in TL_MODES:
+            self.tl_combo.addItem(name, ident)
+        self.tl_combo.setCurrentIndex(max(0, self.tl_combo.findData(timeline_mode())))
+        self.tl_combo.setToolTip("Frame ticks of the active layer in the Timeline: when the Annotate tool is on or "
+                                 "this panel is open / always / never (their look: Qt Preferences → Timeline)")
+        pytips.tag(self.tl_combo, "from qt_shell import annotate_panel; annotate_panel.set_timeline_mode('ALWAYS')")
+        self.tl_combo.activated.connect(lambda _i: set_timeline_mode(self.tl_combo.currentData()))
+        dl.addRow("Timeline frames", self.tl_combo)
+        v.addLayout(dl)
         self.hint = QtWidgets.QLabel(inner)
         self.hint.setWordWrap(True)
         self.hint.setProperty("dim", True)
