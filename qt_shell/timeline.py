@@ -34,7 +34,7 @@ import traceback
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, geocache, keymap, playcache, theme
+from . import bridge, geocache, hscroll, keymap, playcache, theme
 from . import icons
 from . import pytips
 from .rna_widgets import DragSpin
@@ -1244,7 +1244,7 @@ class Timeline(QtWidgets.QWidget):
         fm.aboutToShow.connect(lambda: self._fill_fps_menu(fm))
         self.fps_btn.setMenu(fm)
         row.addWidget(self.fps_btn)
-        lay.addLayout(row)
+        lay.addWidget(hscroll.wrap_layout(row, self))   # may be wider than the dock
         self.bar = TimeBar(self)
         try:
             from . import bluepencil, gizmo

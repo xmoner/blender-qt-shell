@@ -819,7 +819,23 @@ class MainWindow(QtWidgets.QMainWindow):
         d.setWidget(widget)
         self.addDockWidget(area, d)
         self.docks[key] = d
+        # showing / hiding a dock can grow the window past the screen edge – put it back afterwards
+        d.visibilityChanged.connect(lambda _v=False: self._fit_screen_later())
         return d
+
+    def _fit_screen_later(self):
+        if getattr(self, "_fit_pending", False):
+            return
+        self._fit_pending = True
+
+        def run():
+            self._fit_pending = False
+            try:
+                from . import workspaces
+                workspaces.fit_to_screen(self)
+            except Exception:
+                pass
+        QtCore.QTimer.singleShot(50, self, run)
 
     def _viewport_header(self):
         bar = QtWidgets.QWidget()

@@ -29,7 +29,7 @@ import numpy as np
 from mathutils import Vector
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, theme
+from . import bridge, hscroll, theme
 
 PICK = 9.0               # px
 SETTINGS = "QtShell"
@@ -1608,7 +1608,7 @@ class UVEditor(QtWidgets.QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         self.canvas = UVCanvas(self)
-        lay.addWidget(self._toolbar())
+        lay.addWidget(hscroll.wrap(self._toolbar(), self))   # may be wider than the dock
         split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
         split.addWidget(self.canvas)
         self.toolkit = self._toolkit()

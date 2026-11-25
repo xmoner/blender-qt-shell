@@ -25,7 +25,7 @@ import sys
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import completion, scripts, theme
+from . import completion, hscroll, scripts, theme
 
 INDENT = "    "
 
@@ -1062,7 +1062,7 @@ class TextEditor(QtWidgets.QWidget):
             "QToolButton{background:#3d6b3d;} "
             "QToolButton:hover{background:#4f8f4f; border:1px solid #8fd08f;} "
             "QToolButton:pressed{background:#62a862; border:1px solid #b0e8b0;}")
-        lay.addLayout(bar)
+        lay.addWidget(hscroll.wrap_layout(bar, self))   # may be wider than the dock
 
         self.editor = CodeEditor()
         self.editor.completion_namespace = self._completion_namespace
@@ -1189,11 +1189,11 @@ class TextEditor(QtWidgets.QWidget):
     # --- events: tab bar double-click, Esc in the find bar
     def eventFilter(self, obj, ev):
         t = ev.type()
-        if obj is self.tabs and t == QtCore.QEvent.MouseButtonDblClick:
+        if t == QtCore.QEvent.MouseButtonDblClick and obj is getattr(self, "tabs", None):
             if self.tabs.tabAt(ev.position().toPoint()) < 0:
                 self.new_text()
                 return True
-        if obj in (self.find_edit, self.replace_edit) and t == QtCore.QEvent.KeyPress:
+        if t == QtCore.QEvent.KeyPress and obj in (getattr(self, "find_edit", None), getattr(self, "replace_edit", None)):
             if ev.key() == QtCore.Qt.Key_Escape:
                 self.hide_find()
                 return True

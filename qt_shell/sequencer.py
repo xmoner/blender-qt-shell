@@ -31,7 +31,7 @@ import traceback
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, theme
+from . import bridge, hscroll, theme
 from . import rna_widgets as rw
 
 TAG = "qtshell_seq_preview"
@@ -2963,7 +2963,7 @@ class VideoSequencer(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        lay.addWidget(self._toolbar())
+        lay.addWidget(hscroll.wrap(self._toolbar(), self))   # may be wider than the dock
         self.split = QtWidgets.QSplitter(QtCore.Qt.Horizontal, self)
         self.pane = PreviewPane(self, self.split)
         self.preview = self.pane.host
