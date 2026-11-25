@@ -43,7 +43,7 @@ def _hint(parent_lay, text, parent):
 
 
 class QtPreferences(QtWidgets.QDialog):
-    PAGES = ("Interface", "Window", "Viewport", "Timeline", "Shelf", "Shortcuts", "Text Editor", "Scripts", "System")
+    PAGES = ("Interface", "Window", "Viewport", "Timeline", "Console", "Shelf", "Shortcuts", "Text Editor", "Scripts", "System")
 
     def __init__(self, win):
         super().__init__(win)
@@ -63,6 +63,7 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addWidget(self.stack, 1)
         self._builders = {"Interface": self._page_interface, "Window": self._page_window,
                           "Viewport": self._page_viewport, "Timeline": self._page_timeline,
+                          "Console": self._page_console,
                           "Shelf": self._page_shelf,
                           "Shortcuts": self._page_shortcuts,
                           "Text Editor": self._page_text,
@@ -396,6 +397,89 @@ class QtPreferences(QtWidgets.QDialog):
             self._show_tick_color(kind)
         _hint(lay, "Changes apply right away. The ticks show while the tool is on (Blue Pencil: also per the panel's "
                    "Timeline frames setting) or while the Annotations panel is open.", page)
+
+    def _page_console(self, page, lay):
+        """Python console: how the list of names after Tab is shown."""
+        from . import console, pytips
+        _section(lay, "Tab completion list", page)
+        st = console.complete_style()
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Layout", page))
+        self.cc_layout = QtWidgets.QComboBox(page)
+        for ident, name in console.COMPLETE_LAYOUTS:
+            self.cc_layout.addItem(name, ident)
+        self.cc_layout.setCurrentIndex(max(0, self.cc_layout.findData(st["layout"])))
+        self.cc_layout.setToolTip("How the names Tab offers are listed in the console output")
+        self.cc_layout.activated.connect(lambda _i: (console.set_complete_style(layout=self.cc_layout.currentData()),
+                                                     self._cc_preview()))
+        pytips.tag(self.cc_layout, "from qt_shell import console; console.set_complete_style(layout='VERTICAL')")
+        row.addWidget(self.cc_layout)
+        row.addStretch(1)
+        lay.addLayout(row)
+        _section(lay, "Colours", page)
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(theme.px(8))
+        self.cc_btns = {}
+        for r, (kind, label, default) in enumerate(console.COMPLETE_KINDS):
+            grid.addWidget(QtWidgets.QLabel(label, page), r, 0)
+            b = QtWidgets.QPushButton(page)
+            b.setFixedWidth(theme.px(90))
+            b.setToolTip(f"Colour of {label.lower()} in the list (default {default}) – click to choose")
+            b.clicked.connect(lambda _c=False, k=kind, b=b: self._cc_pick(k, b))
+            pytips.tag(b, f"from qt_shell import console; console.set_complete_style({kind}='{st[kind]}')")
+            grid.addWidget(b, r, 1)
+            self.cc_btns[kind] = b
+        grid.setColumnStretch(2, 1)
+        lay.addLayout(grid)
+        rrow = QtWidgets.QHBoxLayout()
+        reset = QtWidgets.QPushButton("Reset", page)
+        reset.setToolTip("Back to the default layout and colours")
+        reset.clicked.connect(lambda _c=False: (console.reset_complete_style(), self._cc_refresh()))
+        rrow.addWidget(reset)
+        rrow.addStretch(1)
+        lay.addLayout(rrow)
+        _section(lay, "Preview", page)
+        self.cc_preview = QtWidgets.QLabel(page)
+        self.cc_preview.setTextFormat(QtCore.Qt.RichText)
+        self.cc_preview.setStyleSheet("QLabel { background: #1e1e1e; padding: 6px; border: 1px solid #3a3a3a; }")
+        self.cc_preview.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
+        lay.addWidget(self.cc_preview)
+        _hint(lay, "Type part of a name in the Console and press Tab: with more than one match the names are "
+                   "written into the output in this layout, coloured by what they are.", page)
+        self._cc_refresh()
+
+    def _cc_refresh(self):
+        from . import console
+        st = console.complete_style()
+        self.cc_layout.setCurrentIndex(max(0, self.cc_layout.findData(st["layout"])))
+        for kind, b in self.cc_btns.items():
+            pm = QtGui.QPixmap(theme.px(40), theme.px(12))
+            pm.fill(QtGui.QColor(st[kind]))
+            b.setIcon(QtGui.QIcon(pm))
+            b.setText(st[kind])
+        self._cc_preview()
+
+    def _cc_preview(self):
+        from . import console
+        st = console.complete_style()
+        sample = (("types", "module"), ("Object", "class"), ("frame_set(", "function"), ("data", "attribute"),
+                  ("while", "keyword"))
+        sep = "<br>" if st["layout"] == "VERTICAL" else "&nbsp;&nbsp;"
+        pre = "&nbsp;&nbsp;" if st["layout"] == "VERTICAL" else ""
+        html = sep.join(f'{pre}<span style="color:{st[k]}">{t}</span>' for t, k in sample)
+        self.cc_preview.setText(html)
+
+    def _cc_pick(self, kind, btn):
+        from . import console, colorpicker
+        old = console.complete_style()[kind]
+
+        def changed(c):
+            console.set_complete_style(**{kind: c.name()})
+            try:
+                self._cc_refresh()
+            except RuntimeError:
+                pass
+        colorpicker.pick(btn, QtGui.QColor(old), changed, title="Completion colour")
 
     def _show_tick_color(self, kind):
         from . import timeline

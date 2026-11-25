@@ -18,6 +18,55 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import theme
 
 
+# Tab completion list: layout and colours per kind – Qt Preferences → Console (QSettings console/complete_*)
+COMPLETE_KINDS = (("function", "Functions / methods", "#7fd1a8"), ("class", "Classes", "#e6c07b"),
+                  ("module", "Modules", "#8fb3ff"), ("keyword", "Python keywords", "#c678dd"),
+                  ("attribute", "Attributes / values", "#8c8c8c"))
+COMPLETE_LAYOUTS = (("HORIZONTAL", "Horizontal (side by side)"), ("VERTICAL", "Vertical (one per line)"))
+
+
+def _qs():
+    return QtCore.QSettings("QtShell", "QtShell")
+
+
+def complete_style():
+    """{'layout': 'HORIZONTAL' | 'VERTICAL', '<kind>': '#rrggbb' …} of the console's Tab completion list."""
+    s = _qs()
+    lay = str(s.value("console/complete_layout", "HORIZONTAL"))
+    out = {"layout": lay if lay in dict(COMPLETE_LAYOUTS) else "HORIZONTAL"}
+    for kind, _label, default in COMPLETE_KINDS:
+        c = str(s.value(f"console/complete_color_{kind}", default))
+        out[kind] = c if QtGui.QColor(c).isValid() else default
+    return out
+
+
+def set_complete_style(layout=None, **colors):
+    """Layout ('HORIZONTAL' / 'VERTICAL') and colours of the Tab completion list; None keeps a value.
+    Example: set_complete_style(layout='VERTICAL', function='#7fd1a8', attribute='#cccccc')."""
+    s = _qs()
+    if layout is not None:
+        if layout not in dict(COMPLETE_LAYOUTS):
+            raise ValueError("layout must be 'HORIZONTAL' or 'VERTICAL'")
+        s.setValue("console/complete_layout", layout)
+    kinds = {k for k, _l, _d in COMPLETE_KINDS}
+    for kind, c in colors.items():
+        if kind not in kinds:
+            raise ValueError(f"unknown kind {kind!r} – one of {sorted(kinds)}")
+        if c is None:
+            continue
+        q = QtGui.QColor(c)
+        if not q.isValid():
+            raise ValueError(f"not a colour: {c!r}")
+        s.setValue(f"console/complete_color_{kind}", q.name())
+
+
+def reset_complete_style():
+    s = _qs()
+    s.remove("console/complete_layout")
+    for kind, _l, _d in COMPLETE_KINDS:
+        s.remove(f"console/complete_color_{kind}")
+
+
 class Console(QtWidgets.QWidget):
     def __init__(self, hub):
         super().__init__()
@@ -193,4 +242,46 @@ class Console(QtWidgets.QWidget):
             while not o.startswith(prefix):
                 prefix = prefix[:-1]
         self.inp.setText(text[:start] + prefix)
-        self.write("  ".join(o.split(".")[-1] for o in opts[:80]) + "\n", "#8c8c8c")
+        self.show_completions(opts)
+
+    def completion_kind(self, opt):
+        """function / class / module / keyword / attribute for one rlcompleter result."""
+        import inspect
+        import keyword
+        name = opt.rstrip("( :")
+        if not opt.endswith("(") and keyword.iskeyword(name):
+            return "keyword"
+        obj, ok = None, False
+        parts = name.split(".")
+        try:                                     # only a dotted name – rlcompleter has read these attributes already
+            if parts[0] in self.ns:
+                obj = self.ns[parts[0]]
+            else:
+                import builtins
+                obj = getattr(builtins, parts[0])
+            for p in parts[1:]:
+                obj = getattr(obj, p)
+            ok = True
+        except Exception:
+            pass
+        if ok:
+            if inspect.ismodule(obj):
+                return "module"
+            if isinstance(obj, type):
+                return "class"
+            if callable(obj):
+                return "function"
+        return "function" if opt.endswith("(") else "attribute"
+
+    def show_completions(self, opts):
+        """Writes the Tab completion list in the chosen layout and colours (Qt Preferences → Console)."""
+        st = complete_style()
+        vertical = st["layout"] == "VERTICAL"
+        items = opts[:200] if vertical else opts[:80]
+        for n, o in enumerate(items):
+            label = o.split(".")[-1].rstrip(" ")
+            sep = "\n" if vertical else ("  " if n < len(items) - 1 else "\n")
+            self.write(("  " if vertical else "") + label + sep, st[self.completion_kind(o)])
+        more = len(opts) - len(items)
+        if more > 0:
+            self.write(f"  … {more} more\n", st["attribute"])
