@@ -664,6 +664,23 @@ class RenderView(QtWidgets.QWidget, Dockable):
         keymap.notifier.changed.connect(self._update_tips)
         self._update_tips()
         self._update_footer()
+        # compositor: while the Render Result is shown, node changes re-composite it (Blender only does that while
+        # the Render Result is shown in an Image Editor – image_editor.RESULT_LINK borrows an area for it) and the picture follows
+        self._comp_watch = QtCore.QTimer(self)
+        self._comp_watch.setInterval(25)
+        self._comp_watch.timeout.connect(self._comp_tick)
+        self._comp_until = 0.0
+        self._comp_saw_job = False
+        self._comp_dirty = False
+        self._comp_sig = None
+        self._comp_link_check = QtCore.QTimer(self)
+        self._comp_link_check.setInterval(1000)
+        self._comp_link_check.timeout.connect(self._comp_update_link)
+        self._comp_link_check.start()
+        try:
+            main_window.hub.data_changed.connect(self._comp_changed)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------ header
     def _tool(self, icon=None, text="", tip="", checkable=False):
@@ -1659,6 +1676,82 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.canvas.busy = "Rendering…"
         self._timer.start()
         self.canvas.update()
+
+    # ------------------------------------------------------------ compositor follows node edits
+    def comp_follow_wanted(self):
+        """True while the shown picture is the Render Result of a scene that composites: then node edits
+        re-composite it."""
+        if not self.isVisible() or self._external is not None or self._render_start is not None:
+            return False
+        if self._combined is None:
+            return False
+        try:
+            sc = bpy.context.scene
+            from . import image_editor
+            return bool(sc.render.use_compositing and image_editor.comp_tree(sc) is not None)
+        except Exception:
+            return False
+
+    def _comp_update_link(self):
+        from . import image_editor
+        want = self.comp_follow_wanted()
+        link = image_editor.RESULT_LINK        # an Image Editor showing the Render Result makes Blender re-composite it
+        try:
+            if want:
+                if not link.active() or "render_view" not in link.users:
+                    link.acquire(owner="render_view")
+            elif "render_view" in link.users:
+                link.release(owner="render_view")
+        except Exception:
+            pass
+
+    def _comp_signature(self):
+        try:
+            from . import image_editor
+            tree = image_editor.comp_tree(bpy.context.scene)
+            return image_editor.tree_signature(tree) if tree is not None else None
+        except Exception:
+            return None
+
+    def _comp_changed(self, *_a):
+        """Something changed in Blender: if the compositor nodes changed, watch the COMPOSITE job and read the
+        Render Result again when it has finished."""
+        if not self.comp_follow_wanted() or bridge.is_rendering():
+            return
+        sig = self._comp_signature()
+        if sig is not None and sig == self._comp_sig:
+            return
+        self._comp_sig = sig
+        self._comp_update_link()
+        self._comp_dirty = True
+        self._comp_until = time.monotonic() + 0.6
+        if not self._comp_watch.isActive():
+            self._comp_watch.start()
+
+    def _comp_tick(self):
+        now = time.monotonic()
+        try:
+            running = bpy.app.is_job_running("COMPOSITE")
+        except Exception:
+            running = False
+        if running:
+            self._comp_saw_job = True
+            self._comp_until = max(self._comp_until, now + 0.3)
+            return
+        if self._comp_saw_job or now >= self._comp_until:
+            done = self._comp_saw_job or self._comp_dirty
+            self._comp_saw_job = False
+            self._comp_dirty = False
+            if done and self.comp_follow_wanted() and not bridge.is_rendering():
+                self.load_result(keep_view=True)
+            if now >= self._comp_until:
+                self._comp_watch.stop()
+            else:
+                self._comp_until = now + 0.2
+
+    def hideEvent(self, ev):
+        super().hideEvent(ev)
+        QtCore.QTimer.singleShot(0, self, self._comp_update_link)
 
     def _tick(self):
         if self._render_start is None:

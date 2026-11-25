@@ -300,10 +300,21 @@ class CompositorLink:
     """Keeps the compositor running for Qt: one area of Blender's main window is a Compositor node editor with
     its backdrop on while `wanted` (Blender only composites when the result is visible somewhere)."""
 
-    def __init__(self):
-        self.wanted = False
+    ALL = []                      # every link – two never borrow the same area
+
+    def __init__(self, kind="NODE"):
+        # NODE: a Compositor node editor with backdrop (Blender then composites the Viewer);
+        # RESULT: an Image Editor showing the Render Result (Blender then re-composites the Render Result itself –
+        # the node editor alone leaves it as rendered)
+        self.kind = kind
+        CompositorLink.ALL.append(self)
+        self.users = set()        # who wants the compositor running: "image_editor", "render_view" …
         self._ptr = None          # area pointer
         self._old = None          # its ui_type before (None = it already was a compositor editor)
+
+    @property
+    def wanted(self):
+        return bool(self.users)
 
     def area(self):
         if self._ptr is None:
@@ -321,19 +332,28 @@ class CompositorLink:
     def active(self):
         return self.area() is not None
 
-    def acquire(self):
-        self.wanted = True
+    def acquire(self, owner="image_editor"):
+        if owner:
+            self.users.add(owner)
         a = self.area()
         if a is None:
             a = self._pick()
             if a is None:
                 return False
         try:
-            if a.ui_type != "CompositorNodeTree":
-                a.ui_type = "CompositorNodeTree"
-            sp = a.spaces.active
-            if hasattr(sp, "show_backdrop") and not sp.show_backdrop:
-                sp.show_backdrop = True
+            if self.kind == "RESULT":
+                img = bpy.data.images.get("Render Result")
+                if a.ui_type != "IMAGE_EDITOR":
+                    a.ui_type = "IMAGE_EDITOR"
+                sp = a.spaces.active
+                if img is not None and sp.image != img:
+                    sp.image = img
+            else:
+                if a.ui_type != "CompositorNodeTree":
+                    a.ui_type = "CompositorNodeTree"
+                sp = a.spaces.active
+                if hasattr(sp, "show_backdrop") and not sp.show_backdrop:
+                    sp.show_backdrop = True
         except Exception as ex:
             bridge.log(f"Image Editor: compositor link failed ({ex})", "WARNING")
             return False
@@ -346,7 +366,13 @@ class CompositorLink:
             areas = list(win.screen.areas)
         except Exception:
             return None
-        a = next((x for x in areas if x.type == "NODE_EDITOR" and x.ui_type == "CompositorNodeTree"), None)
+        taken = {l._ptr for l in CompositorLink.ALL if l is not self and l._ptr is not None}
+        areas = [x for x in areas if x.as_pointer() not in taken]
+        if self.kind == "RESULT":
+            a = next((x for x in areas if x.type == "IMAGE_EDITOR" and getattr(x.spaces.active.image, "name", "")
+                      == "Render Result"), None)
+        else:
+            a = next((x for x in areas if x.type == "NODE_EDITOR" and x.ui_type == "CompositorNodeTree"), None)
         if a is not None:
             self._ptr, self._old = a.as_pointer(), None
             return a
@@ -364,7 +390,13 @@ class CompositorLink:
         self._ptr, self._old = a.as_pointer(), a.ui_type
         return a
 
-    def release(self, keep_wanted=False):
+    def release(self, keep_wanted=False, owner="image_editor"):
+        """Gives the borrowed area back. keep_wanted: only for the moment (saving) – the users stay.
+        Otherwise owner stops wanting it and the area is given back when nobody else does."""
+        if not keep_wanted:
+            self.users.discard(owner)
+            if self.users:
+                return                            # another window still shows a compositor result
         a = self.area()
         if a is not None and self._old:
             try:
@@ -372,8 +404,6 @@ class CompositorLink:
             except Exception:
                 pass
         self._ptr = self._old = None
-        if not keep_wanted:
-            self.wanted = False
 
     def forget(self):
         """The file is being replaced – its areas go away with it."""
@@ -381,6 +411,7 @@ class CompositorLink:
 
 
 LINK = CompositorLink()
+RESULT_LINK = CompositorLink("RESULT")      # the Render View: Render Result re-composited after node edits
 
 
 @bpy.app.handlers.persistent
@@ -389,25 +420,29 @@ def _on_save_pre(*_args):
         ANIM_COMP.uninstall()                 # the temporary animation-cache node is never saved
     except Exception:
         pass
-    if LINK.active():
-        LINK.release(keep_wanted=True)        # the .blend keeps the user's own layout
+    for link in CompositorLink.ALL:
+        if link.active():
+            link.release(keep_wanted=True)    # the .blend keeps the user's own layout
 
 
 @bpy.app.handlers.persistent
 def _on_save_post(*_args):
-    if LINK.wanted:
-        LINK.acquire()
+    for link in CompositorLink.ALL:
+        if link.wanted:
+            link.acquire(owner=None)
 
 
 @bpy.app.handlers.persistent
 def _on_load_pre(*_args):
-    LINK.forget()
+    for link in CompositorLink.ALL:
+        link.forget()
 
 
 @bpy.app.handlers.persistent
 def _on_load_post(*_args):
-    if LINK.wanted:
-        bridge.later(LINK.acquire, 0.1)
+    for link in CompositorLink.ALL:
+        if link.wanted:
+            bridge.later(lambda link=link: link.acquire(owner=None), 0.1)
 
 
 _HANDLERS = (("save_pre", _on_save_pre), ("save_post", _on_save_post), ("load_pre", _on_load_pre),
