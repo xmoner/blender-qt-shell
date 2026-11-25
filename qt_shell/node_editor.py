@@ -751,7 +751,8 @@ class NodeEditor(QtWidgets.QWidget):
             ng = getattr(scene, "compositing_node_group", None)
             if ng is not None:
                 return ng
-            return scene.node_tree if getattr(scene, "use_nodes", False) else None
+            # Blender 5.x keeps a deprecated Scene.use_nodes (can be True) but has no Scene.node_tree
+        return getattr(scene, "node_tree", None) if getattr(scene, "use_nodes", False) else None
         return None
 
     def current_tree(self):
