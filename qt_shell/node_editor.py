@@ -4,6 +4,8 @@ Nodes, sockets and links are drawn from Blender's data (node_tree.nodes / links)
 straight back to RNA: moving (node.location), linking (links.new / remove), adding and deleting nodes,
 values of unconnected inputs and node properties in the sidebar.
 """
+import traceback
+
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -139,6 +141,17 @@ def node_buttons(node):
     return out
 
 
+def socket_ptrs(node):
+    """Pointers of the node's sockets. Blender rebuilds the sockets of many nodes when a property changes
+    (Random Value / Math / Switch … Data Type): the old socket structs are freed and their Python objects are
+    NOT invalidated – reading one (default_value, name …) reads freed memory and crashes Blender. A change of
+    this tuple means: every kept socket object of this node is stale."""
+    try:
+        return (tuple(x.as_pointer() for x in node.inputs), tuple(x.as_pointer() for x in node.outputs))
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------- graphics items
 class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
@@ -165,6 +178,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self.rows = []
         self.sockets = {}
         self.multi = {}
+        self._sock_ptrs = socket_ptrs(node)
         if self.kind == "reroute":
             self.w, self.h = 16.0, 16.0
             c = QtCore.QPointF(8, 8)
@@ -216,6 +230,10 @@ class NodeItem(QtWidgets.QGraphicsItem):
         crashes Blender)."""
         return self._node if self.alive() else None
 
+    def sockets_ok(self):
+        """True while the sockets kept in rows / sockets are still the node's (see socket_ptrs)."""
+        return self.alive() and socket_ptrs(self._node) == self._sock_ptrs
+
     def alive(self):
         """False when the node was removed meanwhile (a script, undo, the Image editor's animation cache): node
         structs are no IDs, so the Python object of a removed node is not invalidated – reading it reads freed
@@ -229,8 +247,10 @@ class NodeItem(QtWidgets.QGraphicsItem):
 
     def paint(self, p, _opt, _w):
         node = self.node
-        if node is None:
-            self.editor._timer.start()          # rebuild from the tree as it is now
+        if node is None or (self.kind != "frame" and not self.sockets_ok()):
+            # removed, or its sockets were rebuilt (Data Type changed …): never touch the old socket objects –
+            # rebuild from the tree as it is now
+            self.editor._timer.start()
             return
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         sel = self.isSelected()
@@ -353,6 +373,9 @@ class NodeItem(QtWidgets.QGraphicsItem):
         return QtCore.QRectF(pt.x() - SOCK_R, pt.y() - h / 2, 2 * SOCK_R, h)
 
     def socket_at(self, scene_pos):
+        if not self.sockets_ok():
+            self.editor._timer.start()
+            return None
         local = self.mapFromScene(scene_pos)
         for ident in self.multi:
             if self.multi_rect(ident).adjusted(-SOCK_R, -SOCK_R / 2, SOCK_R, SOCK_R / 2).contains(local):
@@ -408,7 +431,8 @@ def node_is_free(node):
 class LinkItem(QtWidgets.QGraphicsPathItem):
     def __init__(self, link, a_item, b_item):
         super().__init__()
-        self.link = link
+        self._key = (link.from_node.name, link.from_socket.identifier, link.to_node.name,
+                     link.to_socket.identifier)
         self.a = (a_item, link.from_socket.identifier)
         self.b = (b_item, link.to_socket.identifier)
         self.slot = (0, 1)              # (rank, total) on a multi-input socket
@@ -432,6 +456,20 @@ class LinkItem(QtWidgets.QGraphicsPathItem):
         self._pen = QtGui.QPen(pen)
         self.setZValue(-1)
         self.update_path()
+
+    @property
+    def link(self):
+        """The Blender link, looked up in the tree now (None when gone) – a kept link object can point at freed
+        memory after its nodes rebuilt their sockets."""
+        tree = self.a[0].editor.tree
+        if tree is None:
+            return None
+        fn, fs, tn, ts = self._key
+        for lk in tree.links:
+            if (lk.from_node.name == fn and lk.to_node.name == tn and lk.from_socket.identifier == fs
+                    and lk.to_socket.identifier == ts):
+                return lk
+        return None
 
     def set_highlight(self, on):
         """White and thicker while a dragged node would be inserted into this link (like Blender)."""
@@ -1006,7 +1044,8 @@ class NodeEditor(QtWidgets.QWidget):
                           round(n.width), n.label,
                           tuple(s.identifier for s in n.inputs if getattr(s, "enabled", True) and not s.hide),
                           tuple(s.identifier for s in n.outputs if getattr(s, "enabled", True) and not s.hide),
-                          tuple(str(getattr(n, p.identifier)) for p in node_buttons(n))))
+                          tuple(str(getattr(n, p.identifier)) for p in node_buttons(n)),
+                          socket_ptrs(n)))
         for lk in tree.links:
             parts.append((lk.from_node.name, lk.from_socket.identifier, lk.to_node.name,
                           lk.to_socket.identifier, getattr(lk, "is_muted", False),
@@ -1330,6 +1369,14 @@ class NodeEditor(QtWidgets.QWidget):
         self._reset()
 
     # --- sidebar
+    def _rebuild_now(self):
+        """Rebuild items + sidebar from the tree now (sockets were rebuilt), keeping the view."""
+        try:
+            self._sig = None
+            self.refresh()
+        except Exception:
+            bridge.log(traceback.format_exc(), "ERROR")
+
     def _build_side(self):
         self.side_bindings = []
         host = QtWidgets.QWidget()
@@ -1347,10 +1394,34 @@ class NodeEditor(QtWidgets.QWidget):
         title = QtWidgets.QLabel(f"<b>{node_title(node)}</b>")
         lay.addWidget(title)
 
+        sock_sig = socket_ptrs(node)
+        node_name = node.name
+
         def changed(*_a):
             self._timer.start()
-            self.view.viewport().update()
             undo()
+            try:
+                cur = self.tree.nodes.get(node_name) if self.tree is not None else None
+                stale = cur is None or socket_ptrs(cur) != sock_sig
+            except Exception:
+                stale = True
+            if stale:
+                # Data Type & co. rebuilt the sockets: the Inputs fields (and the node items) hold freed sockets –
+                # rebuild right after this signal (not inside it: the combo that emitted it is deleted)
+                keep = []
+                for b in self.side_bindings:
+                    if isinstance(getattr(b, "data", None), bpy.types.NodeSocket):
+                        try:
+                            if b.widget_ok():
+                                b.widget.setEnabled(False)      # its socket is gone
+                        except Exception:
+                            pass
+                    else:
+                        keep.append(b)
+                self.side_bindings = keep
+                QtCore.QTimer.singleShot(0, self._rebuild_now)
+                return
+            self.view.viewport().update()
 
         def undo():
             if not hasattr(self, "_undo_t"):

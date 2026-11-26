@@ -60,12 +60,32 @@ def is_id_type(rna_struct):
 _ENUM_ERR = re.compile(r"not found in \((.*)\)")
 
 
+def _valid_enum_values(data, prop_id):
+    """The identifiers Blender accepts for this enum now (from the error of an invalid value), or None."""
+    try:
+        setattr(data, prop_id, "__qtshell_invalid__")
+    except TypeError as ex:
+        m = _ENUM_ERR.search(str(ex))
+        if m:
+            return set(re.findall(r"'([^']*)'", m.group(1)))
+    except Exception:
+        pass
+    return None
+
+
 def enum_items(data, prop_id):
     """[(identifier, name, description)] – also for dynamic enums."""
     p = rna_prop(data, prop_id)
     if p is None:
         return []
     items = [(e.identifier, tr(e.name), e.description) for e in p.enum_items]
+    if items and not p.is_enum_flag and isinstance(data, (bpy.types.Node, bpy.types.NodeSocket)):
+        # nodes filter their enums by an item function (Random Value's Data Type offers 4 of the 14 attribute
+        # types) but enum_items lists them all – picking one Blender doesn't offer fails. Keep only the values
+        # Blender accepts (the error of an invalid value lists them; nothing is changed).
+        ok = _valid_enum_values(data, prop_id)
+        if ok:
+            items = [it for it in items if it[0] in ok] or items
     if items:
         return items
     # dynamic enum: read the valid values from the error message
@@ -542,7 +562,12 @@ class VectorBinding(Binding):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(1)
         labels = RGBA if rp.subtype in ("COLOR", "COLOR_GAMMA") else AXES
-        for i in range(rp.array_length):
+        # dynamic arrays (a node's vector of 2 / 3 / 4 by its Data Type …) can be shorter than array_length
+        try:
+            count = min(rp.array_length, len(getattr(data, prop_id)))
+        except Exception:
+            count = rp.array_length
+        for i in range(count):
             if rp.type == "BOOLEAN":
                 b = BoolBinding(data, prop_id, labels[i] if i < 4 else str(i), 1, False, on_change, index=i)
                 b.widget.setMaximumWidth(theme.px(28))
@@ -551,7 +576,7 @@ class VectorBinding(Binding):
             self.parts.append(b)
             lay.addWidget(b.widget)
         if rp.type == "BOOLEAN":
-            w.setMaximumWidth(theme.px(30) * rp.array_length)
+            w.setMaximumWidth(theme.px(30) * max(1, count))
         self.widget = w
 
     def refresh(self):
