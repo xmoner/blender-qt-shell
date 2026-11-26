@@ -144,6 +144,44 @@ class PanelPage(QtWidgets.QScrollArea):
         lay.addWidget(panel)
 
 
+def geonodes_signature(mod):
+    """What the Geometry Nodes modifier page shows: the group's sockets / panels and each input's
+    value-or-attribute kind – a change rebuilds the page (values are refreshed by the bindings)."""
+    try:
+        ng = mod.node_group
+        if ng is None:
+            return None
+        props = getattr(mod, "properties", None)
+        sig = []
+        for it in ng.interface.items_tree:
+            k = (it.item_type, it.name, getattr(it, "identifier", ""), getattr(it, "socket_type", ""),
+                 getattr(it, "in_out", ""))
+            if props is not None and it.item_type == "SOCKET" and it.in_out == "INPUT":
+                inp = getattr(props.inputs, it.identifier, None)
+                k += (getattr(inp, "type", None),)
+            sig.append(k)
+        return tuple(sig)
+    except Exception:
+        return None
+
+
+def new_geometry_group(name="Geometry Nodes"):
+    """A new Geometry Nodes group like Blender's New button: Group Input → Group Output."""
+    ng = bpy.data.node_groups.new(name, "GeometryNodeTree")
+    ng.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    ng.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    gi = ng.nodes.new("NodeGroupInput")
+    go = ng.nodes.new("NodeGroupOutput")
+    gi.location = (-250, 0)
+    go.location = (150, 0)
+    ng.links.new(gi.outputs[0], go.inputs[0])
+    try:
+        ng.is_modifier = True
+    except Exception:
+        pass
+    return ng
+
+
 class StackPage(QtWidgets.QScrollArea):
     """Modifiers or constraints (stack with adding, reordering, applying)."""
 
@@ -171,7 +209,8 @@ class StackPage(QtWidgets.QScrollArea):
         try:
             sig = (ob.name if ob else None,
                    tuple((m.name, m.type, m.show_expanded,
-                          getattr(m, "node_group", None) and m.node_group.name)
+                          getattr(m, "node_group", None) and m.node_group.name,
+                          geonodes_signature(m) if m.type == "NODES" else None)
                          for m in self._stack(ob)) if ob else ())
         except Exception:
             sig = None
@@ -268,20 +307,192 @@ class StackPage(QtWidgets.QScrollArea):
         key = f"{self.kind}:{ob.name}:{item.name}"
         panel = qt_ui.CollapsiblePanel("", key, self.state, False, head)
         name.setToolTip(tr(item.bl_rna.name))
-        form, binds = rw.rna_form(item, self.on_change)
+        nodes = self.kind == "modifier" and item.type == "NODES"
+        # a Geometry Nodes modifier shows the node group + its inputs (like Blender), not the
+        # bake / panel-state internals of the RNA struct
+        form, binds = rw.rna_form(item, self.on_change, only=("node_group",) if nodes else None)
         self.bindings.extend(binds)
         panel.body_lay.addWidget(form)
-        if self.kind == "modifier" and item.type == "NODES":
-            panel.body_lay.addWidget(self._geonodes_inputs(ob, item))
+        if nodes:
+            try:
+                panel.body_lay.addWidget(self._geonodes_buttons(ob, item))
+                panel.body_lay.addWidget(self._geonodes_inputs(ob, item))
+            except Exception as ex:                # one broken modifier must not break the page
+                bridge.log(f"Geometry Nodes modifier {item.name}: {ex}", "ERROR")
+                err = QtWidgets.QLabel(f"⚠ {ex}")
+                err.setWordWrap(True)
+                err.setStyleSheet("color:#ff8080;")
+                panel.body_lay.addWidget(err)
         return panel
 
+    # --- Geometry Nodes modifier
+    def _geonodes_buttons(self, ob, mod):
+        w = QtWidgets.QWidget()
+        hl = QtWidgets.QHBoxLayout(w)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(4)
+        hl.addStretch(1)
+        if mod.node_group is None:
+            b = QtWidgets.QPushButton(tr("New"))
+            b.setToolTip(tr("Create a new Geometry Nodes group for this modifier"))
+            b.clicked.connect(lambda _=False: self._geonodes_new(ob, mod))
+        else:
+            b = QtWidgets.QPushButton(tr("Edit Nodes"))
+            b.setToolTip(tr("Show this node group in the Node editor"))
+            b.clicked.connect(lambda _=False: self._geonodes_edit(ob, mod))
+        hl.addWidget(b)
+        return w
+
+    def _geonodes_new(self, ob, mod):
+        try:
+            mod.node_group = new_geometry_group()
+        except Exception as ex:
+            bridge.log(str(ex), "ERROR")
+            return
+        bridge.undo_push("New Geometry Nodes")
+        self.refresh(force=True)
+
+    def _geonodes_edit(self, ob, mod):
+        try:
+            mod.is_active = True
+            from . import app
+            win = app._win
+            win.docks["node_editor"].show()
+            win.docks["node_editor"].raise_()
+            win.node_editor.set_source("GEOMETRY")
+            win.node_editor.rebuild()
+        except Exception as ex:
+            bridge.log(f"Edit Nodes: {ex}", "ERROR")
+
     def _geonodes_inputs(self, ob, mod):
+        """The group's inputs (and output attributes) as editable rows, grouped in its panels."""
         w = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(w)
-        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setContentsMargins(4, 0, 4, 0)
+        lay.setSpacing(3)
         ng = mod.node_group
         if ng is None:
             return w
+        props = getattr(mod, "properties", None)
+        if props is None:                      # Blender < 5.2: inputs are ID properties of the modifier
+            return self._geonodes_inputs_idprops(ob, mod, w, lay)
+        try:
+            items = list(ng.interface.items_tree)
+        except Exception:
+            items = []
+        layouts = {}
+
+        def layout_for(item):
+            par = getattr(item, "parent", None)
+            if par is None:
+                return lay
+            return layouts.get(par.as_pointer(), lay)
+
+        outputs = []
+        for it in items:
+            if it.item_type == "PANEL":
+                key = f"gnpanel:{ob.name}:{mod.name}:{getattr(it, 'persistent_uid', it.name)}"
+                pn = qt_ui.CollapsiblePanel(it.name, key, self.state, bool(getattr(it, "default_closed", False)))
+                layout_for(it).addWidget(pn)
+                layouts[it.as_pointer()] = pn.body_lay
+                continue
+            if it.item_type != "SOCKET":
+                continue
+            if it.in_out == "OUTPUT":
+                outputs.append(it)
+                continue
+            inp = getattr(props.inputs, it.identifier, None)
+            if inp is None or "value" not in inp.bl_rna.properties:
+                continue                        # Geometry inputs have no value
+            if getattr(it, "hide_in_modifier", False):
+                continue
+            row = self._geonodes_input_row(ob, mod, it, inp)
+            if row is not None:
+                layout_for(it).addWidget(row)
+        outs = []
+        for it in outputs:
+            o = getattr(props.outputs, it.identifier, None)
+            if o is not None and "attribute_name" in o.bl_rna.properties:
+                outs.append((it, o))
+        if outs:
+            key = f"gnoutputs:{ob.name}:{mod.name}"
+            pn = qt_ui.CollapsiblePanel(tr("Output Attributes"), key, self.state, True)
+            for it, o in outs:
+                b, _label = rw.make_binding(o, "attribute_name", on_change=self.on_change)
+                if b is not None:
+                    self.bindings.append(b)
+                    pn.body_lay.addWidget(rw.labeled_row(it.name, b.widget))
+            lay.addWidget(pn)
+        return w
+
+    def _geonodes_input_row(self, ob, mod, it, inp):
+        attr = getattr(inp, "type", "VALUE")
+        if attr == "ATTRIBUTE":
+            b, _label = rw.make_binding(inp, "attribute_name", on_change=self.on_change)
+        elif attr == "LAYER":
+            b, _label = rw.make_binding(inp, "layer_name", on_change=self.on_change)
+        else:
+            b, _label = rw.make_binding(inp, "value", on_change=self.on_change)
+        if b is None:
+            return None
+        self.bindings.append(b)
+        widget = b.widget
+        if isinstance(b, rw.BoolBinding):
+            widget.setText("")
+        if getattr(it, "description", ""):
+            widget.setToolTip(it.description)
+        try:
+            kinds = [e.identifier for e in inp.bl_rna.properties["type"].enum_items]
+        except Exception:
+            kinds = ["VALUE"]
+        if len(kinds) > 1:                      # Blender's "Input Attribute Toggle"
+            box = QtWidgets.QWidget()
+            hl = QtWidgets.QHBoxLayout(box)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.setSpacing(2)
+            hl.addWidget(widget, 1)
+            t = QtWidgets.QToolButton()
+            t.setObjectName("qtshell_gn_attr_toggle")
+            t.setCheckable(True)
+            t.setChecked(attr != "VALUE")
+            if blicons.has("SPREADSHEET"):
+                t.setIcon(blicons.icon("SPREADSHEET"))
+            else:
+                t.setText("A")
+            t.setToolTip(tr("Use an attribute instead of a single value") + "  "
+                         + "/".join(k.title() for k in kinds))
+            t.setStyleSheet("padding:2px;")
+            t.toggled.connect(lambda on, i=inp, k=kinds: self._geonodes_set_kind(ob, i, k, on))
+            hl.addWidget(t)
+            widget = box
+        row = rw.labeled_row(it.name, widget)
+        try:
+            if hasattr(mod, "is_input_used") and not mod.is_input_used(it.identifier):
+                # dimmed like Blender (the nodes don't use it now) but still editable
+                eff = QtWidgets.QGraphicsOpacityEffect(row)
+                eff.setOpacity(0.55)
+                row.setGraphicsEffect(eff)
+                row.setToolTip(tr("Not used by the node group at the moment"))
+        except Exception:
+            pass
+        return row
+
+    def _geonodes_set_kind(self, ob, inp, kinds, on):
+        try:
+            inp.type = (kinds[1] if len(kinds) > 1 else "ATTRIBUTE") if on else "VALUE"
+            ob.update_tag()
+        except Exception as ex:
+            bridge.log(str(ex), "ERROR")
+            return
+        bridge.undo_push("Input Attribute Toggle")
+        QtCore.QTimer.singleShot(0, lambda: self.refresh(force=True))
+
+    def _geonodes_inputs_idprops(self, ob, mod, w, lay):
+        ng = mod.node_group
+        try:
+            keys = set(mod.keys())
+        except Exception:
+            keys = set()
         try:
             items = [it for it in ng.interface.items_tree
                      if it.item_type == "SOCKET" and it.in_out == "INPUT"]
@@ -289,7 +500,7 @@ class StackPage(QtWidgets.QScrollArea):
             items = []
         for it in items:
             ident = it.identifier
-            if ident not in mod.keys():
+            if ident not in keys:
                 continue
             val = mod[ident]
             if isinstance(val, bool):
