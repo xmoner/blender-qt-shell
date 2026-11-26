@@ -103,6 +103,7 @@ def _clip_segment_view(a, b, near):
 
 
 # the operator of a generic 3D view key per mode (Object / Edit Mode of each data type)
+_APPLY_MENUS = {"OBJECT": "VIEW3D_MT_object_apply", "POSE": "VIEW3D_MT_pose_apply"}
 _MODE_OPS = {
     "select_all": {"OBJECT": "object.select_all", "EDIT_MESH": "mesh.select_all", "EDIT_CURVE": "curve.select_all",
                    "EDIT_SURFACE": "curve.select_all", "EDIT_ARMATURE": "armature.select_all",
@@ -2204,6 +2205,12 @@ class Viewport(QtWidgets.QWidget):
         elif H("view3d.asset_shelf"):
             from . import sculptview
             sculptview.toggle_asset_shelf()
+        elif H("view3d.apply_menu") and mode in _APPLY_MENUS:
+            from .qt_ui import LazyMenu                 # Ctrl+A like Blender: Object / Pose ▸ Apply
+            m = LazyMenu(_APPLY_MENUS[mode], self)
+            m.auto_icons = True
+            m.exec(QtGui.QCursor.pos())
+            self.request_redraw()
         elif H("view3d.mode_menu"):
             from . import api
             mw = api.main_window()

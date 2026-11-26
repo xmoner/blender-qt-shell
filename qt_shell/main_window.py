@@ -292,14 +292,17 @@ class LastOperatorPanel(QtWidgets.QWidget):
 
 # ---------------------------------------------------------------- F3 search
 class OperatorSearch(QtWidgets.QDialog):
+    """F3: like Blender's menu search – the menu items of the current mode (Object ▸ Apply ▸ Scale …)
+    first, then all operators; operators that can't run here (poll fails) are greyed at the end."""
     _cache = None
+    MENUS = True
 
     def __init__(self, parent):
         super().__init__(parent, QtCore.Qt.Popup)
         self.resize(520, 420)
         lay = QtWidgets.QVBoxLayout(self)
         self.edit = QtWidgets.QLineEdit()
-        self.edit.setPlaceholderText("Search operator…")
+        self.edit.setPlaceholderText("Search menus and operators…" if self.MENUS else "Search operator…")
         self.edit.textChanged.connect(self._filter)
         self.edit.returnPressed.connect(self._accept)
         lay.addWidget(self.edit)
@@ -307,6 +310,18 @@ class OperatorSearch(QtWidgets.QDialog):
         self.list.itemActivated.connect(lambda _i: self._accept())
         lay.addWidget(self.list)
         self.edit.installEventFilter(self)
+        self._entries = None
+        if self.MENUS:
+            from . import menufind
+            try:
+                ents = menufind.menu_entries(parent.window() if parent is not None else parent)
+            except Exception:
+                ents = []
+            for name, idname in self.items():
+                e = menufind.Entry(name, idname, menufind.OPERATOR, lambda i=idname: run_op(i))
+                e.idname = idname
+                ents.append(e)
+            self._entries = ents
         self._filter("")
 
     @classmethod
@@ -331,8 +346,27 @@ class OperatorSearch(QtWidgets.QDialog):
         return cls._cache
 
     def _filter(self, text):
-        words = text.lower().split()
         self.list.clear()
+        if self._entries is not None:
+            from . import menufind
+            if text.strip():
+                hits = menufind.search(self._entries, text)[:300]
+            else:
+                hits = [e for e in self._entries if e.kind == menufind.MENU][:300]
+            for e in hits:
+                label = (f"{e.where} ▸ {e.name}" if e.kind == menufind.MENU
+                         else f"{e.name}    —  {e.where}")
+                it = QtWidgets.QListWidgetItem(label)
+                if e.icon is not None and not e.icon.isNull():
+                    it.setIcon(e.icon)
+                if not e.enabled:
+                    it.setFlags(it.flags() & ~QtCore.Qt.ItemIsEnabled)
+                    it.setToolTip("Can't run here (wrong editor / mode or nothing selected)")
+                it.setData(QtCore.Qt.UserRole, e)
+                self.list.addItem(it)
+            self._select_first()
+            return
+        words = text.lower().split()
         n = 0
         for name, idname in self.items():
             hay = f"{name} {idname}".lower()
@@ -343,6 +377,13 @@ class OperatorSearch(QtWidgets.QDialog):
                 n += 1
                 if n > 300:
                     break
+        self._select_first()
+
+    def _select_first(self):
+        for i in range(self.list.count()):
+            if self.list.item(i).flags() & QtCore.Qt.ItemIsEnabled:
+                self.list.setCurrentRow(i)
+                return
         self.list.setCurrentRow(0)
 
     def eventFilter(self, obj, ev):
@@ -354,13 +395,21 @@ class OperatorSearch(QtWidgets.QDialog):
 
     def _accept(self):
         it = self.list.currentItem()
+        if it is not None and not (it.flags() & QtCore.Qt.ItemIsEnabled):
+            return
         self.close()
-        if it is not None:
-            run_op(it.data(QtCore.Qt.UserRole))
+        if it is None:
+            return
+        data = it.data(QtCore.Qt.UserRole)
+        if isinstance(data, str):
+            run_op(data)
+        else:      # a menu item / operator entry – after the popup is gone (menus need the focus)
+            QtCore.QTimer.singleShot(0, data.run)
 
 
 class MenuSearch(OperatorSearch):
     """Search inside one Blender menu and its submenus (wm.search_single_menu), e.g. Add Modifier → Search…"""
+    MENUS = False
 
     def __init__(self, parent, menu_id):
         self._menu = LazyMenu(menu_id)          # kept alive: the found actions belong to it
@@ -1319,6 +1368,42 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         return idname.endswith("_move") and bridge.op_exists(idname[:-5])
 
+    def _apply_shared(self, props, ctx=None):
+        """Apply ▸ Location / Rotation / Scale … on objects whose data other objects use too (linked
+        duplicates, instanced meshes): Blender refuses (\"Cannot apply to a multi user\") and, from its own
+        menu, offers to make the data single-user first. Same question here. True = handled (asked)."""
+        try:
+            sel = [o for o in bpy.context.view_layer.objects if o.select_get() and o.data is not None]
+        except Exception:
+            return False
+        shared = []
+        for o in sel:
+            if sum(1 for x in bpy.data.objects if x.data == o.data) > 1:
+                shared.append(o)
+        if not shared:
+            return False
+        names = ", ".join(o.name for o in shared[:5]) + (" …" if len(shared) > 5 else "")
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle(tr("Apply Object Transform"))
+        box.setText(f"The data of {len(shared)} object(s) is shared with other objects ({names}).")
+        box.setInformativeText("Blender can't apply transforms to shared (multi-user) data. "
+                               "Create new object-data users and apply the transformation? "
+                               "The objects will no longer share their data.")
+        ok = box.addButton("Make Single User and Apply", QtWidgets.QMessageBox.AcceptRole)
+        box.addButton(QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(ok)
+        box.exec()
+        if box.clickedButton() is ok:
+            p = dict(props)
+            p["isolate_users"] = True
+            res = run_op("object.transform_apply", p, ctx)
+            if "FINISHED" in res:
+                self.statusBar().showMessage(f"Applied – {len(shared)} object(s) got their own data.", 4000)
+        else:
+            self.statusBar().showMessage("Apply cancelled – the data is shared with other objects.", 4000)
+        return True
+
     def special_op(self, idname, props, ctx=None):
         vp = self.viewport
         if idname == "wm.properties_edit":          # Blender's dialog can't open from Qt – our own one
@@ -1336,6 +1421,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return True
         from . import valuemodal                   # Shear, Bevel, Adjust Light Power … following the mouse
         if valuemodal.start(vp, idname, props, ctx):
+            return True
+        if idname == "object.transform_apply" and not props.get("isolate_users") and self._apply_shared(props, ctx):
             return True
         if idname == "transform.mirror" and not any(props.get("constraint_axis") or ()):
             # Interactive Mirror: Blender's modal transform can't run in the hidden 3D view –

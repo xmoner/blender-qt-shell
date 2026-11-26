@@ -27,7 +27,7 @@ def _norm(text):
 
 
 class Entry:
-    __slots__ = ("name", "where", "kind", "shortcut", "icon", "run", "enabled", "hay", "key")
+    __slots__ = ("name", "where", "kind", "shortcut", "icon", "run", "enabled", "hay", "key", "key2", "idname")
 
     def __init__(self, name, where, kind, run, shortcut="", icon=None, enabled=True):
         self.name = name
@@ -38,12 +38,17 @@ class Entry:
         self.icon = icon
         self.enabled = enabled
         self.key = _norm(name)
+        # a menu item is also known by its submenu + name: Object ▸ Apply ▸ Scale = "Apply Scale"
+        last = where.rsplit("▸", 1)[-1].strip() if kind == MENU and where else ""
+        self.key2 = _norm(f"{last} {name}") if last else self.key
         self.hay = _norm(f"{name} {where}")
+        self.idname = None
 
 
 def _split_text(text):
     """'Frame Selected\tF' → ('Frame Selected', 'F')."""
-    text = text.replace("&&", "\0").replace("&", "").replace("\0", "&")
+    # "&&" and "& " (Rotation & Scale – no mnemonic there) are a real ampersand
+    text = text.replace("&&", "\0").replace("& ", "\0 ").replace("&", "").replace("\0", "&")
     name, _sep, sc = text.partition("\t")
     return name.rstrip("…").replace("...", "").strip(), sc.strip()
 
@@ -167,13 +172,41 @@ def collect(window):
     try:
         from .main_window import OperatorSearch
         for name, idname in OperatorSearch.items():
-            out.append(Entry(name, idname, OPERATOR, lambda i=idname: bridge.run_op(i)))
+            e = Entry(name, idname, OPERATOR, lambda i=idname: bridge.run_op(i))
+            e.idname = idname
+            out.append(e)
     except Exception:
         pass
     return out
 
 
-def search(entries, text):
+def op_poll(idname):
+    """True when Blender's operator can run in Qt Shell's context now (False: it would fail – e.g.
+    nla.apply_scale outside the NLA editor). None when it can't be told."""
+    try:
+        import bpy
+        mod, name = idname.split(".", 1)
+        op = getattr(getattr(bpy.ops, mod), name)
+        with bridge.blender_context():
+            return bool(op.poll())
+    except Exception:
+        return None
+
+
+def _rank(e, words):
+    first = words[0]
+    best = 9
+    for key in (e.key, e.key2):
+        r = 0 if key.startswith(first) else (1 if f" {first}" in f" {key}" else 2)
+        if not any(w in key for w in words):
+            r += 3                              # only the location matches
+        elif all(w in key for w in words):
+            r -= 0.5                            # every word in the name itself
+        best = min(best, r)
+    return best
+
+
+def search(entries, text, poll_limit=60):
     words = [_norm(w) for w in text.split()]
     if not words:
         return []
@@ -181,13 +214,29 @@ def search(entries, text):
     order = {MENU: 0, TAB: 1, BUTTON: 2, OPERATOR: 3}
     for e in entries:
         if all(w in e.hay for w in words):
-            first = words[0]
-            rank = 0 if e.key.startswith(first) else (1 if f" {first}" in f" {e.key}" else 2)
-            if not any(w in e.key for w in words):
-                rank += 3                       # only the location matches
-            hits.append((rank, order[e.kind], e.name.lower(), e))
-    hits.sort(key=lambda h: h[:3])
-    return [h[3] for h in hits[:_MAX_RESULTS]]
+            # equal rank: the closer (shorter) name first – "Apply ▸ Scale" before "Apply ▸ Rotation & Scale"
+            hits.append([_rank(e, words), order[e.kind], len(e.key2), e.name.lower(), e])
+    hits.sort(key=lambda h: h[:4])
+    hits = hits[:_MAX_RESULTS]
+    # operators that can't run here (poll fails) go greyed to the end – like Blender's F3 search
+    for h in hits[:poll_limit]:
+        e = h[4]
+        if e.kind == OPERATOR and e.idname and op_poll(e.idname) is False:
+            e.enabled = False
+    hits.sort(key=lambda h: (not h[4].enabled,) + tuple(h[:4]))
+    return [h[4] for h in hits]
+
+
+def menu_entries(window):
+    """Menu items of the window's menu bar (for the F3 search)."""
+    out, seen = [], set()
+    for act in window.menuBar().actions():
+        m = act.menu()
+        if m is None:
+            continue
+        title, _sc = _split_text(act.text() or m.title())
+        _collect_menu(m, title, out, seen)
+    return out
 
 
 # ---------------------------------------------------------------- popup
