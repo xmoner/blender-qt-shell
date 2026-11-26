@@ -13,6 +13,23 @@ from .bridge import tr
 ROW_H = 22
 HEADER_H = 24
 SOCK_R = 5.0
+MULTI_STEP = 10.0        # distance between the links of a multi-input socket (Blender: NODE_DYS)
+
+
+def multi_links(sock):
+    """Links into a multi-input socket in Blender's order: ascending multi_input_sort_id (the highest is drawn
+    at the top)."""
+    try:
+        lks = list(sock.links)
+    except Exception:
+        return []
+    return sorted(lks, key=lambda l: getattr(l, "multi_input_sort_id", 0))
+
+
+def multi_offset(rank, total):
+    """y offset (Qt, down = +) of link number rank of total from the socket's centre – Blender's
+    node_link_calculate_multi_input_position: rank 0 at the bottom, the last one at the top."""
+    return (total - 1) * MULTI_STEP / 2.0 - rank * MULTI_STEP
 
 SOCKET_COLORS = {
     "SHADER": "#63c763", "RGBA": "#c7c729", "VALUE": "#a1a1a1", "VECTOR": "#6363c7",
@@ -135,6 +152,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self.setFlags(QtWidgets.QGraphicsItem.ItemIsMovable | QtWidgets.QGraphicsItem.ItemIsSelectable
                       | QtWidgets.QGraphicsItem.ItemSendsGeometryChanges)
         self.sockets = {}   # (is_output, identifier) -> (QPointF, socket)
+        self.multi = {}     # identifier of a multi-input socket -> number of slots (its links, at least 1)
         self.rows = []
         self._build()
         x, y = abs_location(node)
@@ -146,6 +164,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         node = self._node
         self.rows = []
         self.sockets = {}
+        self.multi = {}
         if self.kind == "reroute":
             self.w, self.h = 16.0, 16.0
             c = QtCore.QPointF(8, 8)
@@ -177,9 +196,15 @@ class NodeItem(QtWidgets.QGraphicsItem):
             self.rows.append(("prop", p, y))
             y += ROW_H
         for s in ins:
+            hh = ROW_H
+            if getattr(s, "is_multi_input", False):
+                # Blender: an oval that grows with every link, each link has its own place on it
+                n = max(1, len(s.links))
+                self.multi[s.identifier] = n
+                hh = ROW_H + (n - 1) * MULTI_STEP
             self.rows.append(("in", s, y))
-            self.sockets[(False, s.identifier)] = (QtCore.QPointF(0, y + ROW_H / 2), s)
-            y += ROW_H
+            self.sockets[(False, s.identifier)] = (QtCore.QPointF(0, y + hh / 2), s)
+            y += hh
         self.h = y + 6
 
     def boundingRect(self):
@@ -254,6 +279,8 @@ class NodeItem(QtWidgets.QGraphicsItem):
         p.setFont(f)
         for kind, obj, y in self.rows:
             r = QtCore.QRectF(10, y, self.w - 20, ROW_H)
+            if kind == "in" and obj.identifier in self.multi:
+                r = QtCore.QRectF(10, y, self.w - 20, ROW_H + (self.multi[obj.identifier] - 1) * MULTI_STEP)
             try:
                 if kind == "out":
                     p.setPen(QtGui.QColor("#dddddd"))
@@ -297,18 +324,39 @@ class NodeItem(QtWidgets.QGraphicsItem):
                         p.drawText(r, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, tr(obj.name))
             except ReferenceError:
                 return
-        for (is_out, _ident), (pt, s) in self.sockets.items():
+        for (is_out, ident), (pt, s) in self.sockets.items():
             p.setPen(QtGui.QPen(QtGui.QColor("#111111"), 1))
             p.setBrush(socket_color(s))
-            if getattr(s, "display_shape", "CIRCLE").startswith("DIAMOND"):
+            shape = str(getattr(s, "display_shape", "CIRCLE"))
+            if not is_out and ident in self.multi:
+                p.drawRoundedRect(self.multi_rect(ident, pt), SOCK_R, SOCK_R)
+            elif shape.startswith("DIAMOND"):
                 poly = QtGui.QPolygonF([pt + QtCore.QPointF(0, -SOCK_R - 1), pt + QtCore.QPointF(SOCK_R + 1, 0),
                                         pt + QtCore.QPointF(0, SOCK_R + 1), pt + QtCore.QPointF(-SOCK_R - 1, 0)])
                 p.drawPolygon(poly)
+            elif shape.startswith("SQUARE"):
+                p.drawRect(QtCore.QRectF(pt.x() - SOCK_R, pt.y() - SOCK_R, 2 * SOCK_R, 2 * SOCK_R))
             else:
                 p.drawEllipse(pt, SOCK_R, SOCK_R)
+            if shape.endswith("_DOT"):
+                p.setPen(QtCore.Qt.NoPen)
+                p.setBrush(QtGui.QColor("#111111"))
+                p.drawEllipse(pt, 1.6, 1.6)
+
+    def multi_rect(self, ident, pt=None):
+        """The oval of a multi-input socket (local coordinates): one slot per link, a bit taller than a round
+        socket even with one link so it reads as 'more links fit here'."""
+        if pt is None:
+            pt = self.sockets[(False, ident)][0]
+        n = self.multi.get(ident, 1)
+        h = (n - 1) * MULTI_STEP + SOCK_R * 3.0
+        return QtCore.QRectF(pt.x() - SOCK_R, pt.y() - h / 2, 2 * SOCK_R, h)
 
     def socket_at(self, scene_pos):
         local = self.mapFromScene(scene_pos)
+        for ident in self.multi:
+            if self.multi_rect(ident).adjusted(-SOCK_R, -SOCK_R / 2, SOCK_R, SOCK_R / 2).contains(local):
+                return False, self.sockets[(False, ident)][1]
         for (is_out, ident), (pt, s) in self.sockets.items():
             if (pt - local).manhattanLength() <= SOCK_R * 2.6:
                 return is_out, s
@@ -363,6 +411,16 @@ class LinkItem(QtWidgets.QGraphicsPathItem):
         self.link = link
         self.a = (a_item, link.from_socket.identifier)
         self.b = (b_item, link.to_socket.identifier)
+        self.slot = (0, 1)              # (rank, total) on a multi-input socket
+        try:
+            if getattr(link.to_socket, "is_multi_input", False):
+                lks = multi_links(link.to_socket)
+                key = (link.from_node.name, link.from_socket.identifier)
+                rank = next((i for i, l in enumerate(lks)
+                             if (l.from_node.name, l.from_socket.identifier) == key), 0)
+                self.slot = (rank, max(1, len(lks)))
+        except Exception:
+            pass
         col = socket_color(link.from_socket)
         pen = QtGui.QPen(col, 2.2)
         if getattr(link, "is_muted", False):
@@ -387,6 +445,8 @@ class LinkItem(QtWidgets.QGraphicsPathItem):
     def update_path(self):
         p1 = self.a[0].socket_scene_pos(True, self.a[1])
         p2 = self.b[0].socket_scene_pos(False, self.b[1])
+        if p2 is not None and self.slot[1] > 1:
+            p2 = p2 + QtCore.QPointF(0, multi_offset(*self.slot))
         if p1 is None or p2 is None:
             self.setPath(QtGui.QPainterPath())
             return
@@ -585,8 +645,15 @@ class NodeView(QtWidgets.QGraphicsView):
     def _start_link(self, item, is_out, sock, sp):
         ntree = self.editor.tree
         if not is_out and sock.is_linked:
-            # drag an existing link out of an input
+            # drag an existing link out of an input (a multi-input: the link nearest to the cursor)
             link = sock.links[0]
+            if getattr(sock, "is_multi_input", False):
+                lks = multi_links(sock)
+                c = item.socket_scene_pos(False, sock.identifier)
+                if lks and c is not None:
+                    rank = min(range(len(lks)),
+                               key=lambda i: abs(c.y() + multi_offset(i, len(lks)) - sp.y()))
+                    link = lks[rank]
             src = link.from_socket
             src_item = self.editor.items.get(link.from_node.name)
             ntree.links.remove(link)
@@ -942,7 +1009,8 @@ class NodeEditor(QtWidgets.QWidget):
                           tuple(str(getattr(n, p.identifier)) for p in node_buttons(n))))
         for lk in tree.links:
             parts.append((lk.from_node.name, lk.from_socket.identifier, lk.to_node.name,
-                          lk.to_socket.identifier, getattr(lk, "is_muted", False)))
+                          lk.to_socket.identifier, getattr(lk, "is_muted", False),
+                          getattr(lk, "multi_input_sort_id", 0)))
         return hash(tuple(parts))
 
     def refresh(self):
