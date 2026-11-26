@@ -326,6 +326,37 @@ class NodeItem(QtWidgets.QGraphicsItem):
         return super().itemChange(change, value)
 
 
+# ---------------------------------------------------------------- insert a node into a link (like Blender)
+NUMERIC_SOCKETS = {"VALUE", "INT", "BOOLEAN", "VECTOR", "RGBA", "ROTATION"}
+
+
+def _usable(sock):
+    return (getattr(sock, "enabled", True) and not getattr(sock, "hide", False)
+            and not getattr(sock, "is_unavailable", False) and getattr(sock, "type", "") != "CUSTOM")
+
+
+def main_socket(sockets, stype):
+    """The socket a link of type stype goes to when a node is dropped on it: the first visible socket of the
+    same type, else (numbers, vectors, colours) the first visible socket that converts."""
+    vis = [x for x in sockets if _usable(x)]
+    for x in vis:
+        if x.type == stype:
+            return x
+    if stype in NUMERIC_SOCKETS:
+        for x in vis:
+            if x.type in NUMERIC_SOCKETS:
+                return x
+    return None
+
+
+def node_is_free(node):
+    """Blender inserts only nodes that have no links yet."""
+    try:
+        return not any(x.is_linked for x in node.inputs) and not any(x.is_linked for x in node.outputs)
+    except Exception:
+        return False
+
+
 class LinkItem(QtWidgets.QGraphicsPathItem):
     def __init__(self, link, a_item, b_item):
         super().__init__()
@@ -340,8 +371,18 @@ class LinkItem(QtWidgets.QGraphicsPathItem):
         elif not getattr(link, "is_valid", True):
             pen.setColor(QtGui.QColor("#ff3333"))
         self.setPen(pen)
+        self._pen = QtGui.QPen(pen)
         self.setZValue(-1)
         self.update_path()
+
+    def set_highlight(self, on):
+        """White and thicker while a dragged node would be inserted into this link (like Blender)."""
+        if on:
+            self.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 3.6))
+            self.setZValue(1)
+        else:
+            self.setPen(self._pen)
+            self.setZValue(-1)
 
     def update_path(self):
         p1 = self.a[0].socket_scene_pos(True, self.a[1])
@@ -375,6 +416,9 @@ class NodeView(QtWidgets.QGraphicsView):
         self._pan = None
         self._drag_link = None   # (from_item, is_out, socket, temp_path_item)
         self._moving = False
+        self._grab = None        # a new node following the mouse until a click (like Blender after Shift+A)
+        self._insert_li = None   # the link a dragged node would be inserted into (highlighted)
+        self.viewport().setMouseTracking(True)
 
     def drawBackground(self, p, rect):
         super().drawBackground(p, rect)
@@ -434,7 +478,94 @@ class NodeView(QtWidgets.QGraphicsView):
                 return it
         return None
 
+    # --- insert on link
+    def _set_insert(self, li):
+        if li is self._insert_li:
+            return
+        old = self._insert_li
+        self._insert_li = li
+        try:
+            if old is not None:
+                old.set_highlight(False)
+        except RuntimeError:
+            pass
+        if li is not None:
+            li.set_highlight(True)
+
+    def insert_candidate(self, item, sp):
+        """The link the node item would be inserted into at the cursor sp: links crossing the node's box whose
+        types fit a free input and output of the node; the one nearest to the cursor."""
+        node = item.node if item is not None else None
+        if node is None or item.kind != "node" or not node_is_free(node):
+            return None
+        rect = item.sceneBoundingRect()
+        stroker = QtGui.QPainterPathStroker()
+        stroker.setWidth(6)
+        best, best_d = None, None
+        for li in self.editor.links:
+            if li.a[0] is item or li.b[0] is item:
+                continue
+            path = li.path()
+            if path.isEmpty() or not stroker.createStroke(path).intersects(rect):
+                continue
+            try:
+                ft = li.link.from_socket.type
+                tt = li.link.to_socket.type
+            except Exception:
+                continue
+            if main_socket(node.inputs, ft) is None or main_socket(node.outputs, tt) is None:
+                continue
+            d = min(QtCore.QLineF(sp, path.pointAtPercent(i / 24.0)).length() for i in range(25))
+            if best_d is None or d < best_d:
+                best, best_d = li, d
+        return best
+
+    def _update_insert(self, item, sp, mods=None):
+        if mods is not None and mods & QtCore.Qt.AltModifier:   # Alt: move without inserting (Blender)
+            self._set_insert(None)
+            return
+        self._set_insert(self.insert_candidate(item, sp))
+
+    # --- grab (a new node follows the mouse)
+    def start_grab(self, item):
+        if item is None:
+            return
+        off = QtCore.QPointF(item.boundingRect().width() / 2.0, 12)
+        self._grab = {"item": item, "off": off}
+        sp = self.mapToScene(self.mapFromGlobal(QtGui.QCursor.pos()))
+        if self.viewport().rect().contains(self.mapFromGlobal(QtGui.QCursor.pos())):
+            item.setPos(sp - off)
+        self._grab["start"] = QtCore.QPointF(item.pos())
+        self.viewport().setCursor(QtCore.Qt.SizeAllCursor)
+        self.setFocus()
+        self._update_insert(item, sp)
+
+    def _grab_move(self, sp, mods=None):
+        it = self._grab["item"]
+        it.setPos(sp - self._grab["off"])
+        self._update_insert(it, sp, mods)
+
+    def end_grab(self, ok=True):
+        g, self._grab = self._grab, None
+        if g is None:
+            return
+        self.viewport().unsetCursor()
+        item = g["item"]
+        li = self._insert_li
+        self._set_insert(None)
+        if not ok:
+            item.setPos(g["start"])
+        self.editor.commit_positions()
+        if ok and li is not None:
+            self.editor.insert_on_link(item, li)
+
     def mousePressEvent(self, ev):
+        if self._grab is not None:
+            if ev.button() == QtCore.Qt.LeftButton:
+                self.end_grab(True)
+            elif ev.button() == QtCore.Qt.RightButton:
+                self.end_grab(False)
+            return
         if ev.button() == QtCore.Qt.MiddleButton:
             self._pan = ev.position()
             self.setCursor(QtCore.Qt.ClosedHandCursor)
@@ -485,7 +616,16 @@ class NodeView(QtWidgets.QGraphicsView):
         if self._drag_link is not None:
             self._update_drag(self.mapToScene(ev.position().toPoint()))
             return
+        if self._grab is not None:
+            self._grab_move(self.mapToScene(ev.position().toPoint()), ev.modifiers())
+            return
         super().mouseMoveEvent(ev)
+        if self._moving and ev.buttons() & QtCore.Qt.LeftButton:
+            sel = [it for it in self.scene().selectedItems() if isinstance(it, NodeItem)]
+            if len(sel) == 1:
+                self._update_insert(sel[0], self.mapToScene(ev.position().toPoint()), ev.modifiers())
+            else:
+                self._set_insert(None)
 
     def mouseReleaseEvent(self, ev):
         if self._pan is not None and ev.button() == QtCore.Qt.MiddleButton:
@@ -510,10 +650,17 @@ class NodeView(QtWidgets.QGraphicsView):
             self.editor.rebuild()
             return
         super().mouseReleaseEvent(ev)
+        li = self._insert_li
+        self._set_insert(None)
+        moved = None
         if self._moving:
             self._moving = False
+            sel = [it for it in self.scene().selectedItems() if isinstance(it, NodeItem)]
+            moved = sel[0] if len(sel) == 1 else None
             self.editor.commit_positions()
         self.editor.commit_selection()
+        if li is not None and moved is not None:
+            self.editor.insert_on_link(moved, li)
 
     def mouseDoubleClickEvent(self, ev):
         it = self._item_at(ev.position().toPoint())
@@ -523,6 +670,12 @@ class NodeView(QtWidgets.QGraphicsView):
         super().mouseDoubleClickEvent(ev)
 
     def keyPressEvent(self, ev):
+        if self._grab is not None:          # modal like Blender's grab: Enter / Space confirm, Esc cancels
+            if ev.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter, QtCore.Qt.Key_Space):
+                self.end_grab(True)
+            elif ev.key() == QtCore.Qt.Key_Escape:
+                self.end_grab(False)
+            return
         from . import keymap
         names = keymap.event_names(ev)
 
@@ -793,7 +946,8 @@ class NodeEditor(QtWidgets.QWidget):
         return hash(tuple(parts))
 
     def refresh(self):
-        if self.view._drag_link is not None or self.view._moving or QtWidgets.QApplication.mouseButtons():
+        if self.view._drag_link is not None or self.view._moving or self.view._grab is not None \
+                or QtWidgets.QApplication.mouseButtons():
             self._timer.start()
             return
         try:
@@ -815,6 +969,12 @@ class NodeEditor(QtWidgets.QWidget):
                     pass
 
     def rebuild(self, keep_sig=False):
+        # the items are about to be replaced – a grab / highlight of the old ones ends here
+        if getattr(self, "view", None) is not None:
+            if self.view._grab is not None:
+                self.view._grab = None
+                self.view.viewport().unsetCursor()
+            self.view._insert_li = None
         if not keep_sig:
             self._sig = None
             self.tree = self.current_tree()
@@ -952,11 +1112,77 @@ class NodeEditor(QtWidgets.QWidget):
             n.select = True
             self.tree.nodes.active = n
             bridge.undo_push("Add Node")
+            name = n.name
             self.rebuild()
+            # like Blender: the new node follows the mouse until a click – over a link it is inserted into it
+            self.view.start_grab(self.items.get(name))
         dlg = AddNodePopup(self, types, pick)
         dlg.move(gpos)
         dlg.show()
         dlg.edit.setFocus()
+
+    def insert_on_link(self, item, li):
+        """Inserts the node of item into the link of li (from → node's main input, node's main output → to),
+        like dropping a node on a link in Blender; nodes that would overlap are moved aside (auto-offset)."""
+        tree = self.tree
+        node = item.node if item is not None else None
+        if tree is None or node is None or not node_is_free(node):
+            return False
+        (a_item, a_id), (b_item, b_id) = li.a, li.b
+        lk = next((l for l in tree.links if l.from_node.name == a_item.name and l.from_socket.identifier == a_id
+                   and l.to_node.name == b_item.name and l.to_socket.identifier == b_id), None)
+        if lk is None:
+            return False
+        fs, ts = lk.from_socket, lk.to_socket
+        ni, no = main_socket(node.inputs, fs.type), main_socket(node.outputs, ts.type)
+        if ni is None or no is None:
+            return False
+        try:
+            tree.links.remove(lk)
+            tree.links.new(fs, ni)
+            tree.links.new(no, ts)
+        except Exception as ex:
+            bridge.log(f"Insert node: {ex}", "ERROR")
+            return False
+        self._auto_offset(item, a_item, b_item)
+        bridge.undo_push("Insert Node")
+        self.rebuild()
+        return True
+
+    AUTO_OFFSET_MARGIN = 40
+
+    def _auto_offset(self, item, a_item, b_item):
+        """Blender's auto-offset: the nodes after the inserted one move right (before it: left) when it
+        overlaps them."""
+        tree = self.tree
+        r = item.sceneBoundingRect()
+        m = self.AUTO_OFFSET_MARGIN
+
+        def chain(start, forward):
+            seen, todo = set(), [start]
+            while todo:
+                nm = todo.pop()
+                if nm in seen or nm == item.name:
+                    continue
+                seen.add(nm)
+                for l in tree.links:
+                    if forward and l.from_node.name == nm:
+                        todo.append(l.to_node.name)
+                    elif not forward and l.to_node.name == nm:
+                        todo.append(l.from_node.name)
+            return seen
+        right = r.right() + m - b_item.sceneBoundingRect().left()
+        if right > 0:
+            for nm in chain(b_item.name, True):
+                n = tree.nodes.get(nm)
+                if n is not None and n.bl_idname != "NodeFrame":
+                    n.location = (n.location[0] + right, n.location[1])
+        left = a_item.sceneBoundingRect().right() + m - r.left()
+        if left > 0:
+            for nm in chain(a_item.name, False):
+                n = tree.nodes.get(nm)
+                if n is not None and n.bl_idname != "NodeFrame":
+                    n.location = (n.location[0] - left, n.location[1])
 
     def enter_group(self, node):
         if getattr(node, "node_tree", None) is None:
