@@ -30,6 +30,7 @@ GROUPS = [
     ("player", "Animation Player"),
     ("image", "Image editor"),
     ("sequencer", "Video Sequencer"),
+    ("spreadsheet", "Spreadsheet"),
     ("bluepencil", "Blue Pencil, burn-in and annotations"),
     ("updates", "Updates"),
 ]
@@ -1740,6 +1741,150 @@ print(rel["tag"], rel["date"])
 
 
 # ------------------------------------------------------------------------------------------- lookup
+# =========================================================================================== spreadsheet
+SS = "import bpy, qt_shell\n\nss = qt_shell.api.spreadsheet()\n"
+SSG = SS + ('cube = bpy.data.objects.get("Cube")\nif cube is None:\n    bpy.ops.mesh.primitive_cube_add()\n'
+            '    cube = bpy.context.active_object\nbpy.context.view_layer.objects.active = cube\n'
+            'ss.set_mode("GEOMETRY")\nss.set_evaluated(False)\nss.set_domain("POINT")\n')
+SSO = SS + ('for ob in bpy.context.view_layer.objects:\n    ob.select_set(ob.type in {"MESH", "CAMERA"})\n'
+            'ss.set_mode("OBJECTS")\n')
+
+C("api.spreadsheet", "spreadsheet", "spreadsheet()", "Spreadsheet or None",
+  "The Spreadsheet dock (Window → Spreadsheet, Geometry Nodes workspace): Blender's Spreadsheet (attributes of "
+  "the active object's geometry per domain) and Maya's Attribute Spread Sheet (attributes of the selected "
+  "objects / bones) in one panel. None when Qt Shell is not open.",
+  example=SS + "print(ss.mode, ss.columns()[:4])")
+
+C("spreadsheet.Spreadsheet.set_mode", "spreadsheet", "set_mode(mode)", "None",
+  "GEOMETRY – the active object's geometry (Blender's Spreadsheet, Maya's Component Editor); OBJECTS – the "
+  "selected objects / bones as rows (Maya's Attribute Spread Sheet).",
+  [("mode", "str", "GEOMETRY or OBJECTS.")],
+  example=SS + 'ss.set_mode("OBJECTS")\nss.set_mode("GEOMETRY")')
+
+C("spreadsheet.Spreadsheet.set_domain", "spreadsheet", "set_domain(domain, component=None)", "None",
+  "Shows one domain of the geometry (switches to GEOMETRY). The data set list on the left does the same.",
+  [("domain", "str", "POINT, EDGE, FACE, CORNER, CURVE or INSTANCE."),
+   ("component", "str", "MESH, CURVES, POINTCLOUD or INSTANCES – None: the first one that has the domain.")],
+  example=SSG + 'ss.set_domain("FACE")\nprint(len(ss.rows()), "faces")')
+
+C("spreadsheet.Spreadsheet.set_evaluated", "spreadsheet", "set_evaluated(on=True)", "None",
+  "True – the evaluated geometry (modifiers, Geometry Nodes; read-only); False – the original data, editable "
+  "(also in Edit Mode).",
+  [("on", "bool", "Evaluated (True) or Original (False).")],
+  example=SSG + "ss.set_evaluated(True)\nss.set_evaluated(False)")
+
+C("spreadsheet.Spreadsheet.set_selected_only", "spreadsheet", "set_selected_only(on=True)", "None",
+  "Geometry: only the selected elements (Edit Mode). Objects: only the selected objects / bones – False lists "
+  "every object of the view layer.",
+  [("on", "bool", "Only the selection.")],
+  example=SSO + "ss.set_selected_only(False)\nprint(len(ss.rows()), 'objects')\nss.set_selected_only(True)")
+
+C("spreadsheet.Spreadsheet.set_tab", "spreadsheet", "set_tab(tab)", "None",
+  "Attribute tab of the OBJECTS mode (switches to it), like the tabs of Maya's Attribute Spread Sheet.",
+  [("tab", "str", "Keyable, Translate, Rotate, Scale, Transform, Render, Display, Custom or All.")],
+  example=SSO + 'ss.set_tab("Translate")\nprint(ss.columns())')
+
+C("spreadsheet.Spreadsheet.pin", "spreadsheet", "pin(on=True, name=None)", "None",
+  "Geometry mode: keep showing this object when another one becomes active.",
+  [("on", "bool", "Pin (True) or follow the active object (False)."),
+   ("name", "str", "Object name – None: the active object.")],
+  example=SSG + "ss.pin(True)\nss.pin(False)")
+
+C("spreadsheet.Spreadsheet.set_column_filter", "spreadsheet", 'set_column_filter(text="")', "None",
+  "Shows only the columns whose name contains the text (case-insensitive) – the field in the toolbar.",
+  [("text", "str", "Part of the column names; empty = all columns.")],
+  example=SSG + 'ss.set_column_filter("position")\nprint(ss.columns())\nss.set_column_filter("")')
+
+C("spreadsheet.Spreadsheet.set_decimals", "spreadsheet", "set_decimals(n=3)", "None",
+  "Decimals shown for float values (0–6). Copy and export always use full precision.",
+  [("n", "int", "Number of decimals.")],
+  example=SS + "ss.set_decimals(4)\nss.set_decimals(3)")
+
+C("spreadsheet.Spreadsheet.set_option", "spreadsheet", "set_option(name, on)", "None",
+  "'internal' – also internal attributes (names starting with a dot); 'extras' – computed columns (normals, "
+  "face area, corners).",
+  [("name", "str", "internal or extras."), ("on", "bool", "Show them.")],
+  example=SSG + 'ss.set_option("internal", True)\nss.set_option("internal", False)')
+
+C("spreadsheet.Spreadsheet.sort_by", "spreadsheet", "sort_by(column=None, descending=False)", "None",
+  "Sorts the rows by a column (like clicking its header); None = element order.",
+  [("column", "str", "Column name or None."), ("descending", "bool", "Largest first.")],
+  example=SSG + 'ss.sort_by("position Z", descending=True)\nprint(ss.rows())\nss.sort_by(None)')
+
+C("spreadsheet.Spreadsheet.add_row_filter", "spreadsheet", 'add_row_filter(column, op="=", value=0.0)',
+  "int – index of the filter",
+  "Keeps only the rows whose value matches (Blender's row filters). '=' on floats allows 0.0001 difference.",
+  [("column", "str", "Column name."), ("op", "str", "=, ≠ (!=), >, <, ≥ (>=), ≤ (<=) or contains."),
+   ("value", "", "Number, text or expression.")],
+  example=SSG + 'ss.add_row_filter("position Z", ">", 0)\nprint(ss.rows())      # the top vertices\n'
+                'ss.clear_row_filters()')
+
+C("spreadsheet.Spreadsheet.clear_row_filters", "spreadsheet", "clear_row_filters()", "None",
+  "Removes every row filter.",
+  example=SS + "ss.clear_row_filters()")
+
+C("spreadsheet.Spreadsheet.columns", "spreadsheet", "columns()", "list of str",
+  "Names of the shown columns (vectors are split: 'position X', 'position Y' …).",
+  example=SSG + "print(ss.columns())")
+
+C("spreadsheet.Spreadsheet.rows", "spreadsheet", "rows()", "list",
+  "The shown rows in the shown order – element indices (Geometry) or object / bone names (Objects).",
+  example=SSO + "print(ss.rows())")
+
+C("spreadsheet.Spreadsheet.value", "spreadsheet", "value(row, column)", "value",
+  "Value of a cell.",
+  [("row", "int / str", "Element index (Geometry) or object / bone name (Objects)."),
+   ("column", "str", "Column name.")],
+  example=SSG + 'print(ss.value(0, "position X"))')
+
+C("spreadsheet.Spreadsheet.set_value", "spreadsheet", "set_value(rows, column, value)", "bool",
+  "Writes a value into cells (one undo step). Relative: '+=1', '-=0.5', '*=2', '/=2'; expressions like "
+  "'2*pi' work too. Only Original geometry and Objects mode cells are editable.",
+  [("rows", "int / str / list", "Row(s) – element indices or object names."), ("column", "str", "Column name."),
+   ("value", "", "Number, text, bool or an expression.")],
+  example=SSG + 'ss.set_value([0, 1], "position Z", "+=0.5")\nss.set_value([0, 1], "position Z", "-=0.5")')
+
+C("spreadsheet.Spreadsheet.select_cells", "spreadsheet", "select_cells(rows=None, columns=None)", "None",
+  "Selects cells in the table (for copy / set_selected).",
+  [("rows", "list", "Rows (indices / names), None = all."), ("columns", "list", "Column names, None = all.")],
+  example=SSG + 'ss.select_cells([0, 1, 2], ["position X", "position Y"])')
+
+C("spreadsheet.Spreadsheet.set_selected", "spreadsheet", "set_selected(value)", "bool",
+  "Writes a value (or +=, -=, *=, /=) into every selected editable cell – like typing with several cells "
+  "selected in Maya.",
+  [("value", "", "Value or expression.")],
+  example=SSG + 'ss.select_cells([0], ["position X"])\nss.set_selected("*=1")')
+
+C("spreadsheet.Spreadsheet.clear_selected_cells", "spreadsheet", "clear_selected_cells()", "bool",
+  "Selected number cells → 0, check boxes off, text empty (enums are left alone).",
+  example=SSO + 'ss.set_tab("Custom")\nss.clear_selected_cells()')
+
+C("spreadsheet.Spreadsheet.copy", "spreadsheet", "copy()", "str – the copied text",
+  "Copies the selected cells to the clipboard as tab-separated rows (pastes into Excel / LibreOffice).",
+  example=SSG + 'ss.select_cells([0, 1], ["position X", "position Y", "position Z"])\nprint(ss.copy())')
+
+C("spreadsheet.Spreadsheet.paste", "spreadsheet", "paste(text=None)", "bool",
+  "Pastes tab-separated text (default: the clipboard) from the current cell on; a single value goes into "
+  "every selected cell.",
+  [("text", "str", "Text to paste – None: the clipboard.")],
+  example=SSG + 'x = ss.value(0, "position X")\nss.select_cells([0], ["position X"])\nss.paste(str(x))')
+
+C("spreadsheet.Spreadsheet.export_csv", "spreadsheet", "export_csv(path)", "str – the path",
+  "Saves the shown rows and columns as CSV (comma separated, UTF-8, full precision).",
+  [("path", "str", "File path.")],
+  example=SSG + 'ss.export_csv("C:/out/vertices.csv")')
+
+C("spreadsheet.Spreadsheet.select_in_view", "spreadsheet", "select_in_view()", "int – rows selected",
+  "Selects the objects / bones of the selected rows (Objects mode) or the vertices / edges / faces of the "
+  "selected rows (Geometry, Edit Mode) in the 3D view.",
+  example=SSO + 'ss.select_cells([ss.rows()[0]])\nss.select_in_view()')
+
+C("spreadsheet.Spreadsheet.refresh", "spreadsheet", "refresh(force=False)", "None",
+  "Reads the data again (happens by itself after changes while the Spreadsheet is visible).",
+  [("force", "bool", "Also when the panel is hidden.")],
+  example=SS + "ss.refresh(force=True)")
+
+
 _BY_KEY = {c["key"]: c for c in COMMANDS}
 
 

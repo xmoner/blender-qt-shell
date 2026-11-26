@@ -283,6 +283,13 @@ _a("image.export", IE, "Export Image", "Shift+Alt+S")
 _a("image.play", IE, "Play / Pause the Rendered Animation", "Alt+A")
 _a("image.frame_prev", IE, "Previous Rendered Frame", "Left")
 _a("image.frame_next", IE, "Next Rendered Frame", "Right")
+# spreadsheet (Blender's Spreadsheet + Maya's Attribute Spread Sheet)
+SS = "Spreadsheet"
+_a("spreadsheet.copy", SS, "Copy the Selected Cells", "Ctrl+C")
+_a("spreadsheet.paste", SS, "Paste into the Cells", "Ctrl+V")
+_a("spreadsheet.filter", SS, "Filter Columns", "Ctrl+F")
+_a("spreadsheet.refresh", SS, "Read the Data Again", "F5")
+_a("spreadsheet.clear", SS, "Reset the Selected Cells (0 / off / empty)")
 # graph editor
 _a("graph.frame_selected", GE, "Frame Selected Keys", "F")
 _a("graph.frame_all", GE, "Frame All Curves", "A", "Home")

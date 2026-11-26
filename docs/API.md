@@ -962,7 +962,7 @@ image_editor.ensure_compositor()      # compositor nodes (Render Layers → Grou
 
 Every command of the API on its own, like Maya's command documentation: synopsis, return value, description, parameters and an example you can paste into the **Console** or the **Text editor**. The same text appears in the Text editor's **Quick Help** (F1 on a name). The examples use `C:/out/…` and `C:/clips/…` for files – change the paths to yours. Every example marked ✔ is run by an automatic test in Blender 5.2.
 
-[Window and status bar](#15-window-and-status-bar) · [Docks (panels)](#15-docks-panels) · [Menu items and shortcuts](#15-menu-items-and-shortcuts) · [3D views](#15-3d-views) · [Viewport layout](#15-viewport-layout) · [Overlays](#15-overlays) · [Events](#15-events) · [Ownership and cleanup](#15-ownership-and-cleanup) · [Toolbar tools and operators](#15-toolbar-tools-and-operators) · [Scripts (qt_shell.scripts)](#15-scripts-qt_shellscripts) · [Shelf files (qt_shell.shelf)](#15-shelf-files-qt_shellshelf) · [Timeline](#15-timeline) · [Outliner](#15-outliner) · [Graph editor](#15-graph-editor) · [UV editor](#15-uv-editor) · [Render View](#15-render-view) · [Animation Player](#15-animation-player) · [Image editor](#15-image-editor) · [Video Sequencer](#15-video-sequencer) · [Blue Pencil, burn-in and annotations](#15-blue-pencil-burn-in-and-annotations) · [Updates](#15-updates)
+[Window and status bar](#15-window-and-status-bar) · [Docks (panels)](#15-docks-panels) · [Menu items and shortcuts](#15-menu-items-and-shortcuts) · [3D views](#15-3d-views) · [Viewport layout](#15-viewport-layout) · [Overlays](#15-overlays) · [Events](#15-events) · [Ownership and cleanup](#15-ownership-and-cleanup) · [Toolbar tools and operators](#15-toolbar-tools-and-operators) · [Scripts (qt_shell.scripts)](#15-scripts-qt_shellscripts) · [Shelf files (qt_shell.shelf)](#15-shelf-files-qt_shellshelf) · [Timeline](#15-timeline) · [Outliner](#15-outliner) · [Graph editor](#15-graph-editor) · [UV editor](#15-uv-editor) · [Render View](#15-render-view) · [Animation Player](#15-animation-player) · [Image editor](#15-image-editor) · [Video Sequencer](#15-video-sequencer) · [Spreadsheet](#15-spreadsheet) · [Blue Pencil, burn-in and annotations](#15-blue-pencil-burn-in-and-annotations) · [Updates](#15-updates)
 
 ### 15 Window and status bar
 
@@ -5466,6 +5466,675 @@ import qt_shell.seq_export as sx
 
 print(sx.formats())
 print([f for f in sx.formats() if f.startswith("AUDIO_")])
+```
+
+### 15 Spreadsheet
+
+| Command | Description |
+|---|---|
+| [`spreadsheet`](#spreadsheet) | The Spreadsheet dock (Window → Spreadsheet, Geometry Nodes workspace): Blender's Spreadsheet (attributes of the active object's geometry per domain) and Maya's Attribute Spread Sheet (attributes of the selected objects / bones) in one panel. |
+| [`Spreadsheet.set_mode`](#spreadsheetset_mode) | GEOMETRY – the active object's geometry (Blender's Spreadsheet, Maya's Component Editor); OBJECTS – the selected objects / bones as rows (Maya's Attribute Spread Sheet). |
+| [`Spreadsheet.set_domain`](#spreadsheetset_domain) | Shows one domain of the geometry (switches to GEOMETRY). |
+| [`Spreadsheet.set_evaluated`](#spreadsheetset_evaluated) | True – the evaluated geometry (modifiers, Geometry Nodes; read-only); False – the original data, editable (also in Edit Mode). |
+| [`Spreadsheet.set_selected_only`](#spreadsheetset_selected_only) | Geometry: only the selected elements (Edit Mode). |
+| [`Spreadsheet.set_tab`](#spreadsheetset_tab) | Attribute tab of the OBJECTS mode (switches to it), like the tabs of Maya's Attribute Spread Sheet. |
+| [`Spreadsheet.pin`](#spreadsheetpin) | Geometry mode: keep showing this object when another one becomes active. |
+| [`Spreadsheet.set_column_filter`](#spreadsheetset_column_filter) | Shows only the columns whose name contains the text (case-insensitive) – the field in the toolbar. |
+| [`Spreadsheet.set_decimals`](#spreadsheetset_decimals) | Decimals shown for float values (0–6). |
+| [`Spreadsheet.set_option`](#spreadsheetset_option) | 'internal' – also internal attributes (names starting with a dot); 'extras' – computed columns (normals, face area, corners). |
+| [`Spreadsheet.sort_by`](#spreadsheetsort_by) | Sorts the rows by a column (like clicking its header); None = element order. |
+| [`Spreadsheet.add_row_filter`](#spreadsheetadd_row_filter) | Keeps only the rows whose value matches (Blender's row filters). |
+| [`Spreadsheet.clear_row_filters`](#spreadsheetclear_row_filters) | Removes every row filter. |
+| [`Spreadsheet.columns`](#spreadsheetcolumns) | Names of the shown columns (vectors are split: 'position X', 'position Y' …). |
+| [`Spreadsheet.rows`](#spreadsheetrows) | The shown rows in the shown order – element indices (Geometry) or object / bone names (Objects). |
+| [`Spreadsheet.value`](#spreadsheetvalue) | Value of a cell. |
+| [`Spreadsheet.set_value`](#spreadsheetset_value) | Writes a value into cells (one undo step). |
+| [`Spreadsheet.select_cells`](#spreadsheetselect_cells) | Selects cells in the table (for copy / set_selected). |
+| [`Spreadsheet.set_selected`](#spreadsheetset_selected) | Writes a value (or +=, -=, *=, /=) into every selected editable cell – like typing with several cells selected in Maya. |
+| [`Spreadsheet.clear_selected_cells`](#spreadsheetclear_selected_cells) | Selected number cells → 0, check boxes off, text empty (enums are left alone). |
+| [`Spreadsheet.copy`](#spreadsheetcopy) | Copies the selected cells to the clipboard as tab-separated rows (pastes into Excel / LibreOffice). |
+| [`Spreadsheet.paste`](#spreadsheetpaste) | Pastes tab-separated text (default: the clipboard) from the current cell on; a single value goes into every selected cell. |
+| [`Spreadsheet.export_csv`](#spreadsheetexport_csv) | Saves the shown rows and columns as CSV (comma separated, UTF-8, full precision). |
+| [`Spreadsheet.select_in_view`](#spreadsheetselect_in_view) | Selects the objects / bones of the selected rows (Objects mode) or the vertices / edges / faces of the selected rows (Geometry, Edit Mode) in the 3D view. |
+| [`Spreadsheet.refresh`](#spreadsheetrefresh) | Reads the data again (happens by itself after changes while the Spreadsheet is visible). |
+
+#### spreadsheet
+
+**Synopsis:** `qt_shell.api.spreadsheet()`  
+**Returns:** Spreadsheet or None
+
+The Spreadsheet dock (Window → Spreadsheet, Geometry Nodes workspace): Blender's Spreadsheet (attributes of the active object's geometry per domain) and Maya's Attribute Spread Sheet (attributes of the selected objects / bones) in one panel. None when Qt Shell is not open.
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+print(ss.mode, ss.columns()[:4])
+```
+
+#### Spreadsheet.set_mode
+
+**Synopsis:** `Spreadsheet.set_mode(mode)`  
+**Returns:** None
+
+GEOMETRY – the active object's geometry (Blender's Spreadsheet, Maya's Component Editor); OBJECTS – the selected objects / bones as rows (Maya's Attribute Spread Sheet).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `mode` | str | GEOMETRY or OBJECTS. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+ss.set_mode("OBJECTS")
+ss.set_mode("GEOMETRY")
+```
+
+#### Spreadsheet.set_domain
+
+**Synopsis:** `Spreadsheet.set_domain(domain, component=None)`  
+**Returns:** None
+
+Shows one domain of the geometry (switches to GEOMETRY). The data set list on the left does the same.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `domain` | str | POINT, EDGE, FACE, CORNER, CURVE or INSTANCE. |
+| `component` | str | MESH, CURVES, POINTCLOUD or INSTANCES – None: the first one that has the domain. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.set_domain("FACE")
+print(len(ss.rows()), "faces")
+```
+
+#### Spreadsheet.set_evaluated
+
+**Synopsis:** `Spreadsheet.set_evaluated(on=True)`  
+**Returns:** None
+
+True – the evaluated geometry (modifiers, Geometry Nodes; read-only); False – the original data, editable (also in Edit Mode).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `on` | bool | Evaluated (True) or Original (False). |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.set_evaluated(True)
+ss.set_evaluated(False)
+```
+
+#### Spreadsheet.set_selected_only
+
+**Synopsis:** `Spreadsheet.set_selected_only(on=True)`  
+**Returns:** None
+
+Geometry: only the selected elements (Edit Mode). Objects: only the selected objects / bones – False lists every object of the view layer.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `on` | bool | Only the selection. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+for ob in bpy.context.view_layer.objects:
+    ob.select_set(ob.type in {"MESH", "CAMERA"})
+ss.set_mode("OBJECTS")
+ss.set_selected_only(False)
+print(len(ss.rows()), 'objects')
+ss.set_selected_only(True)
+```
+
+#### Spreadsheet.set_tab
+
+**Synopsis:** `Spreadsheet.set_tab(tab)`  
+**Returns:** None
+
+Attribute tab of the OBJECTS mode (switches to it), like the tabs of Maya's Attribute Spread Sheet.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `tab` | str | Keyable, Translate, Rotate, Scale, Transform, Render, Display, Custom or All. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+for ob in bpy.context.view_layer.objects:
+    ob.select_set(ob.type in {"MESH", "CAMERA"})
+ss.set_mode("OBJECTS")
+ss.set_tab("Translate")
+print(ss.columns())
+```
+
+#### Spreadsheet.pin
+
+**Synopsis:** `Spreadsheet.pin(on=True, name=None)`  
+**Returns:** None
+
+Geometry mode: keep showing this object when another one becomes active.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `on` | bool | Pin (True) or follow the active object (False). |
+| `name` | str | Object name – None: the active object. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.pin(True)
+ss.pin(False)
+```
+
+#### Spreadsheet.set_column_filter
+
+**Synopsis:** `Spreadsheet.set_column_filter(text="")`  
+**Returns:** None
+
+Shows only the columns whose name contains the text (case-insensitive) – the field in the toolbar.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `text` | str | Part of the column names; empty = all columns. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.set_column_filter("position")
+print(ss.columns())
+ss.set_column_filter("")
+```
+
+#### Spreadsheet.set_decimals
+
+**Synopsis:** `Spreadsheet.set_decimals(n=3)`  
+**Returns:** None
+
+Decimals shown for float values (0–6). Copy and export always use full precision.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `n` | int | Number of decimals. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+ss.set_decimals(4)
+ss.set_decimals(3)
+```
+
+#### Spreadsheet.set_option
+
+**Synopsis:** `Spreadsheet.set_option(name, on)`  
+**Returns:** None
+
+'internal' – also internal attributes (names starting with a dot); 'extras' – computed columns (normals, face area, corners).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `name` | str | internal or extras. |
+| `on` | bool | Show them. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.set_option("internal", True)
+ss.set_option("internal", False)
+```
+
+#### Spreadsheet.sort_by
+
+**Synopsis:** `Spreadsheet.sort_by(column=None, descending=False)`  
+**Returns:** None
+
+Sorts the rows by a column (like clicking its header); None = element order.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `column` | str | Column name or None. |
+| `descending` | bool | Largest first. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.sort_by("position Z", descending=True)
+print(ss.rows())
+ss.sort_by(None)
+```
+
+#### Spreadsheet.add_row_filter
+
+**Synopsis:** `Spreadsheet.add_row_filter(column, op="=", value=0.0)`  
+**Returns:** int – index of the filter
+
+Keeps only the rows whose value matches (Blender's row filters). '=' on floats allows 0.0001 difference.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `column` | str | Column name. |
+| `op` | str | =, ≠ (!=), >, <, ≥ (>=), ≤ (<=) or contains. |
+| `value` |  | Number, text or expression. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.add_row_filter("position Z", ">", 0)
+print(ss.rows())      # the top vertices
+ss.clear_row_filters()
+```
+
+#### Spreadsheet.clear_row_filters
+
+**Synopsis:** `Spreadsheet.clear_row_filters()`  
+**Returns:** None
+
+Removes every row filter.
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+ss.clear_row_filters()
+```
+
+#### Spreadsheet.columns
+
+**Synopsis:** `Spreadsheet.columns()`  
+**Returns:** list of str
+
+Names of the shown columns (vectors are split: 'position X', 'position Y' …).
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+print(ss.columns())
+```
+
+#### Spreadsheet.rows
+
+**Synopsis:** `Spreadsheet.rows()`  
+**Returns:** list
+
+The shown rows in the shown order – element indices (Geometry) or object / bone names (Objects).
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+for ob in bpy.context.view_layer.objects:
+    ob.select_set(ob.type in {"MESH", "CAMERA"})
+ss.set_mode("OBJECTS")
+print(ss.rows())
+```
+
+#### Spreadsheet.value
+
+**Synopsis:** `Spreadsheet.value(row, column)`  
+**Returns:** value
+
+Value of a cell.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `row` | int / str | Element index (Geometry) or object / bone name (Objects). |
+| `column` | str | Column name. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+print(ss.value(0, "position X"))
+```
+
+#### Spreadsheet.set_value
+
+**Synopsis:** `Spreadsheet.set_value(rows, column, value)`  
+**Returns:** bool
+
+Writes a value into cells (one undo step). Relative: '+=1', '-=0.5', '*=2', '/=2'; expressions like '2*pi' work too. Only Original geometry and Objects mode cells are editable.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rows` | int / str / list | Row(s) – element indices or object names. |
+| `column` | str | Column name. |
+| `value` |  | Number, text, bool or an expression. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.set_value([0, 1], "position Z", "+=0.5")
+ss.set_value([0, 1], "position Z", "-=0.5")
+```
+
+#### Spreadsheet.select_cells
+
+**Synopsis:** `Spreadsheet.select_cells(rows=None, columns=None)`  
+**Returns:** None
+
+Selects cells in the table (for copy / set_selected).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rows` | list | Rows (indices / names), None = all. |
+| `columns` | list | Column names, None = all. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.select_cells([0, 1, 2], ["position X", "position Y"])
+```
+
+#### Spreadsheet.set_selected
+
+**Synopsis:** `Spreadsheet.set_selected(value)`  
+**Returns:** bool
+
+Writes a value (or +=, -=, *=, /=) into every selected editable cell – like typing with several cells selected in Maya.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `value` |  | Value or expression. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.select_cells([0], ["position X"])
+ss.set_selected("*=1")
+```
+
+#### Spreadsheet.clear_selected_cells
+
+**Synopsis:** `Spreadsheet.clear_selected_cells()`  
+**Returns:** bool
+
+Selected number cells → 0, check boxes off, text empty (enums are left alone).
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+for ob in bpy.context.view_layer.objects:
+    ob.select_set(ob.type in {"MESH", "CAMERA"})
+ss.set_mode("OBJECTS")
+ss.set_tab("Custom")
+ss.clear_selected_cells()
+```
+
+#### Spreadsheet.copy
+
+**Synopsis:** `Spreadsheet.copy()`  
+**Returns:** str – the copied text
+
+Copies the selected cells to the clipboard as tab-separated rows (pastes into Excel / LibreOffice).
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.select_cells([0, 1], ["position X", "position Y", "position Z"])
+print(ss.copy())
+```
+
+#### Spreadsheet.paste
+
+**Synopsis:** `Spreadsheet.paste(text=None)`  
+**Returns:** bool
+
+Pastes tab-separated text (default: the clipboard) from the current cell on; a single value goes into every selected cell.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `text` | str | Text to paste – None: the clipboard. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+x = ss.value(0, "position X")
+ss.select_cells([0], ["position X"])
+ss.paste(str(x))
+```
+
+#### Spreadsheet.export_csv
+
+**Synopsis:** `Spreadsheet.export_csv(path)`  
+**Returns:** str – the path
+
+Saves the shown rows and columns as CSV (comma separated, UTF-8, full precision).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `path` | str | File path. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+cube = bpy.data.objects.get("Cube")
+if cube is None:
+    bpy.ops.mesh.primitive_cube_add()
+    cube = bpy.context.active_object
+bpy.context.view_layer.objects.active = cube
+ss.set_mode("GEOMETRY")
+ss.set_evaluated(False)
+ss.set_domain("POINT")
+ss.export_csv("C:/out/vertices.csv")
+```
+
+#### Spreadsheet.select_in_view
+
+**Synopsis:** `Spreadsheet.select_in_view()`  
+**Returns:** int – rows selected
+
+Selects the objects / bones of the selected rows (Objects mode) or the vertices / edges / faces of the selected rows (Geometry, Edit Mode) in the 3D view.
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+for ob in bpy.context.view_layer.objects:
+    ob.select_set(ob.type in {"MESH", "CAMERA"})
+ss.set_mode("OBJECTS")
+ss.select_cells([ss.rows()[0]])
+ss.select_in_view()
+```
+
+#### Spreadsheet.refresh
+
+**Synopsis:** `Spreadsheet.refresh(force=False)`  
+**Returns:** None
+
+Reads the data again (happens by itself after changes while the Spreadsheet is visible).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `force` | bool | Also when the panel is hidden. |
+
+**Example** (✔ tested)
+
+```python
+import bpy, qt_shell
+
+ss = qt_shell.api.spreadsheet()
+ss.refresh(force=True)
 ```
 
 ### 15 Blue Pencil, burn-in and annotations

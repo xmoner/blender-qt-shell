@@ -383,6 +383,18 @@ def image_version(name):
     return image_versions.get(name, 0)
 
 
+_mute_empty_until = 0.0
+
+
+def mute_empty_updates(seconds=0.5):
+    """Depsgraph updates without any updated ID during the next moment are not edits – e.g. the Spreadsheet
+    copying the edit BMesh into its scratch mesh (a mesh no object uses) triggers such an empty update,
+    which would refresh the Spreadsheet again, endlessly."""
+    global _mute_empty_until
+    import time as _t
+    _mute_empty_until = max(_mute_empty_until, _t.monotonic() + seconds)
+
+
 @bpy.app.handlers.persistent
 def _on_depsgraph_edit(*args):
     # depsgraph_update_post runs for edits, not for frame changes (those run frame_change_post)
@@ -396,6 +408,13 @@ def _on_depsgraph_edit(*args):
         pass
     if _quiet:
         return
+    if _mute_empty_until:
+        try:
+            import time as _t
+            if _t.monotonic() < _mute_empty_until and dg is not None and len(dg.updates) == 0:
+                return
+        except Exception:
+            pass
     Flags.depsgraph = True
     Flags.edit_version += 1
 

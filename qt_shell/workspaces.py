@@ -29,7 +29,7 @@ RIGHT = QtCore.Qt.RightDockWidgetArea
 
 # template → (shading, viewport layout)
 TEMPLATES = ["Layout", "Modeling", "Shading", "Animation", "Scripting", "UV Editing", "Compositing",
-             "Video Editing"]
+             "Geometry Nodes", "Video Editing"]
 DEFAULT_NAMES = ["Layout", "Modeling", "Shading", "Animation", "Scripting"]
 
 
@@ -77,6 +77,8 @@ def apply_template(win, name):
     shading, layout = "SOLID", "single"
     if name != "Animation":
         hide("graph_editor")
+    if name != "Geometry Nodes":
+        hide("spreadsheet")
     if name == "Layout":
         hide("sidebar")
         d["timeline"].raise_()
@@ -130,6 +132,23 @@ def apply_template(win, name):
             win.image_editor.set_source("COMPOSITOR")
         except Exception:
             bridge.log(traceback.format_exc(), "WARNING")
+    elif name == "Geometry Nodes":
+        # like Blender's Geometry Nodes workspace: the Spreadsheet next to the 3D view, the node tree below
+        hide("sidebar", "timeline", "console", "uv_editor", "text_editor", "last_op", "image_editor", "sequencer")
+        ss, ne = d.get("spreadsheet"), d["node_editor"]
+        if ss is not None:
+            win.addDockWidget(LEFT, ss)
+            ss.show()
+            win.resizeDocks([ss], [theme.px(560)], QtCore.Qt.Horizontal)
+        show("node_editor")
+        ne.raise_()
+        win.resizeDocks([ne], [theme.px(330)], QtCore.Qt.Vertical)
+        try:
+            win.node_editor.set_source("GEOMETRY")
+            if ss is not None:
+                win.spreadsheet.set_mode("GEOMETRY")
+        except Exception:
+            bridge.log(traceback.format_exc(), "WARNING")
     elif name == "Video Editing":
         # like Blender's Video Editing workspace: preview, strips and strip properties in one big panel
         hide("sidebar", "console", "node_editor", "uv_editor", "text_editor", "last_op", "image_editor",
@@ -173,8 +192,26 @@ class Workspaces(QtCore.QObject):
         super().__init__(win)
         self.win = win
         self.data = load()
+        self._add_builtin_workspaces()
         if self.current() is None:
             self.data["current"] = self.data["workspaces"][0]["name"]
+
+    def _add_builtin_workspaces(self):
+        """Workspaces added in later versions – once (flag in the file), never twice, the user may delete them."""
+        added = self.data.setdefault("builtin_added", [])
+        changed = False
+        for name, before in (("Geometry Nodes", "Scripting"),):
+            if name in added:
+                continue
+            added.append(name)
+            changed = True
+            if any(w.get("template") == name or w.get("name") == name for w in self.data["workspaces"]):
+                continue
+            lst = self.data["workspaces"]
+            i = next((k for k, w in enumerate(lst) if w.get("name") == before), len(lst))
+            lst.insert(i, {"name": self._unique(name), "template": name})
+        if changed:
+            self.save()
 
     # --- data
     def names(self):
@@ -260,7 +297,16 @@ class Workspaces(QtCore.QObject):
         state = ws.get("state")
         if state:
             try:
-                win.restoreState(QtCore.QByteArray(base64.b64decode(state)))
+                raw = base64.b64decode(state)
+                win.restoreState(QtCore.QByteArray(raw))
+                # docks added in a later version are not in an older saved layout – Qt leaves them as they
+                # were (e.g. the Spreadsheet of the Geometry Nodes workspace would stay shown everywhere)
+                for d in win.docks.values():
+                    try:
+                        if d.objectName().encode("utf-16-be") not in raw and not d.isHidden():
+                            d.hide()
+                    except RuntimeError:
+                        pass
             except Exception:
                 bridge.log(f"Workspace '{ws['name']}': cannot restore the layout:\n{traceback.format_exc()}",
                            "WARNING")

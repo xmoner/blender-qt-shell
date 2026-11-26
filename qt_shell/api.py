@@ -320,6 +320,22 @@ def video_sequencer():
     return getattr(w, "sequencer", None) if w is not None else None
 
 
+def spreadsheet():
+    """The Spreadsheet of the Qt Shell window (None when Qt Shell is not open) – Blender's Spreadsheet
+    (geometry attributes per domain) and Maya's Attribute Spread Sheet (attributes of the selected objects).
+
+        import qt_shell
+        ss = qt_shell.api.spreadsheet()
+        ss.set_mode("GEOMETRY"); ss.set_domain("POINT"); ss.set_evaluated(False)
+        ss.columns(); ss.rows(); ss.value(0, "position Z")
+        ss.set_value([0, 1], "position Z", "+=0.5")     # Original data / objects only
+        ss.add_row_filter("position Z", ">", 0); ss.clear_row_filters()
+        ss.set_mode("OBJECTS"); ss.set_tab("Translate")
+        ss.export_csv("C:/out/sheet.csv")"""
+    w = main_window()
+    return getattr(w, "spreadsheet", None) if w is not None else None
+
+
 # 3D viewport tools: tool → its variants (None = no variants)
 TOOLS = {"SELECT": ("TWEAK", "BOX", "CIRCLE", "LASSO"), "CURSOR": None, "MOVE": None, "ROTATE": None,
          "SCALE": ("SCALE", "CAGE"), "TRANSFORM": None, "ANNOTATE": ("FREEHAND", "LINE", "POLYGON", "ERASER"),
