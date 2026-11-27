@@ -202,6 +202,65 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
             self.setDecimals(0)
 
     # --- appearance
+    def setPrefix(self, text):
+        """Like Blender: a label ("X", "Radius" …) sits at the left edge inside the field and the value at the
+        right edge – instead of Qt's prefix glued to the centred number. While typing, the label hides and
+        the number is edited on its own."""
+        label = (text or "").strip()
+        if label.endswith(":"):
+            label = label[:-1].rstrip()
+        super().setPrefix("")
+        self._label_text = label
+        lab = getattr(self, "_label", None)
+        if label:
+            if lab is None:
+                lab = QtWidgets.QLabel(self.lineEdit())
+                lab.setObjectName("qtshell_spin_label")
+                lab.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+                lab.setStyleSheet("background: transparent; color: palette(text);")
+                self._label = lab
+            lab.setText(label)
+        elif lab is not None:
+            lab.hide()
+        self._place_label()
+
+    # --- typing: "." and "," both work as the decimal point (Czech locale used to turn 4.5 into 45)
+    def _norm_text(self, text):
+        dp = self.locale().decimalPoint() or "."
+        other = "," if dp == "." else "."
+        return text.replace(other, dp)
+
+    def validate(self, text, pos):
+        return super().validate(self._norm_text(text), pos)
+
+    def valueFromText(self, text):
+        return super().valueFromText(self._norm_text(text))
+
+    def label_text(self):
+        """The label shown at the left inside the field ("" = none)."""
+        return getattr(self, "_label_text", "")
+
+    def _place_label(self):
+        le = self.lineEdit()
+        lab = getattr(self, "_label", None)
+        if not self.label_text() or lab is None:
+            le.setTextMargins(0, 0, 0, 0)
+            self.setAlignment(QtCore.Qt.AlignCenter)
+            return
+        if self._editing:
+            lab.hide()
+            le.setTextMargins(0, 0, 0, 0)
+            self.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+            return
+        lab.setFont(le.font())
+        w = lab.fontMetrics().horizontalAdvance(lab.text()) + 2
+        pad = 4
+        lab.setGeometry(pad, 0, w, le.height())
+        lab.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        lab.show()
+        le.setTextMargins(pad + w + 4, 0, pad, 0)
+        self.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+
     def wheelEvent(self, ev):
         if self.hasFocus():
             super().wheelEvent(ev)
@@ -216,14 +275,17 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self._fix_edit()
+        self._place_label()
 
     def showEvent(self, ev):
         super().showEvent(ev)
         self._fix_edit()
+        self._place_label()
 
     # --- text editing
     def _start_edit(self):
         self._editing = True
+        self._place_label()
         le = self.lineEdit()
         le.setCursor(QtCore.Qt.IBeamCursor)
         self.setFocus(QtCore.Qt.MouseFocusReason)
@@ -233,6 +295,7 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         if not self._editing:
             return
         self._editing = False
+        self._place_label()
         self.lineEdit().setCursor(QtCore.Qt.SizeHorCursor)
         self.lineEdit().deselect()
         if self.hasFocus():
@@ -242,6 +305,7 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         super().focusOutEvent(ev)
         if self._editing:
             self._editing = False
+            self._place_label()
             self.lineEdit().setCursor(QtCore.Qt.SizeHorCursor)
 
     def keyPressEvent(self, ev):
@@ -251,6 +315,7 @@ class DragSpin(QtWidgets.QDoubleSpinBox):
         if self._editing and ev.key() == QtCore.Qt.Key_Escape:
             self.lineEdit().undo()
             self._editing = False
+            self._place_label()
             self.clearFocus()
             return
         super().keyPressEvent(ev)
