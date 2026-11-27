@@ -152,6 +152,94 @@ def socket_ptrs(node):
         return None
 
 
+_TREE_UI = {"ShaderNodeTree": "ShaderNodeTree", "GeometryNodeTree": "GeometryNodeTree",
+            "CompositorNodeTree": "CompositorNodeTree", "TextureNodeTree": "TextureNodeTree"}
+
+
+class node_space_context:
+    """A node editor area of a hidden Blender window showing (pinned) tree – for bpy.ops.node.* (an area is
+    borrowed and switched back afterwards)."""
+
+    def __init__(self, tree):
+        self.tree = tree
+
+    def __enter__(self):
+        if not bridge.ensure_view3d():
+            raise RuntimeError("No Blender window.")
+        win, area = bridge.spare_area(("DOPESHEET_EDITOR", "GRAPH_EDITOR", "IMAGE_EDITOR"))
+        if area is None:
+            raise RuntimeError("No Blender editor area to borrow for node operators.")
+        self.area, self.old = area, area.ui_type
+        area.ui_type = _TREE_UI.get(self.tree.bl_idname, self.tree.bl_idname)
+        sp = area.spaces.active
+        self.old_pin = sp.pin
+        sp.pin = True
+        sp.node_tree = self.tree
+        region = next(r for r in area.regions if r.type == "WINDOW")
+        self._ov = bpy.context.temp_override(window=win, screen=win.screen, area=area, region=region,
+                                             space_data=sp)
+        self._ov.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            self._ov.__exit__(*exc)
+        finally:
+            try:
+                sp = self.area.spaces.active
+                sp.pin = self.old_pin
+                self.area.ui_type = self.old
+            except Exception:
+                pass
+        return False
+
+
+def _copy_nodes(tree, names):
+    """Fallback duplicate in Python (when Blender's operator can't run): node type, settings, input values,
+    links between the copied nodes."""
+    skip = set(base_node_props()) | {"name", "location", "select", "parent", "location_absolute"}
+    made = {}
+    for nm in names:
+        src = tree.nodes.get(nm)
+        if src is None:
+            continue
+        try:
+            dst = tree.nodes.new(src.bl_idname)
+        except Exception:
+            continue
+        for p in src.bl_rna.properties:
+            if p.is_readonly or p.identifier in skip or p.type == "COLLECTION":
+                continue
+            try:
+                setattr(dst, p.identifier, getattr(src, p.identifier))
+            except Exception:
+                pass
+        for attr in ("label", "width", "hide", "mute", "use_custom_color", "color"):
+            try:
+                setattr(dst, attr, getattr(src, attr))
+            except Exception:
+                pass
+        dst.location = (src.location[0] + 40, src.location[1] - 40)
+        for a, b in zip(src.inputs, dst.inputs):
+            if hasattr(a, "default_value") and hasattr(b, "default_value"):
+                try:
+                    b.default_value = a.default_value
+                except Exception:
+                    pass
+        made[nm] = dst
+    for lk in list(tree.links):
+        a, b = made.get(lk.from_node.name), made.get(lk.to_node.name)
+        if a is None or b is None:
+            continue
+        try:
+            fo = next(x for x in a.outputs if x.identifier == lk.from_socket.identifier)
+            ti = next(x for x in b.inputs if x.identifier == lk.to_socket.identifier)
+            tree.links.new(fo, ti)
+        except Exception:
+            pass
+    return bool(made)
+
+
 # ---------------------------------------------------------------- graphics items
 class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
@@ -625,23 +713,36 @@ class NodeView(QtWidgets.QGraphicsView):
         self._set_insert(self.insert_candidate(item, sp))
 
     # --- grab (a new node follows the mouse)
-    def start_grab(self, item):
+    def start_grab(self, item, items=None):
+        """item (and the other items) follow the mouse until a click; only a single node is inserted into
+        a link it is dropped on (like Blender)."""
         if item is None:
             return
+        items = [x for x in (items or [item]) if x is not None]
+        if item not in items:
+            items.insert(0, item)
         off = QtCore.QPointF(item.boundingRect().width() / 2.0, 12)
-        self._grab = {"item": item, "off": off}
+        rel = [(x, QtCore.QPointF(x.pos() - item.pos())) for x in items]
+        self._grab = {"item": item, "off": off, "rel": rel,
+                      "orig": [(x, QtCore.QPointF(x.pos())) for x in items]}
         sp = self.mapToScene(self.mapFromGlobal(QtGui.QCursor.pos()))
         if self.viewport().rect().contains(self.mapFromGlobal(QtGui.QCursor.pos())):
-            item.setPos(sp - off)
-        self._grab["start"] = QtCore.QPointF(item.pos())
+            self._grab_place(sp)
+        self._grab["start"] = [(x, QtCore.QPointF(x.pos())) for x in items]
         self.viewport().setCursor(QtCore.Qt.SizeAllCursor)
         self.setFocus()
-        self._update_insert(item, sp)
+        if len(items) == 1:
+            self._update_insert(item, sp)
+
+    def _grab_place(self, sp):
+        base = sp - self._grab["off"]
+        for x, r in self._grab["rel"]:
+            x.setPos(base + r)
 
     def _grab_move(self, sp, mods=None):
-        it = self._grab["item"]
-        it.setPos(sp - self._grab["off"])
-        self._update_insert(it, sp, mods)
+        self._grab_place(sp)
+        if len(self._grab["rel"]) == 1:
+            self._update_insert(self._grab["item"], sp, mods)
 
     def end_grab(self, ok=True):
         g, self._grab = self._grab, None
@@ -652,7 +753,8 @@ class NodeView(QtWidgets.QGraphicsView):
         li = self._insert_li
         self._set_insert(None)
         if not ok:
-            item.setPos(g["start"])
+            for x, pos in g["start"]:
+                x.setPos(pos)
         self.editor.commit_positions()
         if ok and li is not None:
             self.editor.insert_on_link(item, li)
@@ -798,6 +900,8 @@ class NodeView(QtWidgets.QGraphicsView):
             for it in self.editor.items.values():
                 it.setSelected(True)
             self.editor.commit_selection()
+        elif H("node.duplicate"):
+            self.editor.duplicate_selected()
         elif H("node.mute"):
             self.editor.toggle("mute")
         elif H("node.hide"):
@@ -822,6 +926,54 @@ class NodeView(QtWidgets.QGraphicsView):
 
     def focusNextPrevChild(self, _n):
         return False
+
+    def contextMenuEvent(self, ev):
+        """Right-click menu: Duplicate, Delete, Mute, Collapse … – a node under the cursor that is not
+        selected becomes the selection first."""
+        if self._grab is not None or self.editor.tree is None:
+            return
+        it = self._item_at(ev.pos())
+        if it is not None and not it.isSelected():
+            for x in self.scene().selectedItems():
+                x.setSelected(False)
+            it.setSelected(True)
+            self.editor.set_active(it)
+            self.editor.commit_selection()
+        self.build_context_menu(ev.globalPos()).exec(ev.globalPos())
+
+    def build_context_menu(self, gpos=None):
+        from . import keymap, blicons
+        ed = self.editor
+        m = QtWidgets.QMenu(self)
+        sel = [x for x in self.scene().selectedItems() if isinstance(x, NodeItem)]
+        n = len(sel)
+
+        def act(text, aid, fn, icon=None, enabled=True):
+            keys = keymap.keys(aid)
+            a = m.addAction(text + ("\t" + " / ".join(keys) if keys else ""))
+            if icon and blicons.has(icon):
+                a.setIcon(blicons.icon(icon))
+            a.setEnabled(enabled)
+            a.triggered.connect(lambda _=False: fn())
+            return a
+        sp = self.mapToScene(self.mapFromGlobal(gpos or QtGui.QCursor.pos()))
+        act("Duplicate Node" if n == 1 else f"Duplicate Nodes ({n})" if n else "Duplicate", "node.duplicate",
+            ed.duplicate_selected, "DUPLICATE", n > 0)
+        act("Delete", "node.delete", ed.delete_selected, "X", n > 0)
+        m.addSeparator()
+        act("Mute", "node.mute", lambda: ed.toggle("mute"), "MUTE_IPO_ON", n > 0)
+        act("Collapse", "node.hide", lambda: ed.toggle("hide"), "HIDE_ON", n > 0)
+        m.addSeparator()
+        act("Add Node…", "node.add", lambda: ed.add_node_popup(gpos or QtGui.QCursor.pos(), sp), "ADD")
+        act("Select All", "node.select_all", lambda: (
+            [x.setSelected(True) for x in ed.items.values()], ed.commit_selection()), "SELECT_SET")
+        act("Frame Selected", "node.frame_selected", ed.frame_selected, "ZOOM_SELECTED")
+        m.addSeparator()
+        pin = m.addAction("Pin Node Tree")
+        pin.setCheckable(True)
+        pin.setChecked(ed.pinned() is not None)
+        pin.triggered.connect(lambda on: ed.set_pin(on))
+        return m
 
 
 # ---------------------------------------------------------------- node type search
@@ -934,8 +1086,18 @@ class NodeEditor(QtWidgets.QWidget):
         self.source = rw.NoWheelCombo()
         for ident, label in SOURCES:
             self.source.addItem(label, ident)
-        self.source.activated.connect(lambda _i: self._reset())
+        self.source.activated.connect(lambda _i: (self.set_pin(False), self._reset()))
         bar.addWidget(self.source)
+        # Pin like Blender: keep showing this node tree when another object / material becomes active
+        self._pinned = None                   # (source, kind, id name) of the pinned tree
+        self.pin_btn = QtWidgets.QToolButton()
+        self.pin_btn.setCheckable(True)
+        self.pin_btn.setAutoRaise(True)
+        self._pin_icons()
+        self.pin_btn.setToolTip("Pin – keep showing this node tree when another object or material "
+                                "becomes active (like Blender's pin)")
+        self.pin_btn.toggled.connect(lambda on: self.set_pin(on))
+        bar.addWidget(self.pin_btn)
         self.path_label = QtWidgets.QLabel("")
         self.path_label.setProperty("dim", True)
         bar.addWidget(self.path_label, 1)
@@ -980,14 +1142,82 @@ class NodeEditor(QtWidgets.QWidget):
         self._timer.setInterval(120)
         self._timer.timeout.connect(self.refresh)
         hub.data_changed.connect(lambda: self._timer.start())
-        hub.selection_changed.connect(lambda: (self.group_stack.clear(), self._timer.start()))
+        hub.selection_changed.connect(self._selection_changed)
         hub.file_loaded.connect(self._reset)
         hub.undo_done.connect(self._reset)
         self._first_frame = True
         self._reset()
 
     # --- tree
+    # --- pin (like Blender)
+    def _pin_icons(self):
+        from . import blicons
+        on = self.pin_btn.isChecked()
+        name = "PINNED" if on else "UNPINNED"
+        if blicons.has(name):
+            self.pin_btn.setIcon(blicons.icon(name))
+        else:
+            self.pin_btn.setText("📌" if on else "Pin")
+
+    def _owner_of(self, tree):
+        """(kind, name) of the ID that holds the shown base tree – a material / world tree is embedded,
+        so the material / world is remembered, a node group by its own name."""
+        mode = self.source.currentData()
+        if tree is None:
+            return None
+        if mode == "SHADER":
+            ob = bpy.context.view_layer.objects.active
+            mat = ob.active_material if ob is not None else None
+            if mat is not None and mat.node_tree is not None and mat.node_tree.as_pointer() == tree.as_pointer():
+                return ("MAT", mat.name)
+            return None
+        if mode == "WORLD":
+            w = bpy.context.scene.world
+            return ("WORLD", w.name) if w is not None else None
+        if tree.name in bpy.data.node_groups and bpy.data.node_groups[tree.name].as_pointer() == tree.as_pointer():
+            return ("NG", tree.name)
+        return None
+
+    def set_pin(self, on=True):
+        """Pins (True) / unpins (False) the node tree shown now: it stays when the active object or material
+        changes, like Blender's pin. Returns whether it is pinned."""
+        on = bool(on)
+        if on and self._pinned is None:
+            owner = self._owner_of(self._unpinned_base())
+            if owner is None:
+                on = False
+            else:
+                self._pinned = (self.source.currentData(),) + owner
+        elif not on:
+            self._pinned = None
+        self.pin_btn.blockSignals(True)
+        self.pin_btn.setChecked(on)
+        self.pin_btn.blockSignals(False)
+        self._pin_icons()
+        self._timer.start()
+        return on
+
+    def pinned(self):
+        """The name of the pinned tree's owner (material / world / node group), or None."""
+        return self._pinned[2] if self._pinned else None
+
+    def _selection_changed(self):
+        if self._pinned is None:              # pinned: stay inside the groups too
+            self.group_stack.clear()
+        self._timer.start()
+
     def base_tree(self):
+        if self._pinned is not None:
+            src, kind, name = self._pinned
+            col = {"MAT": bpy.data.materials, "WORLD": bpy.data.worlds, "NG": bpy.data.node_groups}[kind]
+            owner = col.get(name)
+            if owner is not None:
+                return owner if kind == "NG" else owner.node_tree
+            self._pinned = None               # deleted / renamed: back to following the selection
+            QtCore.QTimer.singleShot(0, lambda: self.set_pin(False))
+        return self._unpinned_base()
+
+    def _unpinned_base(self):
         mode = self.source.currentData()
         ctx = bpy.context
         ob = ctx.view_layer.objects.active
@@ -1183,6 +1413,43 @@ class NodeEditor(QtWidgets.QWidget):
         if sel:
             bridge.undo_push("Delete Nodes")
             self.rebuild()
+
+    def duplicate_selected(self, grab=True):
+        """Duplicates the selected nodes like Blender's Duplicate (links between them, zones and node items
+        kept, inputs from unselected nodes not) – the copies are selected and follow the mouse until a
+        click (Esc / right click: they stay where they were made). Returns the names of the new nodes."""
+        tree = self.tree
+        if tree is None:
+            return []
+        sel = [it.name for it in self.scene.selectedItems() if isinstance(it, NodeItem) and it.node is not None]
+        if not sel:
+            return []
+        for n in tree.nodes:
+            n.select = n.name in sel
+        before = {n.name for n in tree.nodes}
+        ok = False
+        try:
+            with node_space_context(tree):
+                ok = "FINISHED" in bpy.ops.node.duplicate()
+        except Exception as ex:
+            bridge.log(f"Duplicate nodes: {ex}", "WARNING")
+        if not ok:
+            ok = _copy_nodes(tree, sel)
+        new = [n.name for n in tree.nodes if n.name not in before]
+        if not new:
+            return []
+        for n in tree.nodes:
+            n.select = n.name in new
+        act = tree.nodes.get(new[0])
+        if act is not None:
+            tree.nodes.active = act
+        bridge.undo_push("Duplicate Nodes")
+        self.rebuild()
+        if grab:
+            items = [self.items[n] for n in new if n in self.items]
+            if items:
+                self.view.start_grab(items[0], items)
+        return new
 
     def toggle(self, attr):
         sel = [it for it in self.scene.selectedItems() if isinstance(it, NodeItem)]
