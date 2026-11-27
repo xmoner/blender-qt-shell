@@ -451,13 +451,22 @@ def _rich(text):
 _MONO = "font-family:Consolas,'DejaVu Sans Mono',monospace"
 
 
-def _code_html(code):
+def _style():
+    from . import theme
+    try:
+        return theme.tooltip_style()
+    except Exception:
+        return {k: d for k, _l, d, _t in theme.TOOLTIP_COLORS}
+
+
+def _code_html(code, ts=None):
+    ts = ts or _style()
     out = []
     for line in code.split("\n"):
         cut = _comment_at(line)
         main, com = (line[:cut], line[cut:]) if cut is not None else (line, "")
         out.append(html.escape(main).replace(" ", "&nbsp;")
-                   + (f"<span style='color:#8a8a8a'>{html.escape(com)}</span>" if com else ""))
+                   + (f"<span style='color:{ts['comment']}'>{html.escape(com)}</span>" if com else ""))
     return "<br>".join(out)
 
 
@@ -492,18 +501,20 @@ def _compose(tip, py, title=None, keep_value=False):
     code, values = runnable(py, keep_value)
     t, desc = _split_tip(tip)
     title = title or t
-    parts = ["<div style='white-space:pre-wrap'>"]
+    ts = _style()                            # colours: Qt Preferences → Tooltips
+    parts = [f"<div style='white-space:pre-wrap;color:{ts['text']}'>"]
     if title:
-        parts.append(f"<b style='font-size:13px'>{html.escape(title)}</b>")
+        parts.append(f"<b style='font-size:13px;color:{ts['title']}'>{html.escape(title)}</b>")
     if desc:
         parts.append(("<br>" if title else "") + desc)
-    parts.append("<table cellspacing=0 cellpadding=6 width='100%' style='margin-top:6px;background:#1e1e1e;"
-                 "border:1px solid #3a3a3a'><tr><td>"
-                 "<span style='color:#7fd1a8;font-weight:bold'>Python</span><br>"
-                 f"<span style=\"{_MONO}\">{_code_html(code)}</span></td></tr></table>")
+    parts.append(f"<table cellspacing=0 cellpadding=6 width='100%' bgcolor='{ts['code_bg']}' "
+                 f"style='margin-top:6px;background:{ts['code_bg']};border:1px solid {ts['code_border']};"
+                 f"border-color:{ts['code_border']}'><tr><td>"
+                 f"<span style='color:{ts['python']};font-weight:bold'>Python</span><br>"
+                 f"<span style=\"{_MONO};color:{ts['code']}\">{_code_html(code, ts)}</span></td></tr></table>")
     if values:
-        parts.append(f"<span style='color:#b9b9b9'>{html.escape(values)}</span><br>")
-    parts.append("<span style='font-size:small;color:#8a8a8a'><i>Shift + middle click: copy the code</i>"
+        parts.append(f"<span style='color:{ts['values']}'>{html.escape(values)}</span><br>")
+    parts.append(f"<span style='font-size:small;color:{ts['hint']}'><i>Shift + middle click: copy the code</i>"
                  "</span></div>")
     return "".join(parts)
 

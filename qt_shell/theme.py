@@ -1,5 +1,5 @@
 """Dark theme similar to Blender (Fusion + palette)."""
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 C = {
     "window": "#2b2b2b", "base": "#1d1d1d", "alt": "#262626", "button": "#3a3a3a",
@@ -10,6 +10,69 @@ C = {
 # buttons "light up" light blue under the mouse and when pressed
 HOVER = {"bg": "#46658c", "border": "#6d9ad4", "press_bg": "#5b84b8", "press_border": "#9cc3f0",
          "checked_hover": "#5683c4"}
+
+
+# tooltip colours (Qt Preferences → Tooltips; QSettings tooltips/color_<key>; since 0.128.0)
+TOOLTIP_COLORS = [
+    ("background", "Background", "#2b2b2b", "Background of every tooltip"),
+    ("text", "Text", "#e5e5e5", "Text of every tooltip (the description)"),
+    ("title", "Title", "#ffffff", "Bold title of the Python tooltips"),
+    ("python", "Python heading", "#7fd1a8", "The word 'Python' above the code"),
+    ("code", "Code", "#e5e5e5", "The Python code"),
+    ("code_bg", "Code background", "#1e1e1e", "Background of the code block"),
+    ("code_border", "Code border", "#3a3a3a", "Frame of the code block"),
+    ("comment", "Comment", "#8a8a8a", "Comments in the code (# possible values …)"),
+    ("values", "Values line", "#b9b9b9", "Type · range · current value under the code"),
+    ("hint", "Hint", "#8a8a8a", "'Shift + middle click: copy the code'"),
+]
+
+
+def tooltip_style():
+    """{'background': '#rrggbb', 'text': …, 'title': …, 'python': …, 'code': …, 'code_bg': …, 'code_border': …,
+    'comment': …, 'values': …, 'hint': …} – the tooltip colours."""
+    st = QtCore.QSettings("QtShell", "QtShell")
+    out = {}
+    for key, _label, default, _tip in TOOLTIP_COLORS:
+        c = str(st.value(f"tooltips/color_{key}", default))
+        out[key] = c if QtGui.QColor(c).isValid() else default
+    return out
+
+
+def set_tooltip_style(**colors):
+    """Sets tooltip colours by key (see TOOLTIP_COLORS), e.g. set_tooltip_style(background='#202830',
+    code='#ffd27f'); None keeps a colour. Applies at once to every tooltip shown after it."""
+    keys = {k for k, _l, _d, _t in TOOLTIP_COLORS}
+    st = QtCore.QSettings("QtShell", "QtShell")
+    for key, c in colors.items():
+        if key not in keys:
+            raise ValueError(f"unknown tooltip colour {key!r} – one of {sorted(keys)}")
+        if c is None:
+            continue
+        q = QtGui.QColor(c)
+        if not q.isValid():
+            raise ValueError(f"not a colour: {c!r}")
+        st.setValue(f"tooltips/color_{key}", q.name())
+    apply_tooltip_palette()
+
+
+def reset_tooltip_style():
+    """All tooltip colours back to the defaults."""
+    st = QtCore.QSettings("QtShell", "QtShell")
+    for key, _l, _d, _t in TOOLTIP_COLORS:
+        st.remove(f"tooltips/color_{key}")
+    apply_tooltip_palette()
+
+
+def apply_tooltip_palette():
+    """QToolTip keeps its own palette (Windows: light yellow) – background / text from tooltip_style()."""
+    ts = tooltip_style()
+    app = QtWidgets.QApplication.instance()
+    tip = QtGui.QPalette(app.palette() if app is not None else QtGui.QPalette())
+    for role, key in ((QtGui.QPalette.Window, "background"), (QtGui.QPalette.ToolTipBase, "background"),
+                      (QtGui.QPalette.WindowText, "text"), (QtGui.QPalette.ToolTipText, "text"),
+                      (QtGui.QPalette.Text, "text")):
+        tip.setColor(role, QtGui.QColor(ts[key]))
+    QtWidgets.QToolTip.setPalette(tip)
 
 
 def hover_qss(sel="QToolButton, QPushButton"):
@@ -140,10 +203,7 @@ def apply(app):
     for role in (QtGui.QPalette.WindowText, QtGui.QPalette.Text, QtGui.QPalette.ButtonText):
         pal.setColor(QtGui.QPalette.Disabled, role, col("#6a6a6a"))
     app.setPalette(pal)
-    tip = QtGui.QPalette(pal)                # tooltips keep their own palette (Windows: light yellow) – dark like
-    tip.setColor(QtGui.QPalette.Window, col(C["window"]))          # the window (the Python tooltips need it)
-    tip.setColor(QtGui.QPalette.WindowText, col(C["text"]))
-    QtWidgets.QToolTip.setPalette(tip)
+    apply_tooltip_palette()                  # tooltips keep their own palette – colours from Qt Preferences
     font = app.font()
     font.setPointSizeF(_base_pt * ui_scale * font_scale)
     app.setFont(font)

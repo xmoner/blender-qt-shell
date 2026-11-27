@@ -43,7 +43,7 @@ def _hint(parent_lay, text, parent):
 
 
 class QtPreferences(QtWidgets.QDialog):
-    PAGES = ("Interface", "Window", "Viewport", "Timeline", "Console", "Shelf", "Shortcuts", "Text Editor", "Scripts", "System")
+    PAGES = ("Interface", "Window", "Viewport", "Timeline", "Console", "Tooltips", "Shelf", "Shortcuts", "Text Editor", "Scripts", "System")
 
     def __init__(self, win):
         super().__init__(win)
@@ -63,7 +63,7 @@ class QtPreferences(QtWidgets.QDialog):
         lay.addWidget(self.stack, 1)
         self._builders = {"Interface": self._page_interface, "Window": self._page_window,
                           "Viewport": self._page_viewport, "Timeline": self._page_timeline,
-                          "Console": self._page_console,
+                          "Console": self._page_console, "Tooltips": self._page_tooltips,
                           "Shelf": self._page_shelf,
                           "Shortcuts": self._page_shortcuts,
                           "Text Editor": self._page_text,
@@ -512,6 +512,75 @@ class QtPreferences(QtWidgets.QDialog):
             sp.setValue(st[key])
             sp.blockSignals(False)
         self._show_tick_color(kind)
+
+    # ---- Tooltips: colours of every tooltip and of the Python tooltips (since 0.128.0)
+    TIP_SAMPLE = ("<b>Render Engine</b><br>Engine to use for rendering",
+                  "bpy.context.scene.render.engine")
+
+    def _page_tooltips(self, page, lay):
+        from . import pytips
+        _section(lay, "Colours", page)
+        st = theme.tooltip_style()
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(theme.px(8))
+        self.tip_btns = {}
+        for r, (key, label, default, tip) in enumerate(theme.TOOLTIP_COLORS):
+            grid.addWidget(QtWidgets.QLabel(label, page), r, 0)
+            b = QtWidgets.QPushButton(page)
+            b.setFixedWidth(theme.px(90))
+            b.setToolTip(f"{tip} (default {default}) – click to choose")
+            b.clicked.connect(lambda _c=False, k=key, b=b: self._tip_pick(k, b))
+            pytips.tag(b, f"from qt_shell import theme\ntheme.set_tooltip_style({key}='{st[key]}')")
+            grid.addWidget(b, r, 1)
+            self.tip_btns[key] = b
+        grid.setColumnStretch(2, 1)
+        lay.addLayout(grid)
+        rrow = QtWidgets.QHBoxLayout()
+        reset = QtWidgets.QPushButton("Reset", page)
+        reset.setToolTip("All tooltip colours back to the defaults")
+        reset.clicked.connect(lambda _c=False: (theme.reset_tooltip_style(), self._tip_refresh()))
+        pytips.tag(reset, "from qt_shell import theme\ntheme.reset_tooltip_style()")
+        rrow.addWidget(reset)
+        rrow.addStretch(1)
+        lay.addLayout(rrow)
+        _section(lay, "Preview", page)
+        self.tip_preview = QtWidgets.QLabel(page)
+        self.tip_preview.setTextFormat(QtCore.Qt.RichText)
+        self.tip_preview.setWordWrap(True)
+        self.tip_preview.setMaximumWidth(theme.px(460))
+        lay.addWidget(self.tip_preview)
+        _hint(lay, "Background and Text apply to every tooltip of Qt Shell; the other colours to the Python "
+                   "tooltips (Interface → Python Tooltips). The preview shows a Python tooltip.", page)
+        self._tip_refresh()
+
+    def _tip_refresh(self):
+        from . import pytips
+        st = theme.tooltip_style()
+        for key, b in self.tip_btns.items():
+            pm = QtGui.QPixmap(theme.px(40), theme.px(12))
+            pm.fill(QtGui.QColor(st[key]))
+            b.setIcon(QtGui.QIcon(pm))
+            b.setText(st[key])
+            pytips.tag(b, f"from qt_shell import theme\ntheme.set_tooltip_style({key}='{st[key]}')")
+        self.tip_preview.setStyleSheet(f"QLabel {{ background: {st['background']}; color: {st['text']}; "
+                                       f"padding: 6px; border: 1px solid {st['code_border']}; }}")
+        try:
+            html = pytips._compose(*self.TIP_SAMPLE)
+        except Exception as ex:
+            html = f"(preview: {ex})"
+        self.tip_preview.setText(html)
+
+    def _tip_pick(self, key, btn):
+        from . import colorpicker
+        old = theme.tooltip_style()[key]
+
+        def changed(c):
+            theme.set_tooltip_style(**{key: c.name()})
+            try:
+                self._tip_refresh()
+            except RuntimeError:
+                pass
+        colorpicker.pick(btn, QtGui.QColor(old), changed, title="Tooltip colour")
 
     def _page_shelf(self, page, lay):
         from . import shelf, pytips
