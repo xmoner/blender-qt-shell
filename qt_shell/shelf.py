@@ -370,6 +370,7 @@ class ShelfBar(QtWidgets.QWidget):
         plus.setAutoRaise(True)
         plus.setToolTip("New shelf tab")
         plus.clicked.connect(self._new_shelf)
+        pytips.tag(plus, "import qt_shell\nqt_shell.api.main_window().shelf._new_shelf()   # asks for a name")
         tab_row.addWidget(plus)
         # save / load shelves as files (like Maya's Save Shelf / Save All Shelves / Load Shelf)
         self.save_btn = save = QtWidgets.QToolButton(self)
@@ -387,8 +388,8 @@ class ShelfBar(QtWidgets.QWidget):
         save_menu = QtWidgets.QMenu(save)
         save_menu.aboutToShow.connect(lambda m=save_menu: self._fill_save_menu(m))
         save.setMenu(save_menu)
-        pytips.tag(save, "from qt_shell import shelf\nshelf.export_shelves(path, [\"Modeling\"])   # None = all\n"
-                         "shelf.import_shelves(path)")
+        pytips.tag(save, "from qt_shell import shelf\nshelf.export_shelves(\"C:/shelves/modeling.json\", [\"Modeling\"])"
+                         "   # None = all shelves\nshelf.import_shelves(\"C:/shelves/modeling.json\")")
         tab_row.addWidget(save)
         tab_row.addStretch(1)
         lay.addLayout(tab_row)

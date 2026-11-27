@@ -1051,6 +1051,7 @@ class ImageEditor(QtWidgets.QWidget):
         self.render_btn = self._tool("Render", "Render Image ({window.render}) – gives the compositor a picture to "
                                                "work on", icon="camera")
         self.render_btn.clicked.connect(self._render)
+        pytips.tag(self.render_btn, 'import qt_shell\nqt_shell.api.run_op("render.render")   # F12 – opens the Render View')
         bl.addWidget(self.render_btn)
         self.reload_btn = self._tool("⟳", "Reload ({image.reload})")
         self.reload_btn.clicked.connect(lambda _c=False: self.refresh())
@@ -1070,15 +1071,18 @@ class ImageEditor(QtWidgets.QWidget):
         al.setSpacing(2)
         self.play_btn = self._tool("", "Play / Pause the rendered frames ({image.play})", icon="play")
         self.play_btn.clicked.connect(lambda _c=False: self.toggle_play())
+        pytips.tag(self.play_btn, _api("toggle_play()   # play() / pause()"))
         al.addWidget(self.play_btn)
         self.frame_spin = QtWidgets.QSpinBox(self.anim_box)
         self.frame_spin.setRange(-100000, 100000)
         self.frame_spin.setKeyboardTracking(False)
         self.frame_spin.valueChanged.connect(lambda v: self.set_frame(v, from_ui=True))
+        pytips.tag(self.frame_spin, _api("set_frame(12)"))
         al.addWidget(self.frame_spin)
         self.follow_btn = self._tool("Follow", "Follow Timeline – show the frame of the Timeline (scrubbing / playing the "
                                                         "scene shows the same rendered frame here)", checkable=True)
         self.follow_btn.setChecked(True)
+        pytips.tag(self.follow_btn, _api("follow_btn.setChecked(True)   # follow the Timeline frame"))
         self.raw_btn = self._tool("Re-render", "Render the frames for the compositor again (after the scene changed) – "
                                                "Live composites them with the current nodes", icon="camera")
         self.raw_btn.clicked.connect(lambda _c=False: self.render_raw())
@@ -1102,6 +1106,8 @@ class ImageEditor(QtWidgets.QWidget):
         rl.addWidget(self.to_spin)
         self.from_spin.valueChanged.connect(lambda _v: self._range_changed())
         self.to_spin.valueChanged.connect(lambda _v: self._range_changed())
+        pytips.tag(self.from_spin, _api("from_spin.setValue(1)   # first frame rendered for Live"))
+        pytips.tag(self.to_spin, _api("to_spin.setValue(120)   # last frame rendered for Live"))
         al.addWidget(self.range_box)
         self.earlier_btn = self._tool("Earlier Frames", "Use frames rendered for the compositor before – of this "
                                                          "file, another file or any folder with an image sequence")
@@ -1109,6 +1115,7 @@ class ImageEditor(QtWidgets.QWidget):
         self.earlier_menu = QtWidgets.QMenu(self.earlier_btn)
         self.earlier_menu.aboutToShow.connect(self._fill_earlier_menu)
         self.earlier_btn.setMenu(self.earlier_menu)
+        pytips.tag(self.earlier_btn, _api("earlier_btn.showMenu()   # frames rendered before"))
         al.addWidget(self.earlier_btn)
         bl.addWidget(self.anim_box, 1)
         self.spacer = QtWidgets.QWidget(bar)
@@ -1119,12 +1126,15 @@ class ImageEditor(QtWidgets.QWidget):
             self.channel_combo.addItem(label, ident)
         self.channel_combo.setToolTip("Display channels")
         self.channel_combo.activated.connect(lambda i: self.set_channel(self.channel_combo.itemData(i)))
+        pytips.tag(self.channel_combo, _api('set_channel("COLOR_ALPHA")   # COLOR_ALPHA, COLOR, ALPHA, RED, GREEN, BLUE'))
         bl.addWidget(self.channel_combo)
         fit = self._tool("⤢", "Frame All ({image.fit})\nZoom 1:1: {image.zoom_1_1}")
         fit.clicked.connect(lambda _c=False: self.fit())
+        pytips.tag(fit, _api("fit()   # zoom(1) = 1:1"))
         bl.addWidget(fit)
         self.export_btn = self._tool("Export", "Export Image… ({image.export}) / Export Animation…")
         self.export_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        pytips.tag(self.export_btn, _api('export_image("C:/renders/image.png")   # or export_animation(path, "MP4")'))
         m = QtWidgets.QMenu(self.export_btn)
         self.export_image_act = m.addAction("Export Image…")
         self.export_image_act.triggered.connect(lambda _c=False: self.export_image())
@@ -1220,6 +1230,9 @@ class ImageEditor(QtWidgets.QWidget):
             self.hint_label.setText(text)
             self.hint_btn.setText(button)
             self._hint_fn = fn
+            pytips.tag(self.hint_btn, "from qt_shell import image_editor\nimage_editor.ensure_compositor(viewer=True)"
+                       if fn == self._create_nodes else
+                       'import qt_shell\nqt_shell.api.run_op("render.render")   # F12')
             self.hint_bar.show()
         else:
             self.hint_bar.hide()

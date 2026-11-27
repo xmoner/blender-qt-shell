@@ -155,6 +155,31 @@ qs.add_menu_action("Tools", "Frame Selected", qs.frame_selected,
 qs.remove_menu_action("my_frame")
 ''')
 
+C("api.run_menu", "menus", "run_menu(*path)", "bool – True when the item was found",
+  "Chooses an item of the Qt window's menu bar by its path, like a click (menus that fill themselves when they "
+  "open are filled first). The Python tooltips of the menu bar items show this call.",
+  [("*path", "str", 'Menu titles and the item text, e.g. "Window", "Outliner" (no & and no shortcut).')],
+  example='''
+import qt_shell.api as qs
+
+qs.run_menu("Window", "Outliner")              # show / hide the Outliner
+qs.run_menu("Window", "Outliner")              # … and back
+print(qs.run_menu("Window", "No such item"))   # False
+''')
+
+C("api.menu_path", "menus", "menu_path(menu, action)", "tuple of str or None",
+  "The run_menu() path of a menu item – None when the menu is not part of the menu bar (a right-click menu …).",
+  [("menu", "QMenu", "The menu that holds the item."), ("action", "QAction", "The item.")],
+  example='''
+import qt_shell.api as qs
+
+bar = qs.main_window().menuBar()
+win = next(a.menu() for a in bar.actions() if a.text().replace("&", "") == "Window")
+win.aboutToShow.emit()
+item = next(a for a in win.actions() if a.text().replace("&", "") == "Outliner")
+print(qs.menu_path(win, item))                 # ('Window', 'Outliner')
+''')
+
 C("api.remove_menu_action", "menus", "remove_menu_action(action_id)", "None",
   "Removes a menu item (and its shortcut) added with add_menu_action().",
   [("action_id", "str", "The returned id.")],
@@ -300,6 +325,20 @@ import qt_shell.api as qs
 qs.set_viewport_layout("side")
 print(len(qs.viewports()))                     # 2
 qs.set_viewport_layout("single")
+''')
+
+C("api.view3d_space", "views", "view3d_space()", "bpy.types.SpaceView3D or None",
+  "The 3D view space the active Qt Shell view draws with – shading, overlays, gizmos, clipping. It is what "
+  "bpy.context.space_data is inside a 3D view, but usable from the Console, the Text editor or any script "
+  "(the Python tooltips of the 3D header use it).",
+  example='''
+import qt_shell.api as qs
+
+sp = qs.view3d_space()
+old = sp.shading.type
+sp.shading.type = 'SOLID'                       # 'WIREFRAME', 'SOLID', 'MATERIAL', 'RENDERED'
+print(sp.overlay.show_overlays)
+sp.shading.type = old
 ''')
 
 # =========================================================================================== overlays

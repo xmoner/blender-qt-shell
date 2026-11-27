@@ -25,7 +25,9 @@ import sys
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import completion, hscroll, scripts, theme
+from . import completion, hscroll, pytips, scripts, theme
+
+TE_PY = "import qt_shell\nte = qt_shell.api.main_window().text_editor\nte."   # Python tooltips
 
 INDENT = "    "
 
@@ -1027,6 +1029,7 @@ class TextEditor(QtWidgets.QWidget):
             b.setText(text)
             b.setToolTip(tip)
             b.clicked.connect(lambda _c=False: fn())
+            pytips.tag(b, TE_PY + (py or fn.__name__ + "()"))
             bar.addWidget(b)
             return b
 
@@ -1045,6 +1048,7 @@ class TextEditor(QtWidgets.QWidget):
         keymap.tip(self.ac_check, "Suggest names automatically after \".\" and while typing.\n"
                                   "{text.complete} shows the suggestions any time.")
         bar.addWidget(self.ac_check)
+        pytips.tag(self.ac_check, TE_PY + "ac_check.setChecked(True)")
         self.state_lab = QtWidgets.QLabel(self)
         bar.addWidget(self.state_lab)
         tool("→ Shelf", "Add the selected code – or the whole text – as a button to the Shelf "
@@ -1114,9 +1118,11 @@ class TextEditor(QtWidgets.QWidget):
         self.find_edit.setPlaceholderText("Find…")
         self.find_edit.returnPressed.connect(lambda: self.find(False))
         self.find_edit.textChanged.connect(self._update_matches)
+        pytips.tag(self.find_edit, TE_PY + "find_edit.setText('text')\nte.find(False)")
         self.replace_edit = QtWidgets.QLineEdit(self.find_bar)
         self.replace_edit.setPlaceholderText("Replace with…")
         self.replace_edit.returnPressed.connect(self.replace_one)
+        pytips.tag(self.replace_edit, TE_PY + "replace_edit.setText('text')\nte.replace_one()")
         self.find_case = QtWidgets.QCheckBox("Aa", self.find_bar)
         self.find_case.setToolTip("Match case")
         self.find_word = QtWidgets.QCheckBox("Word", self.find_bar)
@@ -1125,6 +1131,7 @@ class TextEditor(QtWidgets.QWidget):
         self.find_regex.setToolTip("Regular expression")
         for c in (self.find_case, self.find_word, self.find_regex):
             c.toggled.connect(self._update_matches)
+            pytips.tag(c, TE_PY + {"Aa": "find_case", "Word": "find_word", ".*": "find_regex"}[c.text()] + ".setChecked(True)")
         self.match_lab = QtWidgets.QLabel(self.find_bar)
         self.match_lab.setProperty("dim", True)
         fl.addWidget(self.find_edit, 0, 0)
@@ -1137,21 +1144,25 @@ class TextEditor(QtWidgets.QWidget):
             b.setText(text)
             keymap.tip(b, "Previous ({text.find_prev})" if back else "Next ({text.find_next})")
             b.clicked.connect(lambda _c=False, back=back: self.find(back))
+            pytips.tag(b, TE_PY + f"find({back})   # True = previous")
             fl.addWidget(b, 0, col)
             col += 1
         fl.addWidget(self.match_lab, 0, col)
         close = QtWidgets.QToolButton(self.find_bar)
         close.setText("✕")
         close.clicked.connect(self.hide_find)
+        pytips.tag(close, TE_PY + "hide_find()")
         fl.addWidget(close, 0, col + 1)
         fl.addWidget(self.replace_edit, 1, 0)
         rb = QtWidgets.QToolButton(self.find_bar)
         rb.setText("Replace")
         rb.clicked.connect(self.replace_one)
+        pytips.tag(rb, TE_PY + "replace_one()")
         fl.addWidget(rb, 1, 1, 1, 2)
         ra = QtWidgets.QToolButton(self.find_bar)
         ra.setText("Replace All")
         ra.clicked.connect(self.replace_all)
+        pytips.tag(ra, TE_PY + "replace_all()")
         fl.addWidget(ra, 1, 3, 1, 3)
         self._replace_widgets = (self.replace_edit, rb, ra)
         fl.setColumnStretch(0, 1)
@@ -1169,6 +1180,7 @@ class TextEditor(QtWidgets.QWidget):
         self.problem_btn.setToolTip("Problems found while you type (syntax errors, undefined names) – "
                                     "click: go to the next one")
         self.problem_btn.clicked.connect(self.next_problem)
+        pytips.tag(self.problem_btn, TE_PY + "next_problem()")
         self.problem_btn.hide()
         info.addWidget(self.problem_btn)
         lay.addLayout(info)

@@ -184,6 +184,26 @@ def status_history():
     return [(stamp, msg) for stamp, msg, _t in state_store("status").get("history", ())]
 
 
+def view3d_space():
+    """The SpaceView3D Qt Shell's active 3D view draws with (shading, overlays, gizmos …) – what
+    bpy.context.space_data is inside the 3D view, but also usable from a script or the Text editor.
+    None when Qt Shell is not running.
+
+        import qt_shell
+        qt_shell.api.view3d_space().shading.type = 'SOLID'"""
+    vp = viewport()
+    if vp is not None:
+        try:
+            sp, _r = vp.space()
+            if sp is not None:
+                return sp
+        except Exception:
+            pass
+    from . import bridge
+    found = bridge.find_view3d()
+    return found[1].spaces.active if found else None
+
+
 def viewports():
     """All 3D view widgets of the current layout (the view functions below act on the active one)."""
     w = main_window()
@@ -410,6 +430,61 @@ def run_op(idname, invoke=False, **props):
         qt_shell.api.run_op("render.render")          # opens the Render View like F12"""
     from . import bridge
     return bridge.run_op(idname, props, invoke=invoke)
+
+
+def _menu_text(text):
+    return text.replace("&&", "\0").replace("&", "").replace("\0", "&").split("\t")[0].strip()
+
+
+def run_menu(*path):
+    """Clicks an item of the Qt window's menu bar by its path – the same as choosing it with the mouse
+    (menus that fill themselves when opened are filled first). Returns True when the item was found.
+
+        import qt_shell
+        qt_shell.api.run_menu("Window", "Outliner")            # show / hide the Outliner
+        qt_shell.api.run_menu("View", "Frame All")"""
+    from PySide6 import QtWidgets
+    win = main_window()
+    if win is None or not path:
+        return False
+    actions = win.menuBar().actions()
+    for depth, name in enumerate(path):
+        want = _menu_text(name)
+        act = next((a for a in actions if not a.isSeparator() and _menu_text(a.text()) == want), None)
+        if act is None:
+            return False
+        if depth == len(path) - 1:
+            if act.menu() is not None:
+                return False
+            act.trigger()
+            return True
+        menu = act.menu()
+        if menu is None:
+            return False
+        try:
+            menu.aboutToShow.emit()
+        except Exception:
+            pass
+        actions = menu.actions()
+    return False
+
+
+def menu_path(menu, action):
+    """Path of a menu bar item for run_menu() ("Window", "Outliner"), or None when the menu is not in the
+    menu bar (a right-click menu …)."""
+    from PySide6 import QtWidgets
+    names = [_menu_text(action.text())]
+    m, guard = menu, 0
+    while m is not None and guard < 8:
+        names.insert(0, _menu_text(m.title()))
+        parent = None
+        for o in m.menuAction().associatedObjects():
+            if isinstance(o, QtWidgets.QMenuBar):
+                return tuple(names)
+            if isinstance(o, QtWidgets.QMenu) and o is not m:
+                parent = o
+        m, guard = parent, guard + 1
+    return None
 
 
 def status(text, timeout_ms=4000):

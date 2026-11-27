@@ -8,7 +8,7 @@ import re
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, fake_ui, qt_ui, rna_widgets as rw, theme
+from . import bridge, fake_ui, pytips, qt_ui, rna_widgets as rw, theme
 from . import blicons
 from .bridge import tr
 
@@ -843,6 +843,7 @@ class PropertiesEditor(QtWidgets.QWidget):
         keymap.tip(self.search, "Search… ({properties.search})", "setPlaceholderText")
         self.search.addAction(blicons.icon("VIEWZOOM"), QtWidgets.QLineEdit.LeadingPosition)
         self.search.textChanged.connect(lambda _t: self._search_timer.start())
+        pytips.tag(self.search, "import qt_shell\nqt_shell.api.main_window().properties.search.setText('scale')")
         self.search.installEventFilter(self)
         self._search_timer = QtCore.QTimer(self)
         self._search_timer.setSingleShot(True)

@@ -722,6 +722,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.render_cancel_btn.setAutoRaise(True)
         keymap.tip(self.render_cancel_btn, "Stop the running render ({window.render_cancel})")
         self.render_cancel_btn.clicked.connect(self.cancel_render)
+        pytips.tag(self.render_cancel_btn, "import qt_shell\nqt_shell.api.main_window().cancel_render()")
         self.render_cancel_btn.hide()
         self.statusBar().addPermanentWidget(self.render_cancel_btn)
         # status history: every message is kept (newest 200) and also written to the Console
@@ -731,17 +732,20 @@ class MainWindow(QtWidgets.QMainWindow):
         hist_btn.setAutoRaise(True)
         hist_btn.setToolTip("Status history (or click the status bar)")
         hist_btn.clicked.connect(self.show_status_history)
+        pytips.tag(hist_btn, "import qt_shell\nqt_shell.api.main_window().show_status_history()")
         self.statusBar().addPermanentWidget(hist_btn)
         # bottom right: "Do not touch it." with a colourful heart → About the Author / Donate (about.py)
         # "Sponsors" (palm holding coins) next to it → the Sponsor window; "Get Support" left of it → paid support
         from . import about
         self.support_btn = about.make_support_button(self.statusBar(), lambda: about.show_support(self))
-        pytips.tag(self.support_btn, "import qt_shell.about as about; about.show_support()")
+        pytips.tag(self.support_btn, "from qt_shell import about\nabout.show_support()")
         self.statusBar().addPermanentWidget(self.support_btn)
         self.sponsor_btn = about.make_sponsor_button(self.statusBar(), lambda: about.show_sponsor(self))
         self.statusBar().addPermanentWidget(self.sponsor_btn)
+        pytips.tag(self.sponsor_btn, "from qt_shell import about\nabout.show_sponsor()")
         self.about_btn = about.make_button(self.statusBar(), lambda: about.show(self))
         self.statusBar().addPermanentWidget(self.about_btn)
+        pytips.tag(self.about_btn, "from qt_shell import about\nabout.show()")
         self.statusBar().messageChanged.connect(self._on_status_message)
         self.statusBar().installEventFilter(self)
         self._status_dialog = None
@@ -906,6 +910,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mode_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)
         self.mode_combo.setMinimumContentsLength(11)
         self.mode_combo.activated.connect(self._set_mode)
+        pytips.tag(self.mode_combo, "import qt_shell\nqt_shell.api.run_op('object.mode_set', mode='OBJECT')   # 'EDIT', 'POSE', 'SCULPT', "
+                                    "'WEIGHT_PAINT', 'VERTEX_PAINT', 'TEXTURE_PAINT'")
         from . import keymap
         keymap.tip(self.mode_combo, "Interaction mode – Object ({view3d.mode_object}), Edit ({view3d.mode_edit}), "
                                     "Pose ({view3d.mode_pose}), Sculpt ({view3d.mode_sculpt}), Weight Paint "
@@ -949,7 +955,7 @@ class MainWindow(QtWidgets.QMainWindow):
             b.setToolTip(tip)
             icons.set_icon(b, {"WIREFRAME": "shading_wire", "SOLID": "shading_solid", "MATERIAL": "shading_material",
                                "RENDERED": "shading_rendered"}[kind])
-            pytips.tag(b, f"bpy.context.space_data.shading.type = {kind!r}")
+            pytips.tag(b, f"qt_shell.api.view3d_space().shading.type = {kind!r}   # 'WIREFRAME', 'SOLID', 'MATERIAL', 'RENDERED'")
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, k=kind: self.viewport.set_shading(k))
             self.shading_group.addButton(b)
@@ -1077,7 +1083,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._hdr_toggle(bar, lay, "◎", "Proportional Editing (O)", lambda: getattr(ts(), prop_attr()),
                          lambda on: setattr(ts(), prop_attr(), on),
                          "bpy.context.scene.tool_settings.use_proportional_edit_objects = True   "
-                         "# use_proportional_edit in Edit Mode")
+                         "# Edit Mode: use_proportional_edit")
         self._hdr_popover(bar, lay, "▾", "VIEW3D_PT_proportional_edit", "Proportional Editing Falloff")
 
     def _build_view_toggles(self, bar, lay):
@@ -1087,12 +1093,12 @@ class MainWindow(QtWidgets.QMainWindow):
         lay.addSpacing(theme.px(4))
         self._hdr_toggle(bar, lay, "✥", "Show Gizmo", lambda: sp().show_gizmo,
                          lambda on: setattr(sp(), "show_gizmo", on),
-                         "bpy.context.space_data.show_gizmo = True")
+                         "qt_shell.api.view3d_space().show_gizmo = True")
         self._hdr_popover(bar, lay, "▾", "VIEW3D_PT_gizmo_display", "Gizmos")
         lay.addSpacing(theme.px(4))
         self._hdr_toggle(bar, lay, "◫", "Show Overlays (Shift+Alt+Z)", lambda: sp().overlay.show_overlays,
                          lambda on: setattr(sp().overlay, "show_overlays", on),
-                         "bpy.context.space_data.overlay.show_overlays = True")
+                         "qt_shell.api.view3d_space().overlay.show_overlays = True")
         self._hdr_popover(bar, lay, "Overlays ▾", "VIEW3D_PT_overlay", "Overlays")
         lay.addSpacing(theme.px(4))
 
@@ -1100,13 +1106,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return "show_xray_wireframe" if sp().shading.type == "WIREFRAME" else "show_xray"
         self._hdr_toggle(bar, lay, "▣", "Toggle X-Ray (Alt+Z)", lambda: getattr(sp().shading, xray_attr()),
                          lambda on: setattr(sp().shading, xray_attr(), on),
-                         "bpy.ops.view3d.toggle_xray()   # bpy.context.space_data.shading.show_xray = True")
+                         "qt_shell.api.view3d_space().shading.show_xray = True   # in Wireframe: show_xray_wireframe")
         # Blender's viewport: its asset shelf (brushes at the bottom in Sculpt Mode …) shown / hidden
         from . import sculptview, blicons
         lay.addSpacing(theme.px(4))
         sb = self._hdr_toggle(bar, lay, "Brushes", "Asset Shelf: brushes / assets at the bottom of Blender's viewport",
                               sculptview.asset_shelf_on, sculptview.set_asset_shelf,
-                              "# Qt Shell setting: viewport/asset_shelf")
+                              "from qt_shell import sculptview\nsculptview.set_asset_shelf(True)")
         if blicons.has("ASSET_MANAGER"):
             sb.setIcon(blicons.icon("ASSET_MANAGER"))
             sb.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)

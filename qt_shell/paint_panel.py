@@ -18,7 +18,7 @@ entered (Window menu: Vertex Paint).
 import bpy
 from PySide6 import QtCore, QtWidgets
 
-from . import blicons, bridge, theme
+from . import blicons, bridge, pytips, theme
 from .sculpt_panel import SculptPanel, brush_icon, _active_mesh_object, _ptr
 
 PAINT, BLEND = "Paint", "Blend"
@@ -188,6 +188,9 @@ class VertexPaintPanel(SculptPanel):
         self.icon_slider.setValue(self._icon_size())
         self.icon_slider.setToolTip("Size of the brush icons")
         self.icon_slider.valueChanged.connect(self._set_icon_size)
+        pytips.tag(self.icon_slider, "import qt_shell\nqt_shell.api.main_window()."
+                   + ("tpaint_panel" if type(self).__name__ == "TexturePaintPanel" else "vpaint_panel")
+                   + ".icon_slider.setValue(48)   # 16 … 96 px")
         srow.addWidget(self.icon_slider, 1)
         self.icon_size_lab = QtWidgets.QLabel(f"{self._icon_size()} px", body)
         self.icon_size_lab.setMinimumWidth(theme.px(40))
@@ -210,6 +213,7 @@ class VertexPaintPanel(SculptPanel):
                 b.setToolTip(f"<b>{name}</b><br>{note}")
                 self._style_brush_btn(b, self._icon_size())
                 b.clicked.connect(lambda _=False, n=name: self.pick_brush(n))
+                pytips.tag(b, self._brush_py(name))
                 grp.addButton(b)
                 self.brush_btns[name] = b
             self._brush_grids.append((grid, [self.brush_btns[e[0]] for e in items]))
@@ -317,6 +321,7 @@ class VertexPaintPanel(SculptPanel):
         fb.setToolTip("Maya: Flood – fill the whole mesh with the paint colour (only the selected faces / "
                       "vertices while a selection mask is on)")
         fb.clicked.connect(lambda _=False: self._fill())
+        pytips.tag_op(fb, "paint.vertex_color_set", {})
         row.addWidget(fb, 1)
 
     def _swap(self):
@@ -619,6 +624,7 @@ class TexturePaintPanel(VertexPaintPanel):
             fb.setIcon(blicons.icon("TPAINT_HLT"))
         fb.setToolTip("Maya: Flood – picks the Fill brush: click in the view fills the area with the colour")
         fb.clicked.connect(lambda _=False: self.pick_brush("Fill"))
+        pytips.tag(fb, self._brush_py("Fill"))
         row.addWidget(fb, 1)
 
     def _swap(self):
@@ -682,6 +688,7 @@ class TexturePaintPanel(VertexPaintPanel):
             ab.setToolTip("New image texture in the material (Base Color, 1024 × 1024) – adds a material when "
                           "there is none")
             ab.clicked.connect(lambda _=False: self._add_slot())
+            pytips.tag_op(ab, "paint.add_texture_paint_slot", {"type": "BASE_COLOR", "slot_type": "IMAGE", "width": 1024, "height": 1024})
             r.addWidget(ab)
             lay.addLayout(r)
             if mat is None:
@@ -705,6 +712,8 @@ class TexturePaintPanel(VertexPaintPanel):
                 nb.setIcon(blicons.icon("IMAGE_DATA"))
             nb.setToolTip("New white image (1024 × 1024) to paint on")
             nb.clicked.connect(lambda _=False: self._new_canvas())
+            pytips.tag(nb, "img = bpy.data.images.new('Texture', 1024, 1024)\nimg.generated_color = (1.0, 1.0, 1.0, 1.0)\n"
+                       "bpy.context.tool_settings.image_paint.canvas = img")
             r.addWidget(nb)
             lay.addLayout(r)
         self._texture_rows(lay)
@@ -742,6 +751,8 @@ class TexturePaintPanel(VertexPaintPanel):
                     nb.setIcon(blicons.icon("ADD"))
                 nb.setToolTip("New black stencil image (1024 × 1024)")
                 nb.clicked.connect(lambda _=False: self._new_stencil())
+                pytips.tag(nb, "img = bpy.data.images.new('Stencil', 1024, 1024)\nimg.generated_color = (0.0, 0.0, 0.0, 1.0)\n"
+                           "bpy.context.tool_settings.image_paint.stencil_image = img")
                 self.mask_sec.addWidget(nb)
 
     # ---- the texture painted on: name, file, save
@@ -799,6 +810,8 @@ class TexturePaintPanel(VertexPaintPanel):
             b.setToolTip(tip)
             b.setEnabled(img is not None or text == "Save All")
             b.clicked.connect(lambda _=False, f=fn: f())
+            pytips.tag(b, "import qt_shell\npanel = qt_shell.api.main_window().tpaint_panel\n" + {"Save": "panel._save_current()", "Save As…": "panel._save_as()",
+                                   "Save All": "panel._save_images()"}.get(text, ""))
             r.addWidget(b)
         lay.addLayout(r)
 

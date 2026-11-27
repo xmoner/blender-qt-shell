@@ -9,7 +9,9 @@ import traceback
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import bridge, rna_widgets as rw, theme
+from . import bridge, pytips, rna_widgets as rw, theme
+
+NE_PY = "import qt_shell\nne = qt_shell.api.main_window().node_editor\nne."   # Python tooltips
 from .bridge import tr
 
 ROW_H = 22
@@ -1087,6 +1089,7 @@ class NodeEditor(QtWidgets.QWidget):
         for ident, label in SOURCES:
             self.source.addItem(label, ident)
         self.source.activated.connect(lambda _i: (self.set_pin(False), self._reset()))
+        pytips.tag(self.source, NE_PY + 'set_source("SHADER")   # SHADER, WORLD, GEOMETRY, COMPOSITOR')
         bar.addWidget(self.source)
         # Pin like Blender: keep showing this node tree when another object / material becomes active
         self._pinned = None                   # (source, kind, id name) of the pinned tree
@@ -1097,6 +1100,7 @@ class NodeEditor(QtWidgets.QWidget):
         self.pin_btn.setToolTip("Pin – keep showing this node tree when another object or material "
                                 "becomes active (like Blender's pin)")
         self.pin_btn.toggled.connect(lambda on: self.set_pin(on))
+        pytips.tag(self.pin_btn, NE_PY + "set_pin(True)   # False = unpin")
         bar.addWidget(self.pin_btn)
         self.path_label = QtWidgets.QLabel("")
         self.path_label.setProperty("dim", True)
@@ -1106,10 +1110,12 @@ class NodeEditor(QtWidgets.QWidget):
         from . import keymap
         keymap.tip(self.up_btn, "Exit the node group ({node.group}). {node.group} on a selected group node enters it.")
         self.up_btn.clicked.connect(self.exit_group)
+        pytips.tag(self.up_btn, NE_PY + "exit_group()")
         bar.addWidget(self.up_btn)
         self.new_btn = QtWidgets.QToolButton()
         self.new_btn.setText("+ New Tree")
         self.new_btn.clicked.connect(self.new_tree)
+        pytips.tag(self.new_btn, NE_PY + "new_tree()")
         bar.addWidget(self.new_btn)
         add = QtWidgets.QToolButton()
         keymap.tip(add, "+ Add Node ({node.search})", "setText")
@@ -1117,10 +1123,13 @@ class NodeEditor(QtWidgets.QWidget):
         add.clicked.connect(lambda: self.add_node_popup(QtGui.QCursor.pos(), self.view.mapToScene(
             self.view.viewport().rect().center())))
         bar.addWidget(add)
+        pytips.tag(add, NE_PY + "add_node_popup(QtGui.QCursor.pos(), ne.view.mapToScene("
+                            "ne.view.viewport().rect().center()))")
         fit = QtWidgets.QToolButton()
         fit.setText("⤢")
         keymap.tip(fit, "Frame All ({node.frame_all})\nFrame Selected: {node.frame_selected}")
         fit.clicked.connect(self.frame_all)
+        pytips.tag(fit, NE_PY + "frame_all()")
         bar.addWidget(fit)
         lay.addLayout(bar)
         split = QtWidgets.QSplitter()

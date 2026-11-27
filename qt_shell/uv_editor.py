@@ -1507,7 +1507,9 @@ class _Val:
         return getattr(editor, self.attr).value() * self.mul
 
     def __repr__(self):
-        return f"-<{self.attr}>" if self.mul == -1 else (f"<{self.attr}>" if self.mul else "0")
+        # runnable: reads the toolkit field when the command runs (Python tooltips)
+        v = f"{PY}.{self.attr}.value()"
+        return f"-{v}" if self.mul == -1 else (v if self.mul else "0")
 
 
 def _resolve(editor, v):

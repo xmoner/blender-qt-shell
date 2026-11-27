@@ -127,7 +127,12 @@ class TemplateIDBinding(rw.Binding):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         self.combo = rw.IDBinding(data, prop_id, self.rp, on_change) if self.rp is not None else None
+        try:
+            path = pytips.prop_text(data, prop_id)
+        except Exception:
+            path = None
         if self.combo:
+            pytips.tag(self.combo.widget, path)
             lay.addWidget(self.combo.widget, 1)
             if self.rp.is_readonly:
                 self.combo.widget.setEnabled(False)
@@ -135,12 +140,16 @@ class TemplateIDBinding(rw.Binding):
         b_new = QtWidgets.QToolButton()
         b_new.setText("+ " + tr("New"))
         b_new.clicked.connect(self._new)
+        if path:
+            pytips.tag(b_new, f"{path} = {path}.copy()   # a copy of the current one (or a new one: bpy.data.….new(name))")
         lay.addWidget(b_new)
         if self.rp is not None and not self.rp.is_readonly:
             b_x = QtWidgets.QToolButton()
             b_x.setText("✕")
             b_x.setToolTip(tr("Unlink"))
             b_x.clicked.connect(self._unlink)
+            if path:
+                pytips.tag(b_x, f"{path} = None")
             lay.addWidget(b_x)
         self.widget = w
 
@@ -563,6 +572,7 @@ class Builder:
         btn.setToolTip(rw_tip(rp))
         btn.setFocusPolicy(QtCore.Qt.NoFocus)
         btn.toggled.connect(b._set)
+        pytips.tag(btn, pytips._get(old))       # the command of the checkbox it replaces
         b.widget = btn
         b.refresh()
         try:
@@ -844,11 +854,12 @@ class LazyMenu(QtWidgets.QMenu):
             act.setEnabled(False)
         else:
             fill_menu(self, node)
-        try:
-            from . import api
-            api.extend_menu(self)    # items added by add-ons through qt_shell.api
-        except Exception:
-            pass
+        if self.property("qtshell_generated"):   # menu bar menus only – not a submenu titled "Edit" …
+            try:
+                from . import api
+                api.extend_menu(self)    # items added by add-ons through qt_shell.api
+            except Exception:
+                pass
         if getattr(self, "auto_icons", False):
             try:
                 from . import menuicons
@@ -886,10 +897,12 @@ def fill_recent_menu(menu, limit=20):
             act.setEnabled(False)
             act.setToolTip(path + "\n(file not found)")
         act.triggered.connect(lambda _=False, p=path: run_op("wm.open_mainfile", {"filepath": p}))
+        pytips.tag_op(act, "wm.open_mainfile", {"filepath": path})
     menu.addSeparator()
     clear = menu.addAction("Clear Recent Files List")
     clear.setEnabled(bool(files))
     clear.triggered.connect(lambda: bridge.clear_recent())
+    pytips.tag(clear, "from qt_shell import bridge\nbridge.clear_recent()")
 
 
 QT_MENUS = {"TOPBAR_MT_file_open_recent": fill_recent_menu}

@@ -53,6 +53,8 @@ TOOLS = [
 TOOL_IDS = [t[0] for t in TOOLS]
 # where a layer is drawn: the 3D view, the Render View (over the render) or the Animation Player (over its frames)
 SPACES = {"VIEWPORT": "Viewport", "RENDER": "Render View", "ANIM": "Animation Player", "VIDEO": "Video Editing"}
+BP_PY = "from qt_shell import bluepencil\n"          # Python tooltips: module functions
+BPP_PY = "import qt_shell\nbp = qt_shell.api.main_window().bluepencil\nbp."   # … the panel
 PALETTE = ("#2f7bff", "#ff3b30", "#ffd60a", "#34c759", "#ff9500", "#bf5af2", "#ffffff", "#111111")
 DEFAULT_SIZES = {"PENCIL": 3, "BRUSH": 8, "ERASER": 20, "TEXT": 24, "LINE": 3, "ARROW": 3, "ELLIPSE": 3,
                  "RECT": 3, "TRANSFORM": 3}
@@ -2057,6 +2059,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         top.addWidget(self.draw_btn)
         self.show_chk = QtWidgets.QCheckBox("Show drawings", inner)
         self.show_chk.toggled.connect(lambda on: (st.set("show", on), _views_update()))
+        pytips.tag(self.show_chk, BP_PY + 'bluepencil.settings().set("show", True)')
         top.addWidget(self.show_chk)
         top.addStretch(1)
         v.addLayout(top)
@@ -2085,6 +2088,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             b.setAutoRaise(True)
             b.setToolTip(c)
             b.clicked.connect(lambda _c=False, col=c: self._set_color(col))
+            pytips.tag(b, BPP_PY + f'_set_color("{c}")   # any "#rrggbb"')
             crow.addWidget(b)
         self.custom_btn = QtWidgets.QToolButton(inner)
         icons.set_icon(self.custom_btn, "bp_color_custom", "Custom…")
@@ -2092,6 +2096,8 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         self.custom_btn.setToolTip("Choose any colour (colour wheel, RGB / HSV / HTML #hex, screen picker) – it is "
                                    "kept in the row of custom colours below")
         self.custom_btn.clicked.connect(self._pick_color)
+        pytips.tag(self.custom_btn, BPP_PY + "_pick_color()")
+        pytips.tag(self.color_btn, BPP_PY + "_pick_color()")
         crow.addWidget(self.custom_btn)
         crow.addStretch(1)
         v.addLayout(crow)
@@ -2107,6 +2113,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             b.setAutoRaise(True)
             b.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             b.clicked.connect(lambda _c=False, n=_n: self._use_custom(n))
+            pytips.tag(b, BPP_PY + f"_use_custom({_n})")
             b.customContextMenuRequested.connect(lambda _p, n=_n: self._custom_menu(n))
             self.custom_row.addWidget(b)
             self.custom_btns.append(b)
@@ -2120,17 +2127,20 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         self.size_spin.setRange(1, 200)
         self.size_spin.setDecimals(0)
         self.size_spin.valueChanged.connect(self._size_changed)
+        pytips.tag(self.size_spin, BP_PY + "bluepencil.settings().set_size(bluepencil.current_tool(), 8)   # 1 … 200")
         keymap.tip(self.size_spin, "Size of the active tool (px of a frame 800 px high; text: font size, eraser: "
                                    "radius in screen px) – {bp.size_down} / {bp.size_up} or Ctrl + wheel in the view")
         form.addRow("Size", self.size_spin)
         self.opacity = QtWidgets.QSlider(QtCore.Qt.Horizontal, inner)
         self.opacity.setRange(5, 100)
         self.opacity.valueChanged.connect(self._opacity_changed)
+        pytips.tag(self.opacity, BP_PY + 'bluepencil.settings().set("opacity", 1.0)   # 0.05 … 1')
         self.opacity.sliderReleased.connect(self._opacity_released)
         self.opacity.setToolTip("Opacity of new strokes (and of the strokes selected with Transform)")
         form.addRow("Opacity", self.opacity)
         self.pressure = QtWidgets.QCheckBox("Tablet pressure (Brush)", inner)
         self.pressure.toggled.connect(lambda on: st.set("pressure", on))
+        pytips.tag(self.pressure, BP_PY + 'bluepencil.settings().set("pressure", True)')
         form.addRow("", self.pressure)
         v.addLayout(form)
         self.sel_label = QtWidgets.QLabel(inner)
@@ -2149,15 +2159,18 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             chk = QtWidgets.QCheckBox(label, inner)
             chk.setToolTip(tip)
             chk.toggled.connect(lambda on, k=key: (st.set(f"ghost_{k}", on), _views_update()))
+            pytips.tag(chk, BP_PY + f'bluepencil.settings().set("ghost_{key}", True)')
             cnt = QtWidgets.QSpinBox(inner)
             cnt.setRange(1, 10)
             cnt.setSuffix(" fr")
             cnt.setToolTip("Number of ghosted frames")
             cnt.valueChanged.connect(lambda val, k=key: (st.set(f"ghost_count_{k}", int(val)), _views_update()))
+            pytips.tag(cnt, BP_PY + f'bluepencil.settings().set("ghost_count_{key}", 2)   # 1 … 10 frames')
             col = QtWidgets.QToolButton(inner)
             col.setAutoRaise(True)
             col.setToolTip("Ghost colour")
             col.clicked.connect(lambda _c=False, k=key: self._pick_ghost_color(k))
+            pytips.tag(col, BP_PY + f'bluepencil.settings().set("ghost_color_{key}", "#ff3b30")')
             g.addWidget(chk, row, 0)
             g.addWidget(cnt, row, 1)
             g.addWidget(col, row, 2)
@@ -2165,6 +2178,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         self.ghost_play = QtWidgets.QCheckBox("During playback", inner)
         self.ghost_play.setToolTip("Ghosting is off during playback unless this is on")
         self.ghost_play.toggled.connect(lambda on: st.set("ghost_playback", on))
+        pytips.tag(self.ghost_play, BP_PY + 'bluepencil.settings().set("ghost_playback", True)')
         g.addWidget(self.ghost_play, 2, 0, 1, 3)
         v.addLayout(g)
 
@@ -2210,6 +2224,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             rt2.addWidget(b)
         self.move_next = QtWidgets.QCheckBox("Move to next key", inner)
         self.move_next.toggled.connect(lambda on: st.set("move_next", on))
+        pytips.tag(self.move_next, BP_PY + 'bluepencil.settings().set("move_next", True)')
         rt2.addWidget(self.move_next)
         rt2.addStretch(1)
         v.addLayout(rt2)
@@ -2255,13 +2270,17 @@ class BluePencilPanel(QtWidgets.QScrollArea):
                                     ("trash", "", "Delete the active layer", self._delete_layer),
                                     (None, "▲", "Move the layer up (drawn on top)", lambda: self._move_layer(-1)),
                                     (None, "▼", "Move the layer down", lambda: self._move_layer(1))):
-            lb.addWidget(tbtn(icon, tip, fn, text=text or None))
+            b = tbtn(icon, tip, fn, text=text or None)
+            pytips.tag(b, BP_PY + "bluepencil.new_space_layer()" if icon == "bp_layer_new" else
+                       BPP_PY + {"trash": "_delete_layer()", "▲": "_move_layer(-1)", "▼": "_move_layer(1)"}[icon or text])
+            lb.addWidget(b)
         lb.addWidget(QtWidgets.QLabel("Opacity", inner))
         self.layer_opacity = QtWidgets.QSlider(QtCore.Qt.Horizontal, inner)
         self.layer_opacity.setRange(5, 100)
         self.layer_opacity.setToolTip("Opacity of the active layer")
         self.layer_opacity.sliderReleased.connect(self._set_layer_opacity)
         self.layer_opacity.valueChanged.connect(self._preview_layer_opacity)
+        pytips.tag(self.layer_opacity, BP_PY + 'bluepencil.active_layer()["opacity"] = 0.5   # 0.05 … 1\nbluepencil.commit("Layer Opacity")')
         lb.addWidget(self.layer_opacity, 1)
         v.addLayout(lb)
 
@@ -2273,6 +2292,7 @@ class BluePencilPanel(QtWidgets.QScrollArea):
             self.tl_combo.addItem(name, ident)
         self.tl_combo.setToolTip("Frame ticks of the active layer in the Timeline (they can be dragged; Shift + "
                                  "drag in the Timeline selects them for retiming)")
+        pytips.tag(self.tl_combo, BP_PY + 'bluepencil.settings().set("timeline_frames", "ACTIVE")   # ACTIVE, ALWAYS, OFF')
         self.tl_combo.activated.connect(lambda _i: (st.set("timeline_frames", self.tl_combo.currentData()),
                                                     _views_update()))
         dl.addRow("Timeline frames", self.tl_combo)
@@ -2281,10 +2301,12 @@ class BluePencilPanel(QtWidgets.QScrollArea):
         b = QtWidgets.QPushButton("Clear Layer", inner)
         b.setToolTip("Delete all frames of the active layer")
         b.clicked.connect(self._clear_layer)
+        pytips.tag(b, BPP_PY + "_clear_layer()")
         cl.addWidget(b)
         b = QtWidgets.QPushButton("Remove All…", inner)
         b.setToolTip("Remove all Blue Pencil layers and drawings from the scene")
         b.clicked.connect(self._remove_all)
+        pytips.tag(b, BPP_PY + "_remove_all()   # asks first")
         cl.addWidget(b)
         v.addLayout(cl)
         v.addStretch(1)

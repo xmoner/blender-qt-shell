@@ -1135,6 +1135,8 @@ qs.remove_dock("notes")
 | Command | Description |
 |---|---|
 | [`add_menu_action`](#add_menu_action) | Adds an item to a menu of the menu bar (after a separator at its end). |
+| [`run_menu`](#run_menu) | Chooses an item of the Qt window's menu bar by its path, like a click (menus that fill themselves when they open are filled first). |
+| [`menu_path`](#menu_path) | The run_menu() path of a menu item – None when the menu is not part of the menu bar (a right-click menu …). |
 | [`remove_menu_action`](#remove_menu_action) | Removes a menu item (and its shortcut) added with add_menu_action(). |
 
 #### add_menu_action
@@ -1161,6 +1163,51 @@ import qt_shell.api as qs
 qs.add_menu_action("Tools", "Frame Selected", qs.frame_selected,
                    shortcut="Ctrl+Alt+F", tooltip="Fit the selection into the view", action_id="my_frame")
 qs.remove_menu_action("my_frame")
+```
+
+#### run_menu
+
+**Synopsis:** `qt_shell.api.run_menu(*path)`  
+**Returns:** bool – True when the item was found
+
+Chooses an item of the Qt window's menu bar by its path, like a click (menus that fill themselves when they open are filled first). The Python tooltips of the menu bar items show this call.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `*path` | str | Menu titles and the item text, e.g. "Window", "Outliner" (no & and no shortcut). |
+
+**Example** (✔ tested)
+
+```python
+import qt_shell.api as qs
+
+qs.run_menu("Window", "Outliner")              # show / hide the Outliner
+qs.run_menu("Window", "Outliner")              # … and back
+print(qs.run_menu("Window", "No such item"))   # False
+```
+
+#### menu_path
+
+**Synopsis:** `qt_shell.api.menu_path(menu, action)`  
+**Returns:** tuple of str or None
+
+The run_menu() path of a menu item – None when the menu is not part of the menu bar (a right-click menu …).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `menu` | QMenu | The menu that holds the item. |
+| `action` | QAction | The item. |
+
+**Example** (✔ tested)
+
+```python
+import qt_shell.api as qs
+
+bar = qs.main_window().menuBar()
+win = next(a.menu() for a in bar.actions() if a.text().replace("&", "") == "Window")
+win.aboutToShow.emit()
+item = next(a for a in win.actions() if a.text().replace("&", "") == "Outliner")
+print(qs.menu_path(win, item))                 # ('Window', 'Outliner')
 ```
 
 #### remove_menu_action
@@ -1197,6 +1244,7 @@ qs.remove_menu_action(aid)                    # aid == "Tools/Say Hello"
 | [`view_matrix`](#view_matrix) | The 4×4 view matrix of the active view. |
 | [`projection_matrix`](#projection_matrix) | The 4×4 projection matrix of the active view for its current size. |
 | [`project`](#project) | World coordinates → pixel position in the active view widget ((0, 0) = top-left); None when the point is behind the view. |
+| [`view3d_space`](#view3d_space) | The 3D view space the active Qt Shell view draws with – shading, overlays, gizmos, clipping. |
 
 #### get_view
 
@@ -1373,6 +1421,25 @@ import qt_shell.api as qs
 
 ob = bpy.context.view_layer.objects.active or bpy.context.scene.objects[0]
 print(ob.name, qs.project(ob.matrix_world.translation))
+```
+
+#### view3d_space
+
+**Synopsis:** `qt_shell.api.view3d_space()`  
+**Returns:** bpy.types.SpaceView3D or None
+
+The 3D view space the active Qt Shell view draws with – shading, overlays, gizmos, clipping. It is what bpy.context.space_data is inside a 3D view, but usable from the Console, the Text editor or any script (the Python tooltips of the 3D header use it).
+
+**Example** (✔ tested)
+
+```python
+import qt_shell.api as qs
+
+sp = qs.view3d_space()
+old = sp.shading.type
+sp.shading.type = 'SOLID'                       # 'WIREFRAME', 'SOLID', 'MATERIAL', 'RENDERED'
+print(sp.overlay.show_overlays)
+sp.shading.type = old
 ```
 
 ### 15 Viewport layout

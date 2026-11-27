@@ -736,6 +736,7 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.layer_combo.setMinimumContentsLength(9)
         self.layer_combo.activated.connect(lambda _i: self._pick_layer(self.layer_combo.currentData()))
         self.layer_combo.setToolTip("View Layer")
+        pytips.tag(self.layer_combo, _api('set_layer("ViewLayer")'))
         h.addWidget(self.layer_combo)
         self.pass_combo = QtWidgets.QComboBox(bar)
         self.pass_combo.setMinimumContentsLength(9)
@@ -815,6 +816,7 @@ class RenderView(QtWidgets.QWidget, Dockable):
         self.cancel_btn = self._tool("render_cancel", "Cancel", "")
         keymap.tip(self.cancel_btn, "Cancel Render – stop the running render ({window.render_cancel})")
         self.cancel_btn.clicked.connect(lambda: self.mw.cancel_render())
+        pytips.tag(self.cancel_btn, "import qt_shell\nqt_shell.api.main_window().cancel_render()")
         self.cancel_btn.hide()
         h.addWidget(self.cancel_btn)
         self.dock_btn = self._tool("dock", "", "Dock – put the render view into the Qt Shell window (drag its "

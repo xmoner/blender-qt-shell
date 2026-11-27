@@ -17,7 +17,7 @@ import math
 import bpy
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import blicons, bridge, sculpt, theme
+from . import blicons, bridge, pytips, sculpt, theme
 from . import rna_widgets as rw
 
 ADD, CONTRAST, TRANSFORM, GENERAL = "Add / Subtract", "Contrast", "Transform", "Mask · Face Sets"
@@ -409,6 +409,10 @@ class SculptPanel(QtWidgets.QScrollArea):
         self.icon_slider.setValue(self._icon_size())
         self.icon_slider.setToolTip("Size of the brush icons")
         self.icon_slider.valueChanged.connect(self._set_icon_size)
+        attr = {"VertexPaintPanel": "vpaint_panel", "TexturePaintPanel": "tpaint_panel"}.get(type(self).__name__,
+                                                                                         "sculpt_panel")
+        pytips.tag(self.icon_slider, f"import qt_shell\nqt_shell.api.main_window().{attr}.icon_slider.setValue(48)"
+                                     "   # 16 … 96 px")
         srow.addWidget(self.icon_slider, 1)
         self.icon_size_lab = QtWidgets.QLabel(f"{self._icon_size()} px", body)
         self.icon_size_lab.setMinimumWidth(theme.px(40))
@@ -430,6 +434,7 @@ class SculptPanel(QtWidgets.QScrollArea):
                 b.setToolTip(f"<b>{name}</b><br>{note}")
                 self._style_brush_btn(b, self._icon_size())
                 b.clicked.connect(lambda _=False, n=name: self.pick_brush(n))
+                pytips.tag(b, self._brush_py(name))
                 grp.addButton(b)
                 self.brush_btns[name] = b
             self._brush_grids.append((grid, [self.brush_btns[e[0]] for e in items]))
@@ -553,6 +558,12 @@ class SculptPanel(QtWidgets.QScrollArea):
         self.lay.addWidget(panel)
         return panel.body_lay
 
+    def _brush_py(self, name):
+        """Python of a brush button: Blender's own asset operator (the panel's essentials library)."""
+        lib = getattr(self, "LIBRARY", sculpt.LIBRARY)
+        return ("bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS', asset_library_identifier='', "
+                f"relative_asset_identifier={lib + name!r})")
+
     def _buttons(self, lay, items, cols=2):
         grid = QtWidgets.QGridLayout()
         grid.setSpacing(3)
@@ -562,6 +573,7 @@ class SculptPanel(QtWidgets.QScrollArea):
                 b.setIcon(blicons.icon(icon))
             b.setToolTip(tip)
             b.clicked.connect(lambda _=False, o=op, pr=props: self._run(o, pr))
+            pytips.tag_op(b, op, props)
             grid.addWidget(b, i // cols, i % cols)
         lay.addLayout(grid)
 
@@ -642,6 +654,7 @@ class SculptPanel(QtWidgets.QScrollArea):
             rw.set_prop_tooltip(b.widget, rw.rna_prop(data, prop))
         except Exception:
             pass
+        pytips.tag_prop(b.widget, data, prop)
         self._bindings.append(b)
         (row or lay).addWidget(b.widget)
         return b
@@ -736,6 +749,7 @@ class SculptPanel(QtWidgets.QScrollArea):
                 b.setIcon(blicons.icon("MOD_MIRROR"))
             b.setToolTip("Make the mesh symmetrical in the chosen direction")
             b.clicked.connect(lambda _=False: self._run("sculpt.symmetrize", {}))
+            pytips.tag_op(b, "sculpt.symmetrize", {})
             self.sym_sec.addWidget(b)
         # dyntopo
         dyn = bool(getattr(ob, "use_dynamic_topology_sculpting", False))
@@ -746,6 +760,7 @@ class SculptPanel(QtWidgets.QScrollArea):
             db.setIcon(blicons.icon("MOD_REMESH"))
         db.setToolTip("Dyntopo: the brush adds and removes detail where it works")
         db.clicked.connect(lambda _=False: self._run("sculpt.dynamic_topology_toggle", {}))
+        pytips.tag_op(db, "sculpt.dynamic_topology_toggle", {})
         self.topo_sec.addWidget(db)
         if dyn and s is not None:
             self._row(self.topo_sec, "Detailing", s, "detail_type_method")
@@ -763,6 +778,7 @@ class SculptPanel(QtWidgets.QScrollArea):
                 rb.setIcon(blicons.icon("MOD_REMESH"))
             rb.setToolTip("Voxel Remesh – even new topology with this voxel size")
             rb.clicked.connect(lambda _=False: self._run("object.voxel_remesh", {}))
+            pytips.tag_op(rb, "object.voxel_remesh", {})
             r.addWidget(rb)
             self.topo_sec.addLayout(r)
         # multires
@@ -774,12 +790,15 @@ class SculptPanel(QtWidgets.QScrollArea):
                 ab.setIcon(blicons.icon("MOD_MULTIRES"))
             ab.setToolTip("Add a Multiresolution modifier (sculpt on subdivision levels)")
             ab.clicked.connect(lambda _=False: self._run("object.modifier_add", {"type": "MULTIRES"}))
+            pytips.tag_op(ab, "object.modifier_add", {"type": "MULTIRES"})
             r.addWidget(ab)
         else:
             sb = QtWidgets.QPushButton("Subdivide", self.widget())
             if blicons.has("MOD_SUBSURF"):
                 sb.setIcon(blicons.icon("MOD_SUBSURF"))
             sb.clicked.connect(lambda _=False, n=mr.name: self._multires_subdivide(n))
+            sb.setToolTip("Add a subdivision level to the Multires modifier")
+            pytips.tag_op(sb, "object.multires_subdivide", {"modifier": mr.name, "mode": "CATMULL_CLARK"})
             r.addWidget(sb)
             self.topo_sec.addLayout(r)
             r = QtWidgets.QHBoxLayout()
@@ -819,6 +838,7 @@ class SculptPanel(QtWidgets.QScrollArea):
             b.setIcon(blicons.icon("ASSET_MANAGER"))
         keymap.tip(b, "Brushes / assets shelf at the bottom of Blender's viewport ({view3d.asset_shelf})")
         b.toggled.connect(lambda on: sculptview.set_asset_shelf(on))
+        pytips.tag(b, "from qt_shell import sculptview\nsculptview.set_asset_shelf(True)   # False = hide")
         sculptview.signals.asset_shelf.connect(b.setChecked)   # bound method: dropped with the button
         self.disp_sec.addWidget(b)
 

@@ -32,7 +32,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge, hscroll, keymap, pytips, theme
 
-SS_PY = "import qt_shell; ss = qt_shell.api.spreadsheet(); "
+SS_PY = "import qt_shell; ss = qt_shell.api.spreadsheet(); ss."
 SETTINGS = "spreadsheet/"
 
 MODES = ("GEOMETRY", "OBJECTS")

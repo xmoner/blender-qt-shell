@@ -61,6 +61,9 @@ def empty_keys(lay):
 
 
 # ---------------------------------------------------------------- one place's annotations
+AP_PY = "from qt_shell import annotate_panel; pl = annotate_panel.PLACES['VIEW3D']   # 'VIDEO' = Video Sequencer\n"
+
+
 class Place:
     """Data and tool of the annotations of one place (VIEW3D / VIDEO)."""
 
@@ -193,6 +196,19 @@ class Place:
             lay.annotation_hide = bool(hidden)
             self.redraw()
         bridge.undo_push("Hide Annotation Layer" if hidden else "Show Annotation Layer")
+
+    def jump(self, lay, direction):
+        """Goes to the previous (-1) / next (1) drawing of the layer. Returns the frame or None."""
+        if lay is None:
+            return None
+        f = bpy.context.scene.frame_current
+        ks = keys(lay)
+        tgt = max((k for k in ks if k < f), default=None) if direction < 0 else \
+            min((k for k in ks if k > f), default=None)
+        if tgt is not None:
+            from . import bluepencil
+            bluepencil.go_to(tgt)
+        return tgt
 
     def set_color(self, lay, rgb):
         lay.color = tuple(rgb)[:3]
@@ -603,7 +619,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         top.addWidget(self.draw_btn)
         self.show_chk = QtWidgets.QCheckBox("Show annotations", inner)
         self.show_chk.setToolTip("Show the annotations in the 3D views (overlay)")
-        pytips.tag(self.show_chk, "space.overlay.show_annotation = True")
+        pytips.tag(self.show_chk, AP_PY + "pl.set_shown(True)")
         self.show_chk.toggled.connect(lambda on: (self.place().set_shown(on), self.sync(force=True)))
         top.addWidget(self.show_chk)
         top.addStretch(1)
@@ -634,7 +650,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.color_btn = QtWidgets.QToolButton(inner)
         self.color_btn.setAutoRaise(True)
         self.color_btn.setToolTip("Colour of the active layer – click to choose any colour")
-        pytips.tag(self.color_btn, "layer.color = (0.38, 0.61, 0.78)")
+        pytips.tag(self.color_btn, AP_PY + "pl.set_color(pl.active(), (0.38, 0.61, 0.78))   # RGB 0–1")
         self.color_btn.clicked.connect(self._pick_color)
         crow.addWidget(self.color_btn, 0, 0)
         for n, c in enumerate(PALETTE, 1):
@@ -643,6 +659,8 @@ class AnnotationPanel(QtWidgets.QScrollArea):
             b.setAutoRaise(True)
             b.setToolTip(c)
             b.clicked.connect(lambda _c=False, col=c: self._set_color(QtGui.QColor(col)))
+            qc = QtGui.QColor(c)
+            pytips.tag(b, AP_PY + f"pl.set_color(pl.active(), ({qc.redF():.3g}, {qc.greenF():.3g}, {qc.blueF():.3g}))")
             crow.addWidget(b, n // per_row, n % per_row)
         crow.setColumnStretch(per_row, 1)
         v.addLayout(crow)
@@ -653,7 +671,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.thick.setRange(1, 10)
         self.thick.setSuffix(" px")
         self.thick.setToolTip("Thickness of the active layer's strokes")
-        pytips.tag(self.thick, "layer.thickness = 3")
+        pytips.tag(self.thick, AP_PY + "pl.set_thickness(pl.active(), 3)   # 1 … 10 px")
         self.thick.valueChanged.connect(self._thickness)
         form.addRow("Thickness", self.thick)
         self.place_combo = QtWidgets.QComboBox(inner)
@@ -692,9 +710,13 @@ class AnnotationPanel(QtWidgets.QScrollArea):
             lrow.addWidget(b)
             return b
         self.new_btn = lbtn("bp_layer_new", "New", "New annotation layer (made the active one)", self._new_layer)
+        pytips.tag(self.new_btn, AP_PY + "pl.add_layer('Notes')")
         self.del_btn = lbtn("trash", "Delete", "Delete the active layer", self._delete_layer)
+        pytips.tag(self.del_btn, AP_PY + "pl.remove_layer(pl.active())")
         self.up_btn = lbtn(None, "▲", "Move the active layer up (drawn above)", lambda: self._move(1))
+        pytips.tag(self.up_btn, AP_PY + "pl.move_layer(pl.active(), 1)   # -1 = down")
         self.down_btn = lbtn(None, "▼", "Move the active layer down", lambda: self._move(-1))
+        pytips.tag(self.down_btn, AP_PY + "pl.move_layer(pl.active(), -1)   # 1 = up")
         lrow.addStretch(1)
         v.addLayout(lrow)
 
@@ -709,10 +731,12 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.prev_btn = QtWidgets.QPushButton("◀ Previous", inner)
         self.prev_btn.setToolTip("Go to the previous drawing of the active layer")
         self.prev_btn.clicked.connect(lambda _c=False: self._jump(-1))
+        pytips.tag(self.prev_btn, AP_PY + "pl.jump(pl.active(), -1)   # 1 = next drawing")
         drow.addWidget(self.prev_btn)
         self.next_btn = QtWidgets.QPushButton("Next ▶", inner)
         self.next_btn.setToolTip("Go to the next drawing of the active layer")
         self.next_btn.clicked.connect(lambda _c=False: self._jump(1))
+        pytips.tag(self.next_btn, AP_PY + "pl.jump(pl.active(), 1)   # -1 = previous drawing")
         drow.addWidget(self.next_btn)
         drow.addStretch(1)
         v.addLayout(drow)
@@ -721,18 +745,19 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.del_draw_btn = QtWidgets.QPushButton("Delete Drawing on This Frame", inner)
         self.del_draw_btn.setToolTip("Deletes the active layer's drawing shown on the current frame")
         self.del_draw_btn.clicked.connect(lambda _c=False: self._delete_drawing())
+        pytips.tag(self.del_draw_btn, AP_PY + "pl.delete_drawing(pl.active())")
         drow2.addWidget(self.del_draw_btn)
         self.blank_btn = QtWidgets.QPushButton("Blank Key", inner)
         self.blank_btn.setToolTip("Inserts a blank key on the current frame: the drawing before it stops showing "
                                   "here – an empty frame (hollow tick in the Timeline). Again on a blank key "
                                   "removes it. Right-click in the Timeline does the same at any frame.")
         self.blank_btn.clicked.connect(lambda _c=False: self._toggle_blank())
-        pytips.tag(self.blank_btn, "from qt_shell import annotate_panel as ap; pl = ap.PLACES['VIEW3D']; "
-                                   "pl.insert_blank(pl.active())")
+        pytips.tag(self.blank_btn, AP_PY + "pl.insert_blank(pl.active())   # pl.delete_blank(…) removes it")
         drow2.addWidget(self.blank_btn)
         self.clear_btn = QtWidgets.QPushButton("Clear Layer", inner)
         self.clear_btn.setToolTip("Deletes every drawing of the active layer (the layer stays)")
         self.clear_btn.clicked.connect(lambda _c=False: self._clear_layer())
+        pytips.tag(self.clear_btn, AP_PY + "pl.clear_layer(pl.active())")
         drow2.addWidget(self.clear_btn)
         drow2.addStretch(1)
         v.addLayout(drow2)
@@ -746,7 +771,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
         self.tl_combo.setCurrentIndex(max(0, self.tl_combo.findData(timeline_mode())))
         self.tl_combo.setToolTip("Frame ticks of the active layer in the Timeline: when the Annotate tool is on or "
                                  "this panel is open / always / never (their look: Qt Preferences → Timeline)")
-        pytips.tag(self.tl_combo, "from qt_shell import annotate_panel; annotate_panel.set_timeline_mode('ALWAYS')")
+        pytips.tag(self.tl_combo, "from qt_shell import annotate_panel; annotate_panel.set_timeline_mode('ALWAYS')   # 'ACTIVE', 'ALWAYS', 'OFF'")
         self.tl_combo.activated.connect(lambda _i: set_timeline_mode(self.tl_combo.currentData()))
         dl.addRow("Timeline frames", self.tl_combo)
         v.addLayout(dl)
@@ -967,16 +992,7 @@ class AnnotationPanel(QtWidgets.QScrollArea):
             pl.set_thickness(lay, v)
 
     def _jump(self, direction):
-        lay = self.place().active()
-        if lay is None:
-            return
-        f = bpy.context.scene.frame_current
-        ks = keys(lay)
-        tgt = max((k for k in ks if k < f), default=None) if direction < 0 else \
-            min((k for k in ks if k > f), default=None)
-        if tgt is not None:
-            from . import bluepencil
-            bluepencil.go_to(tgt)
+        if self.place().jump(self.place().active(), direction) is not None:
             self.sync(force=True)
 
     def _toggle_blank(self):

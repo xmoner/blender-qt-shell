@@ -134,12 +134,16 @@ def apply(app):
     pal.setColor(QtGui.QPalette.ButtonText, col(C["text"]))
     pal.setColor(QtGui.QPalette.Highlight, col(C["highlight"]))
     pal.setColor(QtGui.QPalette.HighlightedText, col("#ffffff"))
-    pal.setColor(QtGui.QPalette.ToolTipBase, col(C["base"]))
+    pal.setColor(QtGui.QPalette.ToolTipBase, col(C["window"]))
     pal.setColor(QtGui.QPalette.ToolTipText, col(C["text"]))
     pal.setColor(QtGui.QPalette.PlaceholderText, col(C["dim"]))
     for role in (QtGui.QPalette.WindowText, QtGui.QPalette.Text, QtGui.QPalette.ButtonText):
         pal.setColor(QtGui.QPalette.Disabled, role, col("#6a6a6a"))
     app.setPalette(pal)
+    tip = QtGui.QPalette(pal)                # tooltips keep their own palette (Windows: light yellow) – dark like
+    tip.setColor(QtGui.QPalette.Window, col(C["window"]))          # the window (the Python tooltips need it)
+    tip.setColor(QtGui.QPalette.WindowText, col(C["text"]))
+    QtWidgets.QToolTip.setPalette(tip)
     font = app.font()
     font.setPointSizeF(_base_pt * ui_scale * font_scale)
     app.setFont(font)
