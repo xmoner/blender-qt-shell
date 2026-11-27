@@ -8,7 +8,7 @@ Don't dig through old chat history.
 - **Qt Shell** – Blender add-on that replaces Blender's UI with a PySide6 (Qt) window.
   Repo: `github.com/xmoner/blender-qt-shell`, branch `main`, add-on code in `qt_shell/`.
 - Target: **Blender 5.2 LTS, Windows 11** (owner's PC). `bl_info` minimum 4.2.
-- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.128.0 on 2026-11-27; the status bar shows the running version).
+- Current version: see `bl_info["version"]` in `qt_shell/__init__.py` (0.128.1 on 2026-11-27; the status bar shows the running version).
 
 ## Owner's preferences (always)
 - **Reply in Czech.** Code, comments, docs, commit messages and release notes in **English**.
@@ -176,6 +176,7 @@ Don't dig through old chat history.
 - The app stylesheet sets `qproperty-iconSize` on every button at polish – a custom icon size goes into the button's own stylesheet (`setIconSize` alone is undone at first show).
 - A binding's widget may already be deleted when a callback (colour tool) still holds the binding – `Binding.widget_ok()` (shiboken6.isValid) before touching it. Test sweeps over `findChildren`: `sendPostedEvents(None, QEvent.DeferredDelete)` first, or stale (rebuilt) widgets get clicked too.
 - Qt `clicked(bool)` lands in the first optional parameter of a connected method – connect via `lambda _=False: obj.method()`.
+- A widget's style sheet also styles its tooltip – never `*{background: …}` on a widget, name the class (`QAbstractButton{…}`).
 - Qt SVG Tiny: no `dominant-baseline`, no `hsl()`, `<defs>` before use.
 - Operators clicked in Blender's Preferences window can't `temp_override` (temporary screen) – start Qt work from a timer.
 - Built-in shelf buttons live in the owner's shelves.json – fix them through `shelf_presets.UPGRADES` (exact old command → new), never by rewriting the file.

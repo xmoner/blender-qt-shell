@@ -613,9 +613,10 @@ class ColorBinding(Binding):
             return
         c = self._qcolor()
         txt = "#000" if c.lightnessF() > 0.55 else "#fff"
-        # keeps its colour; under the mouse only the frame lights up
-        self.widget.setStyleSheet(f"*{{background:{c.name()}; color:{txt}; border:1px solid #111;}}"
-                                  f"*:hover{{border:1px solid {theme.HOVER['press_border']};}}")
+        # keeps its colour; under the mouse only the frame lights up. Selector QAbstractButton, not "*": the
+        # tooltip label takes the style sheet of the widget it belongs to – "*" painted the tooltip in the colour.
+        self.widget.setStyleSheet(f"QAbstractButton{{background:{c.name()}; color:{txt}; border:1px solid #111;}}"
+                                  f"QAbstractButton:hover{{border:1px solid {theme.HOVER['press_border']};}}")
 
 
 class VectorBinding(Binding):
