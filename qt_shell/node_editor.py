@@ -655,8 +655,9 @@ class NodeItem(QtWidgets.QGraphicsItem):
                                 ch._last_pos = QtCore.QPointF(ch.pos())
                     finally:
                         ed._fitting = False
-            elif not getattr(ed, "_fitting", False) and getattr(self, "parent_name", None):
-                ed.fit_frames()
+            elif not getattr(ed, "_fitting", False) and getattr(self, "parent_name", None) \
+                    and not ed.dragging():
+                ed.fit_frames()        # while dragging the frames stay – the drop decides (Nuke backdrops)
             ed.update_links()
         return super().itemChange(change, value)
 
@@ -963,6 +964,10 @@ class NodeView(QtWidgets.QGraphicsView):
             for x, pos in g["start"]:
                 x.setPos(pos)
         self.editor.commit_positions()
+        if ok:
+            self.editor.attach_to_frames([x for x, _p in g["start"]])
+        else:
+            self.editor.fit_frames()
         if ok and li is not None:
             self.editor.insert_on_link(item, li)
 
@@ -1820,38 +1825,75 @@ class NodeEditor(QtWidgets.QWidget):
         self.rebuild()
         return ok
 
+    def dragging(self):
+        v = getattr(self, "view", None)
+        return v is not None and (v._moving or v._grab is not None)
+
     def attach_to_frames(self, items):
-        """Like Blender: nodes dropped inside a frame join it (the innermost frame under the node's centre)."""
+        """After a drag (Nuke backdrops / Blender frames): every moved node or frame belongs to the innermost
+        frame it was dropped in – a node by the centre of its header, a frame when it lies wholly inside –
+        and leaves its frame when dragged out of it (Alt+P not needed). Locations are kept."""
         tree = self.tree
         if tree is None:
             return []
-        frames = [f for f in self.items.values() if f.kind == "frame"]
-        done = []
-        for it in items:
-            if it.kind == "frame" or it.node is None:
-                continue
+        moved = [it for it in items if it.node is not None]
+        names = {it.name for it in moved}
+        frames = [f for f in self.items.values() if f.kind == "frame" and f.node is not None]
+        done, emptied = [], []
+        for it in moved:
+            if it.parent_name in names:
+                continue                       # moved together with its frame
+            own = {it.name} | {c.name for c in self.frame_children(it.name, True)} if it.kind == "frame" \
+                else {it.name}
+            r = QtCore.QRectF(it.pos(), QtCore.QSizeF(it.w, it.h))
             c = it.mapToScene(QtCore.QPointF(it.w / 2, min(it.h, HEADER_H) / 2))
-            hits = [f for f in frames if f.sceneBoundingRect().contains(c)]
-            if not hits:
+            hits = []
+            for f in frames:
+                if f.name in own or f.name in names:
+                    continue
+                fr = QtCore.QRectF(f.pos(), QtCore.QSizeF(f.w, f.h))
+                if (fr.contains(r.adjusted(2, 2, -2, -2)) if it.kind == "frame" else fr.contains(c)):
+                    hits.append(f)
+            target = min(hits, key=lambda f: f.w * f.h) if hits else None
+            new = target.name if target is not None else None
+            if new == it.parent_name:
                 continue
-            target = max(hits, key=self._depth)
-            if target.name == it.parent_name:
-                continue
-            node, fr = it.node, target.node
-            if node is None or fr is None:
-                continue
+            old = self.items.get(it.parent_name) if it.parent_name else None
+            node = it.node
             try:
                 ax, ay = abs_location(node)
-                node.parent = fr
-                fx, fy = abs_location(fr)
+                if target is not None:
+                    node.parent = target.node
+                    fx, fy = abs_location(target.node)
+                else:
+                    node.parent = None
+                    fx, fy = 0.0, 0.0
                 node.location = (ax - fx, ay - fy)
+                it.parent_name = new
                 done.append(node.name)
+                if old is not None and old not in emptied:
+                    emptied.append(old)
             except Exception as ex:
-                bridge.log(f"Attach to frame: {ex}", "WARNING")
+                bridge.log(f"Frame of {it.name}: {ex}", "WARNING")
+        # a frame left without children keeps the place and size it had on screen
+        for fr in emptied:
+            if self.frame_children(fr.name) or fr.node is None:
+                continue
+            try:
+                n = fr.node
+                px, py = 0.0, 0.0
+                if n.parent is not None:
+                    px, py = abs_location(n.parent)
+                n.location = (fr.pos().x() - px, -fr.pos().y() - py)
+                n.width, n.height = max(60.0, fr.w), max(40.0, fr.h)
+            except Exception as ex:
+                bridge.log(f"Frame size: {ex}", "WARNING")
         if done:
-            bridge.undo_push("Attach to Frame")
+            bridge.undo_push("Frame Membership")
             self._sig = None
             QtCore.QTimer.singleShot(0, self._rebuild_now)
+        else:
+            self.fit_frames()
         return done
 
     def make_group(self):
