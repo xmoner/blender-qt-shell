@@ -296,6 +296,23 @@ def _iface_icon(item):
     return QtGui.QIcon(pm)
 
 
+FRAME_MARGIN = 20
+
+
+def _status(text):
+    try:
+        from . import app
+        app._win.statusBar().showMessage(text, 5000)
+    except Exception:
+        pass
+
+
+def keymap_text(aid):
+    from . import keymap
+    k = keymap.keys(aid)
+    return k[0] if k else ""
+
+
 # ---------------------------------------------------------------- graphics items
 class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
@@ -304,6 +321,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         self._node = node
         self.name = node.name
         self._ptr = node.as_pointer()
+        self.parent_name = node.parent.name if getattr(node, "parent", None) is not None else None
         self.kind = "reroute" if node.bl_idname == "NodeReroute" else (
             "frame" if node.bl_idname == "NodeFrame" else "node")
         self.setFlags(QtWidgets.QGraphicsItem.ItemIsMovable | QtWidgets.QGraphicsItem.ItemIsSelectable
@@ -536,9 +554,36 @@ class NodeItem(QtWidgets.QGraphicsItem):
         return self.mapToScene(item[0])
 
     def itemChange(self, change, value):
-        if change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
-            self.editor.update_links()
+        if change == QtWidgets.QGraphicsItem.ItemPositionHasChanged and self.scene() is None:
+            self._last_pos = QtCore.QPointF(self.pos())        # still being built
+        elif change == QtWidgets.QGraphicsItem.ItemPositionHasChanged:
+            ed = self.editor
+            last = getattr(self, "_last_pos", None)
+            self._last_pos = QtCore.QPointF(self.pos())
+            if self.kind == "frame" and last is not None and not getattr(ed, "_fitting", False):
+                # a frame carries its nodes (Blender / Nuke backdrop): move the children with it
+                d = self.pos() - last
+                if d.x() or d.y():
+                    ed._fitting = True
+                    try:
+                        for ch in ed.frame_children(self.name, deep=True):
+                            if not ch.isSelected():          # selected ones move with the drag already
+                                ch.setPos(ch.pos() + d)
+                                ch._last_pos = QtCore.QPointF(ch.pos())
+                    finally:
+                        ed._fitting = False
+            elif not getattr(ed, "_fitting", False) and getattr(self, "parent_name", None):
+                ed.fit_frames()
+            ed.update_links()
         return super().itemChange(change, value)
+
+    def set_frame_rect(self, rect):
+        """Frame (shrink) around its nodes: position + size in scene coordinates."""
+        self.prepareGeometryChange()
+        self.w, self.h = rect.width(), rect.height()
+        self.setPos(rect.topLeft())
+        self._last_pos = QtCore.QPointF(self.pos())
+        self.update()
 
 
 # ---------------------------------------------------------------- insert a node into a link (like Blender)
@@ -963,6 +1008,7 @@ class NodeView(QtWidgets.QGraphicsView):
             sel = [it for it in self.scene().selectedItems() if isinstance(it, NodeItem)]
             moved = sel[0] if len(sel) == 1 else None
             self.editor.commit_positions()
+            self.editor.attach_to_frames(sel)
         self.editor.commit_selection()
         if li is not None and moved is not None:
             self.editor.insert_on_link(moved, li)
@@ -1012,6 +1058,14 @@ class NodeView(QtWidgets.QGraphicsView):
             # node search at the mouse (like Shift+A)
             gpos = QtGui.QCursor.pos()
             self.editor.add_node_popup(gpos, self.mapToScene(self.mapFromGlobal(gpos)))
+        elif H("node.make_group"):
+            self.editor.make_group()
+        elif H("node.ungroup"):
+            self.editor.ungroup()
+        elif H("node.join_frame"):
+            self.editor.join_frame()
+        elif H("node.remove_from_frame"):
+            self.editor.remove_from_frame()
         elif H("node.group"):
             # Ctrl+Tab: into the selected group node / out of the group
             sel = [it for it in self.scene().selectedItems() if isinstance(it, NodeItem)]
@@ -1061,6 +1115,14 @@ class NodeView(QtWidgets.QGraphicsView):
         m.addSeparator()
         act("Mute", "node.mute", lambda: ed.toggle("mute"), "MUTE_IPO_ON", n > 0)
         act("Collapse", "node.hide", lambda: ed.toggle("hide"), "HIDE_ON", n > 0)
+        m.addSeparator()
+        has_group = any(getattr(x.node, "node_tree", None) is not None for x in sel)
+        has_parent = any(getattr(x, "parent_name", None) for x in sel)
+        act("Make Group", "node.make_group", ed.make_group, "NODETREE", n > 0)
+        act("Ungroup", "node.ungroup", ed.ungroup, "NODE_UNGROUP" if blicons.has("NODE_UNGROUP") else None, has_group)
+        act("Join in New Frame", "node.join_frame", ed.join_frame, "NODE_FRAME" if blicons.has("NODE_FRAME") else None,
+            n > 0)
+        act("Remove from Frame", "node.remove_from_frame", ed.remove_from_frame, None, has_parent)
         m.addSeparator()
         act("Add Node…", "node.add", lambda: ed.add_node_popup(gpos or QtGui.QCursor.pos(), sp), "ADD")
         act("Select All", "node.select_all", lambda: (
@@ -1458,6 +1520,7 @@ class NodeEditor(QtWidgets.QWidget):
             li = LinkItem(lk, a, b)
             self.scene.addItem(li)
             self.links.append(li)
+        self.fit_frames()
         if not keep_sig:
             self._sig = self.signature(tree)
         if self._first_frame:
@@ -1497,13 +1560,187 @@ class NodeEditor(QtWidgets.QWidget):
                 pass
         self.view.viewport().update()
 
+    # --- frames (Nuke backdrops) and groups
+    def frame_children(self, frame_name, deep=False):
+        out = [it for it in self.items.values() if getattr(it, "parent_name", None) == frame_name]
+        if deep:
+            for it in list(out):
+                if it.kind == "frame":
+                    out += self.frame_children(it.name, True)
+        return out
+
+    def _depth(self, it):
+        d, p = 0, getattr(it, "parent_name", None)
+        while p and d < 32:
+            d += 1
+            p = getattr(self.items.get(p), "parent_name", None)
+        return d
+
+    def _fits_children(self, it):
+        node = it.node
+        return node is not None and bool(getattr(node, "shrink", True)) and bool(self.frame_children(it.name))
+
+    def fit_frames(self):
+        """Frames with Shrink on are drawn around their nodes like Blender (Blender computes that only while
+        drawing its own editor, so node.width / height are stale): inner frames first."""
+        frames = [it for it in self.items.values() if it.kind == "frame"]
+
+        def depth(it):
+            d, p = 0, it.parent_name
+            while p and d < 32:
+                d += 1
+                p = getattr(self.items.get(p), "parent_name", None)
+            return d
+        self._fitting = True
+        try:
+            for fr in sorted(frames, key=depth, reverse=True):
+                if not self._fits_children(fr):
+                    continue
+                rect = QtCore.QRectF()
+                for ch in self.frame_children(fr.name):
+                    r = QtCore.QRectF(ch.pos(), QtCore.QSizeF(ch.w, ch.h))
+                    rect = r if rect.isNull() else rect.united(r)
+                label = 0
+                try:
+                    label = int(getattr(fr.node, "label_size", 20))
+                except Exception:
+                    pass
+                fr.set_frame_rect(rect.adjusted(-FRAME_MARGIN, -FRAME_MARGIN - max(14, label + 6),
+                                                FRAME_MARGIN, FRAME_MARGIN))
+        finally:
+            self._fitting = False
+
+    def _select_in_blender(self):
+        tree = self.tree
+        sel = [it.name for it in self.scene.selectedItems() if isinstance(it, NodeItem) and it.node is not None]
+        for n in tree.nodes:
+            n.select = n.name in sel
+        act = tree.nodes.get(self.active_name) if self.active_name else None
+        if act is not None and act.name in sel:
+            tree.nodes.active = act
+        elif sel:
+            tree.nodes.active = tree.nodes[sel[0]]
+        return sel
+
+    def _node_op(self, op, label, **kw):
+        """Runs Blender's node operator on the selection (in a borrowed node editor showing this tree)."""
+        tree = self.tree
+        if tree is None:
+            return False
+        self.commit_positions()
+        self._select_in_blender()
+        ok = False
+        try:
+            with node_space_context(tree):
+                fn = getattr(bpy.ops.node, op)
+                if fn.poll():
+                    ok = "FINISHED" in fn(**kw)
+        except Exception as ex:
+            bridge.log(f"{label}: {ex}", "WARNING")
+        if ok:
+            bridge.undo_push(label)
+        self._sig = None
+        self.rebuild()
+        return ok
+
+    def attach_to_frames(self, items):
+        """Like Blender: nodes dropped inside a frame join it (the innermost frame under the node's centre)."""
+        tree = self.tree
+        if tree is None:
+            return []
+        frames = [f for f in self.items.values() if f.kind == "frame"]
+        done = []
+        for it in items:
+            if it.kind == "frame" or it.node is None:
+                continue
+            c = it.mapToScene(QtCore.QPointF(it.w / 2, min(it.h, HEADER_H) / 2))
+            hits = [f for f in frames if f.sceneBoundingRect().contains(c)]
+            if not hits:
+                continue
+            target = max(hits, key=self._depth)
+            if target.name == it.parent_name:
+                continue
+            node, fr = it.node, target.node
+            if node is None or fr is None:
+                continue
+            try:
+                ax, ay = abs_location(node)
+                node.parent = fr
+                fx, fy = abs_location(fr)
+                node.location = (ax - fx, ay - fy)
+                done.append(node.name)
+            except Exception as ex:
+                bridge.log(f"Attach to frame: {ex}", "WARNING")
+        if done:
+            bridge.undo_push("Attach to Frame")
+            self._sig = None
+            QtCore.QTimer.singleShot(0, self._rebuild_now)
+        return done
+
+    def make_group(self):
+        """Ctrl+G like Blender / Nuke: the selected nodes become a node group (one group node, inputs / outputs
+        for the links that cross it) – and the editor goes into it."""
+        tree = self.tree
+        if tree is None:
+            return None
+        before = {n.name for n in tree.nodes}
+        if not [it for it in self.scene.selectedItems() if isinstance(it, NodeItem)]:
+            _status("Select the nodes to group first.")
+            return None
+        if not self._node_op("group_make", "Make Group"):
+            _status("These nodes can't be grouped (Group Input / Output or zones?).")
+            return None
+        grp = next((n for n in tree.nodes if n.name not in before and getattr(n, "node_tree", None) is not None),
+                   None)
+        if grp is not None:
+            _status(f"Group: {grp.node_tree.name} – {keymap_text('node.group')} goes in / out.")
+            self.enter_group(grp)
+        return grp
+
+    def ungroup(self):
+        """Ctrl+Alt+G: the selected group nodes are replaced by their nodes."""
+        sel = [it for it in self.scene.selectedItems() if isinstance(it, NodeItem)
+               and getattr(it.node, "node_tree", None) is not None]
+        if not sel:
+            _status("Select a group node to ungroup.")
+            return False
+        return self._node_op("group_ungroup", "Ungroup")
+
+    def join_frame(self):
+        """Ctrl+J like Blender (Nuke: Backdrop): a new frame around the selected nodes."""
+        tree = self.tree
+        if tree is None:
+            return None
+        before = {n.name for n in tree.nodes}
+        if not [it for it in self.scene.selectedItems() if isinstance(it, NodeItem)]:
+            _status("Select the nodes to put in a frame first.")
+            return None
+        if not self._node_op("join", "Join in New Frame"):
+            return None
+        fr = next((n for n in tree.nodes if n.name not in before and n.bl_idname == "NodeFrame"), None)
+        if fr is not None:
+            for n in tree.nodes:
+                n.select = n == fr
+            tree.nodes.active = fr
+            self.active_name = fr.name
+            self.rebuild()
+        return fr
+
+    def remove_from_frame(self):
+        """Alt+P like Blender: the selected nodes leave their frame."""
+        return self._node_op("detach", "Remove from Frame")
+
     def commit_positions(self):
         changed = False
-        for it in self.items.values():
+        # frames first (outer before inner): a child's place is relative to its frame in Blender
+        order = sorted(self.items.values(), key=lambda it: (it.kind != "frame", self._depth(it)))
+        for it in order:
             try:
                 node = it.node
                 if node is None:
                     continue
+                if it.kind == "frame" and self._fits_children(it):
+                    continue          # drawn around its nodes – they carry the movement
                 px, py = it.pos().x(), -it.pos().y()
                 ax, ay = abs_location(node)
                 if abs(px - ax) > 0.01 or abs(py - ay) > 0.01:
@@ -2082,6 +2319,17 @@ class NodeEditor(QtWidgets.QWidget):
             if b is not None:
                 self.side_bindings.append(b)
                 lay.addWidget(rw.labeled_row(label, b.widget))
+        # Blender's Node → Color panel (a frame's / backdrop's colour, a node's header colour)
+        cb, _l = rw.make_binding(node, "use_custom_color", text="Color", on_change=changed)
+        col, _l2 = rw.make_binding(node, "color", on_change=changed)
+        if cb is not None and col is not None:
+            self.side_bindings += [cb, col]
+            row = QtWidgets.QWidget(host)
+            hl = QtWidgets.QHBoxLayout(row)
+            hl.setContentsMargins(0, 0, 0, 0)
+            hl.addWidget(cb.widget)
+            hl.addWidget(col.widget, 1)
+            lay.addWidget(row)
         props = [p.identifier for p in node.bl_rna.properties
                  if p.identifier not in base_node_props() and not p.is_readonly]
         if props:
