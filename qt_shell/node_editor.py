@@ -313,6 +313,76 @@ def keymap_text(aid):
     return k[0] if k else ""
 
 
+def frame_sig(n):
+    """What changes a frame's look: size, label size, shrink, text (and its lines), colour."""
+    if n.bl_idname != "NodeFrame":
+        return None
+    t = getattr(n, "text", None)
+    try:
+        tl = (t.name, tuple(ln.body for ln in t.lines)) if t is not None else None
+    except Exception:
+        tl = None
+    return (round(getattr(n, "height", 0)), getattr(n, "label_size", 0), getattr(n, "shrink", True), tl,
+            n.use_custom_color, tuple(round(c, 3) for c in n.color))
+
+
+def frame_label_size(node):
+    try:
+        return max(8, min(64, int(getattr(node, "label_size", 20))))
+    except Exception:
+        return 20
+
+
+def frame_header(node):
+    """Height of a frame's label strip (Blender: the label at its Label Size + a margin)."""
+    return frame_label_size(node) + 10
+
+
+def paint_frame(p, node, w, h, outline):
+    """A frame / backdrop like Blender: colour, label at Label Size (centred at the top), the Text datablock's
+    lines in the body."""
+    base = header_color(node) if node.use_custom_color else QtGui.QColor(60, 60, 60)
+    fill = QtGui.QColor(base)
+    fill.setAlpha(150)
+    rect = QtCore.QRectF(0, 0, w, h)
+    p.setPen(QtGui.QPen(outline, 1.5))
+    p.setBrush(fill)
+    p.drawRoundedRect(rect, 4, 4)
+    light = base.lightnessF() > 0.55
+    txt_col = QtGui.QColor("#202020") if light else QtGui.QColor("#e6e6e6")
+    size = frame_label_size(node)
+    f = QtGui.QFont(p.font())
+    f.setPixelSize(size)
+    p.setFont(f)
+    p.setPen(txt_col)
+    head = frame_header(node)
+    label = node.label or node.name
+    p.save()
+    p.setClipRect(rect.adjusted(2, 2, -2, -2))
+    p.drawText(QtCore.QRectF(6, 2, w - 12, head), QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter, label)
+    text = getattr(node, "text", None)
+    if text is not None:
+        try:
+            lines = [ln.body for ln in text.lines]
+        except Exception:
+            lines = []
+        if lines:
+            ft = QtGui.QFont(f)
+            ft.setPixelSize(max(8, min(size, 24)))      # Blender caps the body text size
+            p.setFont(ft)
+            lh = QtGui.QFontMetricsF(ft).lineSpacing()
+            y = head + 4
+            for ln in lines:
+                if y + lh > h - 2:
+                    break
+                p.drawText(QtCore.QRectF(8, y, w - 16, lh), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, ln)
+                y += lh
+    p.restore()
+
+
+FRAME_EDGE = 8      # px (scene) at a frame's right / bottom border that resize it
+
+
 # ---------------------------------------------------------------- graphics items
 class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
@@ -419,14 +489,7 @@ class NodeItem(QtWidgets.QGraphicsItem):
         active = self.editor.active_name == self.name
         outline = QtGui.QColor("#ffffff") if active else (QtGui.QColor("#ffa033") if sel else QtGui.QColor("#111111"))
         if self.kind == "frame":
-            c = header_color(node) if node.use_custom_color else QtGui.QColor(60, 60, 60)
-            c.setAlpha(110)
-            p.setPen(QtGui.QPen(outline, 1.5))
-            p.setBrush(c)
-            p.drawRoundedRect(QtCore.QRectF(0, 0, self.w, self.h), 4, 4)
-            p.setPen(QtGui.QColor("#dddddd"))
-            p.drawText(QtCore.QRectF(6, 2, self.w - 12, 20), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter,
-                       node.label or node.name)
+            paint_frame(p, node, self.w, self.h, outline)
             return
         if self.kind == "reroute":
             col = socket_color(node.outputs[0]) if len(node.outputs) else QtGui.QColor("#888")
@@ -701,6 +764,7 @@ class NodeView(QtWidgets.QGraphicsView):
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setBackgroundBrush(QtGui.QColor("#1d1d1d"))
         self._pan = None
+        self._resize = None      # (frame item, edge, start scene pos, w, h) while a frame border is dragged
         self._drag_link = None   # (node name, is_out, socket identifier, temp_path_item) – never the socket object
         self._moving = False
         self._grab = None        # a new node following the mouse until a click (like Blender after Shift+A)
@@ -896,6 +960,12 @@ class NodeView(QtWidgets.QGraphicsView):
         if ev.button() == QtCore.Qt.LeftButton:
             sp = self.mapToScene(ev.position().toPoint())
             it = self._item_at(ev.position().toPoint())
+            edge = self._frame_edge(sp)
+            if edge is not None:
+                fr, kind = edge
+                self.editor.set_active(fr)
+                self._resize = (fr, kind, sp, fr.w, fr.h)
+                return
             if it is not None:
                 hit = it.socket_at(sp)
                 if hit is not None:
@@ -955,7 +1025,65 @@ class NodeView(QtWidgets.QGraphicsView):
         a = a or sp
         path.setPath(bezier(a, sp) if is_out else bezier(sp, a))
 
+    def _frame_edge(self, sp):
+        """(frame item, 'r' / 'b' / 'rb') when sp is on a frame's right / bottom border (Blender resizes there)."""
+        for it in self.scene().items(sp):
+            if isinstance(it, NodeItem) and it.kind == "frame":
+                r = QtCore.QRectF(it.pos(), QtCore.QSizeF(it.w, it.h))
+                if not r.adjusted(-2, -2, 2, 2).contains(sp):
+                    continue
+                right = abs(sp.x() - r.right()) <= FRAME_EDGE
+                bottom = abs(sp.y() - r.bottom()) <= FRAME_EDGE
+                if right or bottom:
+                    return it, ("r" if right else "") + ("b" if bottom else "")
+            elif isinstance(it, NodeItem):
+                return None            # a node over the frame's border wins
+        return None
+
+    def resize_frame(self, fr, w, h):
+        """Frame size like Blender's border drag: Shrink goes off, width / height are stored."""
+        node = fr.node
+        if node is None:
+            return
+        try:
+            if getattr(node, "shrink", False):
+                node.shrink = False
+                x, y = fr.pos().x(), -fr.pos().y()
+                ax, ay = abs_location(node)
+                dx, dy = x - ax, y - ay
+                node.location = (node.location[0] + dx, node.location[1] + dy)
+                # children are placed relative to their frame: keep them where they are
+                for ch in self.editor.tree.nodes:
+                    if ch.parent == node:
+                        ch.location = (ch.location[0] - dx, ch.location[1] - dy)
+            node.width = max(60.0, w)
+            node.height = max(40.0, h)
+        except Exception as ex:
+            bridge.log(f"Frame size: {ex}", "WARNING")
+            return
+        fr.prepareGeometryChange()
+        fr.w, fr.h = float(node.width), float(node.height)
+        fr.update()
+
     def mouseMoveEvent(self, ev):
+        rs = getattr(self, "_resize", None)
+        if rs is not None:
+            fr, kind, sp0, w0, h0 = rs
+            d = self.mapToScene(ev.position().toPoint()) - sp0
+            fr.prepareGeometryChange()
+            fr.w = max(60.0, w0 + d.x()) if "r" in kind else fr.w
+            fr.h = max(40.0, h0 + d.y()) if "b" in kind else fr.h
+            fr.update()
+            return
+        if not ev.buttons():
+            e = self._frame_edge(self.mapToScene(ev.position().toPoint()))
+            if e is not None:
+                self.viewport().setCursor({"r": QtCore.Qt.SizeHorCursor, "b": QtCore.Qt.SizeVerCursor,
+                                           "rb": QtCore.Qt.SizeFDiagCursor}[e[1]])
+                self._edge_cursor = True
+            elif getattr(self, "_edge_cursor", False):
+                self.viewport().unsetCursor()
+                self._edge_cursor = False
         if self._pan is not None:
             d = ev.position() - self._pan
             self._pan = ev.position()
@@ -977,6 +1105,15 @@ class NodeView(QtWidgets.QGraphicsView):
                 self._set_insert(None)
 
     def mouseReleaseEvent(self, ev):
+        rs = getattr(self, "_resize", None)
+        if rs is not None and ev.button() == QtCore.Qt.LeftButton:
+            self._resize = None
+            fr = rs[0]
+            self.resize_frame(fr, fr.w, fr.h)
+            bridge.undo_push("Resize Frame")
+            self.editor._sig = None
+            self.editor._timer.start()
+            return
         if self._pan is not None and ev.button() == QtCore.Qt.MiddleButton:
             self._pan = None
             self.unsetCursor()
@@ -1451,7 +1588,7 @@ class NodeEditor(QtWidgets.QWidget):
                           tuple(s.identifier for s in n.inputs if getattr(s, "enabled", True) and not s.hide),
                           tuple(s.identifier for s in n.outputs if getattr(s, "enabled", True) and not s.hide),
                           tuple(str(getattr(n, p.identifier)) for p in node_buttons(n)),
-                          socket_ptrs(n)))
+                          socket_ptrs(n), frame_sig(n)))
         for lk in tree.links:
             parts.append((lk.from_node.name, lk.from_socket.identifier, lk.to_node.name,
                           lk.to_socket.identifier, getattr(lk, "is_muted", False),
@@ -1600,12 +1737,7 @@ class NodeEditor(QtWidgets.QWidget):
                 for ch in self.frame_children(fr.name):
                     r = QtCore.QRectF(ch.pos(), QtCore.QSizeF(ch.w, ch.h))
                     rect = r if rect.isNull() else rect.united(r)
-                label = 0
-                try:
-                    label = int(getattr(fr.node, "label_size", 20))
-                except Exception:
-                    pass
-                fr.set_frame_rect(rect.adjusted(-FRAME_MARGIN, -FRAME_MARGIN - max(14, label + 6),
+                fr.set_frame_rect(rect.adjusted(-FRAME_MARGIN, -FRAME_MARGIN - frame_header(fr.node),
                                                 FRAME_MARGIN, FRAME_MARGIN))
         finally:
             self._fitting = False
