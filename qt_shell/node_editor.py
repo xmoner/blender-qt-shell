@@ -242,6 +242,16 @@ def _copy_nodes(tree, names):
     return bool(made)
 
 
+def new_link(tree, out_s, in_s):
+    """links.new like Blender's node editor: a link to the empty (virtual) socket of a Group Input / Group
+    Output – or of a node with dynamic sockets (Bake, Capture Attribute, zones …) – adds the matching socket
+    first (handle_dynamic_sockets, Blender 4.1+); without it the link goes to the virtual socket and is red."""
+    try:
+        return tree.links.new(out_s, in_s, handle_dynamic_sockets=True)
+    except TypeError:
+        return tree.links.new(out_s, in_s)
+
+
 # ---------------------------------------------------------------- graphics items
 class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
@@ -874,7 +884,7 @@ class NodeView(QtWidgets.QGraphicsView):
                 if hit is not None and hit[0] != is_out:
                     out_s, in_s = (sock, hit[1]) if is_out else (hit[1], sock)
                     try:
-                        self.editor.tree.links.new(out_s, in_s)
+                        new_link(self.editor.tree, out_s, in_s)
                     except Exception as ex:
                         bridge.log(str(ex), "ERROR")
             bridge.undo_push("Link")
