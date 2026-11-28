@@ -657,6 +657,9 @@ class VectorBinding(Binding):
                 b.widget.setMaximumWidth(theme.px(28))
             else:
                 b = NumberBinding(data, prop_id, rp, labels[i] if i < 4 else str(i), on_change, index=i)
+            # the parts read the data through this binding – so a `resolve` given to it later (Geometry Nodes
+            # modifier inputs …) covers them too; a part that kept the struct crashed Blender (0.130.1)
+            b.resolve = lambda s=self: s.data
             self.parts.append(b)
             lay.addWidget(b.widget)
         if rp.type == "BOOLEAN":
