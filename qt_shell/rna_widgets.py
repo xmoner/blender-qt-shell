@@ -796,13 +796,86 @@ def _item_label(item):
     return str(item)
 
 
+class _IDCombo(NoWheelCombo):
+    """Combo of an ID pointer field that, like Blender's ID fields, can be dragged (the datablock it shows goes
+    to the 3D views / Node editor / other ID fields) and accepts a dropped datablock of its type. The list opens
+    on release so a press can become a drag."""
+
+    def __init__(self, binding):
+        super().__init__()
+        self._binding = binding
+        self._press = None
+        self.setAcceptDrops(True)
+
+    def _current(self):
+        b = self._binding
+        try:
+            v = getattr(b.data, b.prop_id)
+            return v if isinstance(v, bpy.types.ID) else None
+        except Exception:
+            return None
+
+    def mousePressEvent(self, ev):
+        if ev.button() == QtCore.Qt.LeftButton and self.isEnabled() and self._current() is not None:
+            self._press = ev.position().toPoint()
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):
+        if self._press is not None and (ev.buttons() & QtCore.Qt.LeftButton) and \
+                (ev.position().toPoint() - self._press).manhattanLength() >= QtWidgets.QApplication.startDragDistance():
+            self._press = None
+            from . import iddrop
+            iddrop.start_drag(self, [self._current()])
+            return
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        if self._press is not None and ev.button() == QtCore.Qt.LeftButton:
+            self._press = None
+            self.showPopup()
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
+
+    def _dropped(self, ev):
+        from . import iddrop
+        b = self._binding
+        if b.is_string or not self.isEnabled():
+            return None
+        return iddrop.field_accepts(b.rp, iddrop.decode(ev.mimeData()))
+
+    def dragEnterEvent(self, ev):
+        if ev.source() is not self and self._dropped(ev) is not None:
+            ev.setDropAction(QtCore.Qt.LinkAction)
+            ev.accept()
+        else:
+            ev.ignore()
+
+    def dragMoveEvent(self, ev):
+        ev.setDropAction(QtCore.Qt.LinkAction)
+        ev.accept()
+
+    def dropEvent(self, ev):
+        i = self._dropped(ev)
+        ev.setDropAction(QtCore.Qt.LinkAction)
+        ev.accept()
+        if i is not None:
+            b = self._binding
+            if _safe_set(b.data, b.prop_id, i):
+                b.changed()
+                b.refresh()
+
+
 class IDBinding(Binding):
     def __init__(self, data, prop_id, rp, on_change, search_data=None, search_prop=None):
         super().__init__(data, prop_id, on_change)
         self.search = (search_data, search_prop) if search_data is not None else None
         self.coll = None if self.search else id_collection_for(rp.fixed_type.identifier)
         self.is_string = rp.type == "STRING"
-        w = NoWheelCombo()
+        self.rp = rp
+        w = _IDCombo(self)
         w.activated.connect(self._activated)
         self.widget = w
         self._names = None

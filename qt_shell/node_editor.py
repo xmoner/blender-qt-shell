@@ -607,6 +607,28 @@ class NodeView(QtWidgets.QGraphicsView):
         self._grab = None        # a new node following the mouse until a click (like Blender after Shift+A)
         self._insert_li = None   # the link a dragged node would be inserted into (highlighted)
         self.viewport().setMouseTracking(True)
+        self.setAcceptDrops(True)          # datablocks from the Outliner / Properties → nodes (iddrop)
+
+    def dragEnterEvent(self, ev):
+        from . import iddrop
+        if iddrop.node_editor_accepts(self.editor.tree, iddrop.decode(ev.mimeData())):
+            ev.setDropAction(QtCore.Qt.CopyAction)
+            ev.accept()
+        else:
+            ev.ignore()
+
+    def dragMoveEvent(self, ev):
+        ev.setDropAction(QtCore.Qt.CopyAction)
+        ev.accept()
+
+    def dropEvent(self, ev):
+        from . import iddrop
+        ids = iddrop.decode(ev.mimeData())
+        sp = self.mapToScene(ev.position().toPoint())
+        ev.setDropAction(QtCore.Qt.CopyAction)
+        ev.accept()
+        QtCore.QTimer.singleShot(0, lambda: (iddrop.drop_node_editor(self.editor, sp, ids),
+                                             self.editor.rebuild()))
 
     def drawBackground(self, p, rect):
         super().drawBackground(p, rect)

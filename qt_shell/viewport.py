@@ -136,6 +136,7 @@ class Viewport(QtWidgets.QWidget):
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setMouseTracking(True)
         self.setAttribute(QtCore.Qt.WA_OpaquePaintEvent)
+        self.setAcceptDrops(True)          # datablocks dragged from the Outliner / Properties (iddrop)
         # view
         self.target = Vector((0.0, 0.0, 0.0))
         self.dist = 15.0
@@ -1749,6 +1750,28 @@ class Viewport(QtWidgets.QWidget):
         sculptview.resized(self)
         self.request_redraw()
         super().resizeEvent(ev)
+
+    # ---- datablocks dropped from the Outliner / Properties (like Blender's 3D view drop boxes)
+    def dragEnterEvent(self, ev):
+        from . import iddrop
+        if iddrop.view3d_accepts(iddrop.decode(ev.mimeData())):
+            ev.setDropAction(QtCore.Qt.CopyAction)
+            ev.accept()
+        else:
+            ev.ignore()
+
+    def dragMoveEvent(self, ev):
+        ev.setDropAction(QtCore.Qt.CopyAction)
+        ev.accept()
+
+    def dropEvent(self, ev):
+        from . import iddrop
+        ids = iddrop.decode(ev.mimeData())
+        pos = ev.position()
+        ev.setDropAction(QtCore.Qt.CopyAction)
+        ev.accept()
+        # after the drag's own event loop has ended (operators from inside a drop can upset Qt's drag)
+        QtCore.QTimer.singleShot(0, lambda: iddrop.drop_qt_view(self, pos, ids))
 
     def mousePressEvent(self, ev):
         pos = ev.position()

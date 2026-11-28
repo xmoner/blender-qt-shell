@@ -188,6 +188,8 @@ class _Tree(QtWidgets.QTreeWidget):
         super().__init__(outliner)
         self.o = outliner
         self._mmb = None
+        self._lpress = None          # (press event copy, item): a press on an unselected row – selects on release
+        self._drag_items = None      # rows of a drag that didn't select them (read by Outliner._drag_keys)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
@@ -210,8 +212,21 @@ class _Tree(QtWidgets.QTreeWidget):
                 return
         if ev.button() == QtCore.Qt.MiddleButton:
             self._mmb = (pos, it)
+            self._drag_items = None
             ev.accept()
             return
+        self._drag_items = None
+        if ev.button() == QtCore.Qt.LeftButton and it is not None and col == 0 and not it.isSelected() \
+                and not (ev.modifiers() & (QtCore.Qt.ShiftModifier | QtCore.Qt.ControlModifier)) \
+                and it.flags() & QtCore.Qt.ItemIsDragEnabled and self.o.ids_of([it]):
+            x0 = self.visualRect(self.indexFromItem(it, 0)).x()
+            if pos.x() >= x0:
+                # like Blender's Outliner: a drag doesn't select (the Node editor / Properties keep showing the
+                # active object while it is dragged there); a click selects on release
+                self._lpress = (QtGui.QMouseEvent(ev.type(), ev.position(), ev.globalPosition(), ev.button(),
+                                                  ev.buttons(), ev.modifiers()), it)
+                ev.accept()
+                return
         super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
@@ -229,11 +244,32 @@ class _Tree(QtWidgets.QTreeWidget):
                 if it.flags() & QtCore.Qt.ItemIsDragEnabled:
                     self.startDrag(QtCore.Qt.MoveAction | QtCore.Qt.CopyAction)
             return
+        if self._lpress is not None:
+            pe, it = self._lpress
+            if (ev.buttons() & QtCore.Qt.LeftButton) and _alive(it) and \
+                    (pos - pe.position().toPoint()).manhattanLength() >= QtWidgets.QApplication.startDragDistance():
+                self._lpress = None
+                ids = self.o.ids_of([it])
+                if ids:
+                    from . import iddrop
+                    self._drag_items = [it]
+                    iddrop.start_drag(self, ids, self.mimeData([it]),
+                                      QtCore.Qt.MoveAction | QtCore.Qt.CopyAction | QtCore.Qt.LinkAction)
+            return
         super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
         if self.o._restrict_drag_active():
             self.o._restrict_release()
+            return
+        if self._lpress is not None and ev.button() == QtCore.Qt.LeftButton:
+            pe, it = self._lpress
+            self._lpress = None
+            if _alive(it):
+                super().mousePressEvent(pe)     # the click selects now
+            super().mouseReleaseEvent(ev)
+            if self.o._sync_pending:
+                QtCore.QTimer.singleShot(0, self.o.sync_selection)
             return
         if ev.button() == QtCore.Qt.MiddleButton:
             self._mmb = None
@@ -267,6 +303,21 @@ class _Tree(QtWidgets.QTreeWidget):
         col = self.columnAt(pos.x())
         return it.toolTip(col), self.o.cell_python(it, col)
 
+    # datablocks of the rows can be dropped on the 3D views, the Node editor and ID fields (iddrop)
+    def mimeData(self, items):
+        from . import iddrop
+        md = super().mimeData(items)
+        return iddrop.mime_data(self.o.ids_of(items), md)
+
+    def startDrag(self, actions):
+        from . import iddrop
+        items = self.selectedItems()
+        ids = self.o.ids_of(items)
+        if not ids:
+            super().startDrag(actions)
+            return
+        iddrop.start_drag(self, ids, self.mimeData(items), actions)
+
     def dragEnterEvent(self, ev):
         if ev.source() is self:
             ev.acceptProposedAction()
@@ -296,6 +347,38 @@ class _Tree(QtWidgets.QTreeWidget):
 
 
 class Outliner(QtWidgets.QWidget):
+    def key_id(self, key):
+        """The datablock of a row key (objects, collections, object data, material slots, Blender File rows)."""
+        try:
+            kind = key[0]
+            if kind == "OBJECT":
+                return bpy.data.objects.get(key[1])
+            if kind == "COLLECTION":
+                return bpy.data.collections.get(key[1])
+            if kind == "DATA":
+                ob = bpy.data.objects.get(key[1])
+                return ob.data if ob is not None else None
+            if kind == "MAT":
+                ob = bpy.data.objects.get(key[1])
+                return ob.material_slots[key[2]].material if ob is not None else None
+            if kind == "ID":
+                coll = getattr(bpy.data, key[1], None)
+                return coll.get(key[2]) if coll is not None else None
+        except Exception:
+            return None
+        return None
+
+    def ids_of(self, items):
+        out = []
+        for it in items:
+            try:
+                i = self.key_id(it.data(0, KEY))
+            except Exception:
+                i = None
+            if i is not None and i not in out:
+                out.append(i)
+        return out
+
     def __init__(self, hub):
         super().__init__()
         self.hub = hub
@@ -2031,7 +2114,9 @@ class Outliner(QtWidgets.QWidget):
 
     # ------------------------------------------------------------ drag and drop
     def _drag_keys(self):
-        return [k for k in (it.data(0, KEY) for it in self.tree.selectedItems() if not it.data(0, ROOT))
+        items = self.tree._drag_items if self.tree._drag_items else self.tree.selectedItems()
+        items = [it for it in items if _alive(it)]
+        return [k for k in (it.data(0, KEY) for it in items if not it.data(0, ROOT))
                 if k and k[0] in ("OBJECT", "COLLECTION")]
 
     def _drop_allowed(self, it):
