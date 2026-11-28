@@ -144,6 +144,20 @@ class PanelPage(QtWidgets.QScrollArea):
         lay.addWidget(panel)
 
 
+def gn_struct_resolver(ob, mod, kind, ident):
+    """A function that finds the Geometry Nodes modifier's `properties.<kind>.<ident>` again. Blender rebuilds
+    that storage when the node group changes (a link added / removed is enough): a kept struct reads freed
+    memory → crash (0.130.0). Object and modifier are looked up by name each time."""
+    ob_name, mod_name = ob.name, mod.name
+
+    def resolve():
+        o = bpy.data.objects.get(ob_name)
+        m = o.modifiers.get(mod_name) if o is not None else None
+        props = getattr(m, "properties", None) if m is not None else None
+        return getattr(getattr(props, kind, None), ident, None) if props is not None else None
+    return resolve
+
+
 def geonodes_signature(mod):
     """What the Geometry Nodes modifier page shows: the group's sockets / panels and each input's
     value-or-attribute kind – a change rebuilds the page (values are refreshed by the bindings)."""
@@ -420,6 +434,7 @@ class StackPage(QtWidgets.QScrollArea):
             for it, o in outs:
                 b, _label = rw.make_binding(o, "attribute_name", on_change=self.on_change)
                 if b is not None:
+                    b.resolve = gn_struct_resolver(ob, mod, "outputs", it.identifier)
                     self.bindings.append(b)
                     pn.body_lay.addWidget(rw.labeled_row(it.name, b.widget))
             lay.addWidget(pn)
@@ -435,6 +450,7 @@ class StackPage(QtWidgets.QScrollArea):
             b, _label = rw.make_binding(inp, "value", on_change=self.on_change)
         if b is None:
             return None
+        b.resolve = gn_struct_resolver(ob, mod, "inputs", it.identifier)
         self.bindings.append(b)
         widget = b.widget
         if isinstance(b, rw.BoolBinding):
@@ -462,7 +478,8 @@ class StackPage(QtWidgets.QScrollArea):
             t.setToolTip(tr("Use an attribute instead of a single value") + "  "
                          + "/".join(k.title() for k in kinds))
             t.setStyleSheet("padding:2px;")
-            t.toggled.connect(lambda on, i=inp, k=kinds: self._geonodes_set_kind(ob, i, k, on))
+            res = gn_struct_resolver(ob, mod, "inputs", it.identifier)
+            t.toggled.connect(lambda on, r=res, k=kinds: (r() is not None) and self._geonodes_set_kind(ob, r(), k, on))
             hl.addWidget(t)
             widget = box
         row = rw.labeled_row(it.name, widget)

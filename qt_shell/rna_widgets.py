@@ -428,10 +428,28 @@ class Binding:
     """Connects one widget to an RNA property."""
 
     def __init__(self, data, prop_id, on_change=None):
+        self.resolve = None     # optional callable → the data looked up afresh (None = gone); see `data`
         self.data = data
         self.prop_id = prop_id
         self.on_change = on_change
         self.widget = None
+
+    @property
+    def data(self):
+        """The RNA struct. Structs that Blender re-allocates behind our back (a Geometry Nodes modifier's
+        `properties.inputs.*` – rebuilt when the node group changes, even by a link) are never kept: such a
+        binding gets `resolve`, which looks the struct up again on every access – reading a kept one reads
+        freed memory and crashes Blender."""
+        if self.resolve is not None:
+            d = self.resolve()
+            if d is None:
+                raise ReferenceError("the data of this field is gone")
+            return d
+        return self._data
+
+    @data.setter
+    def data(self, value):
+        self._data = value
 
     def changed(self):
         if self.on_change:

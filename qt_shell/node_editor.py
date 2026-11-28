@@ -252,6 +252,50 @@ def new_link(tree, out_s, in_s):
         return tree.links.new(out_s, in_s)
 
 
+GROUP_ITEM_PROPS = ("name", "description", "default_value", "min_value", "max_value",
+                    "default_attribute_name", "attribute_domain", "default_input", "hide_value", "hide_in_modifier",
+                    "force_non_field", "optional_label", "default_closed")
+# group socket types per tree type (socket_type's enum items need Blender's UI context – empty from Python)
+GROUP_SOCKET_TYPES = {
+    "GeometryNodeTree": ("Float", "Integer", "Boolean", "Vector", "Rotation", "Matrix", "Color", "String", "Menu",
+                         "Object", "Collection", "Image", "Material", "Geometry"),
+    "ShaderNodeTree": ("Float", "Integer", "Boolean", "Vector", "Color", "Shader"),
+    "CompositorNodeTree": ("Float", "Integer", "Boolean", "Vector", "Color", "Menu"),
+}
+SOCKET_IDNAMES = {"Float": "NodeSocketFloat", "Integer": "NodeSocketInt", "Boolean": "NodeSocketBool",
+                  "Vector": "NodeSocketVector", "Rotation": "NodeSocketRotation", "Matrix": "NodeSocketMatrix",
+                  "Color": "NodeSocketColor", "String": "NodeSocketString", "Menu": "NodeSocketMenu",
+                  "Object": "NodeSocketObject", "Collection": "NodeSocketCollection", "Image": "NodeSocketImage",
+                  "Material": "NodeSocketMaterial", "Geometry": "NodeSocketGeometry", "Shader": "NodeSocketShader"}
+_IFACE_TYPES = (("Float", "VALUE"), ("Int", "INT"), ("Bool", "BOOLEAN"), ("Vector", "VECTOR"), ("Color", "RGBA"),
+                ("String", "STRING"), ("Geometry", "GEOMETRY"), ("Object", "OBJECT"), ("Collection", "COLLECTION"),
+                ("Material", "MATERIAL"), ("Image", "IMAGE"), ("Texture", "TEXTURE"), ("Rotation", "ROTATION"),
+                ("Matrix", "MATRIX"), ("Menu", "MENU"), ("Shader", "SHADER"))
+
+
+def _iface_icon(item):
+    """A socket-coloured dot for an interface item (by its socket type), arrow-ish for outputs."""
+    st = getattr(item, "socket_type", "") or ""
+    key = next((v for k, v in _IFACE_TYPES if k in st), "CUSTOM")
+    size = theme.px(14)
+    pm = QtGui.QPixmap(size, size)
+    pm.fill(QtCore.Qt.transparent)
+    p = QtGui.QPainter(pm)
+    try:
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setBrush(_qcolor(SOCKET_COLORS.get(key, "#888888")))
+        p.setPen(QtGui.QPen(QtGui.QColor("#111111"), 1))
+        r = size * 0.3
+        c = QtCore.QPointF(size / 2, size / 2)
+        p.drawEllipse(c, r, r)
+        if getattr(item, "in_out", "") == "OUTPUT":
+            p.setPen(QtGui.QPen(QtGui.QColor("#dddddd"), 1.2))
+            p.drawLine(QtCore.QPointF(size - 2, size / 2 - 3), QtCore.QPointF(size - 2, size / 2 + 3))
+    finally:
+        p.end()
+    return QtGui.QIcon(pm)
+
+
 # ---------------------------------------------------------------- graphics items
 class NodeItem(QtWidgets.QGraphicsItem):
     def __init__(self, editor, node):
@@ -612,7 +656,7 @@ class NodeView(QtWidgets.QGraphicsView):
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setBackgroundBrush(QtGui.QColor("#1d1d1d"))
         self._pan = None
-        self._drag_link = None   # (from_item, is_out, socket, temp_path_item)
+        self._drag_link = None   # (node name, is_out, socket identifier, temp_path_item) – never the socket object
         self._moving = False
         self._grab = None        # a new node following the mouse until a click (like Blender after Shift+A)
         self._insert_li = None   # the link a dragged node would be inserted into (highlighted)
@@ -828,23 +872,42 @@ class NodeView(QtWidgets.QGraphicsView):
                     rank = min(range(len(lks)),
                                key=lambda i: abs(c.y() + multi_offset(i, len(lks)) - sp.y()))
                     link = lks[rank]
-            src = link.from_socket
-            src_item = self.editor.items.get(link.from_node.name)
+            # read everything needed BEFORE removing the link: removing it lets Blender update the nodes, and
+            # socket / link objects kept from before may point to freed memory afterwards (crash)
+            src_name, src_ident = link.from_node.name, link.from_socket.identifier
+            color = socket_color(link.from_socket)
             ntree.links.remove(link)
             self.editor.dirty_structure()
-            if src_item is None:
+            if self.editor.items.get(src_name) is None:
                 return
-            item, is_out, sock = src_item, True, src
+            name, is_out, ident = src_name, True, src_ident
+        else:
+            name, ident, color = item.name, sock.identifier, socket_color(sock)
         path = QtWidgets.QGraphicsPathItem()
-        path.setPen(QtGui.QPen(socket_color(sock), 2, QtCore.Qt.DashLine))
+        path.setPen(QtGui.QPen(color, 2, QtCore.Qt.DashLine))
         path.setZValue(5)
         self.scene().addItem(path)
-        self._drag_link = (item, is_out, sock, path)
+        self._drag_link = (name, is_out, ident, path)
         self._update_drag(sp)
 
+    def _drag_socket(self, name, is_out, ident):
+        """The socket a link drag started from, looked up again (never kept across Blender updates)."""
+        tree = self.editor.tree
+        node = tree.nodes.get(name) if tree is not None else None
+        if node is None:
+            return None
+        return next((x for x in (node.outputs if is_out else node.inputs) if x.identifier == ident), None)
+
     def _update_drag(self, sp):
-        item, is_out, sock, path = self._drag_link
-        a = item.socket_scene_pos(is_out, sock.identifier) or sp
+        name, is_out, ident, path = self._drag_link
+        item = self.editor.items.get(name)
+        a = None
+        if item is not None:
+            try:
+                a = item.socket_scene_pos(is_out, ident)
+            except RuntimeError:
+                a = None
+        a = a or sp
         path.setPath(bezier(a, sp) if is_out else bezier(sp, a))
 
     def mouseMoveEvent(self, ev):
@@ -874,12 +937,13 @@ class NodeView(QtWidgets.QGraphicsView):
             self.unsetCursor()
             return
         if self._drag_link is not None:
-            item, is_out, sock, path = self._drag_link
+            name, is_out, ident, path = self._drag_link
             self._drag_link = None
             self.scene().removeItem(path)
             sp = self.mapToScene(ev.position().toPoint())
             target = self._item_at(ev.position().toPoint())
-            if target is not None and target is not item:
+            sock = self._drag_socket(name, is_out, ident)
+            if target is not None and getattr(target, "name", None) != name and sock is not None:
                 hit = target.socket_at(sp)
                 if hit is not None and hit[0] != is_out:
                     out_s, in_s = (sock, hit[1]) if is_out else (hit[1], sock)
@@ -1170,10 +1234,19 @@ class NodeEditor(QtWidgets.QWidget):
         self.view = NodeView(self)
         self.view.setScene(self.scene)
         split.addWidget(self.view)
+        # sidebar with tabs like Blender's N panel: Node (active node) / Group (the tree's inputs and outputs)
+        self.side_tabs = QtWidgets.QTabWidget()
+        self.side_tabs.setMinimumWidth(theme.px(220))
         self.side = QtWidgets.QScrollArea()
         self.side.setWidgetResizable(True)
-        self.side.setMinimumWidth(theme.px(220))
-        split.addWidget(self.side)
+        self.side_tabs.addTab(self.side, "Node")
+        self.group_side = QtWidgets.QScrollArea()
+        self.group_side.setWidgetResizable(True)
+        self.group_side.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.side_tabs.addTab(self.group_side, "Group")
+        pytips.tag(self.side_tabs, NE_PY + "side_tabs.setCurrentIndex(1)  # Group tab")
+        split.addWidget(self.side_tabs)
+        self.group_bindings = []
         split.setStretchFactor(0, 4)
         split.setStretchFactor(1, 1)
         lay.addWidget(split, 1)
@@ -1369,6 +1442,7 @@ class NodeEditor(QtWidgets.QWidget):
             t = self.scene.addText("No node tree – pick a source above or click “+ New Tree”.")
             t.setDefaultTextColor(QtGui.QColor("#9a9a9a"))
             self._build_side()
+            self._build_group_if_changed()
             return
         for n in tree.nodes:
             it = NodeItem(self, n)
@@ -1390,6 +1464,7 @@ class NodeEditor(QtWidgets.QWidget):
             self._first_frame = False
             QtCore.QTimer.singleShot(0, self.frame_all)
         self._build_side()
+        self._build_group_if_changed()
 
     def update_links(self):
         for li in self.links:
@@ -1685,6 +1760,269 @@ class NodeEditor(QtWidgets.QWidget):
         except Exception:
             bridge.log(traceback.format_exc(), "ERROR")
 
+    # --- Group tab: the node group's interface (inputs / outputs) like Blender's N panel → Group
+    def _iface(self):
+        tree = self.tree
+        if tree is None or getattr(tree, "is_embedded_data", False):
+            return None
+        return getattr(tree, "interface", None)
+
+    def group_items(self):
+        """The interface items of the shown node group (sockets and panels, Blender's order)."""
+        iface = self._iface()
+        return list(iface.items_tree) if iface is not None else []
+
+    def _group_changed(self, label="Group Interface"):
+        bridge.undo_push(label)
+        self._sig = None
+        QtCore.QTimer.singleShot(0, self._rebuild_now)
+
+    def group_add(self, in_out="INPUT", socket_type="NodeSocketFloat", name=None):
+        """Adds a group input / output (in_out 'INPUT' / 'OUTPUT') or a panel (in_out 'PANEL'); returns it."""
+        iface = self._iface()
+        if iface is None:
+            return None
+        try:
+            if in_out == "PANEL":
+                item = iface.new_panel(name or "Panel")
+            else:
+                item = iface.new_socket(name or ("Socket"), in_out=in_out, socket_type=socket_type)
+            iface.active = item
+        except Exception as ex:
+            bridge.log(f"Group interface: {ex}", "ERROR")
+            return None
+        self._group_changed("Add Group Socket")
+        return item
+
+    def group_remove(self, index=None):
+        """Removes the active (or index-th) interface item."""
+        iface = self._iface()
+        if iface is None:
+            return False
+        items = list(iface.items_tree)
+        i = iface.active_index if index is None else index
+        if not 0 <= i < len(items):
+            return False
+        try:
+            iface.remove(items[i])
+            iface.active_index = max(0, min(i, len(iface.items_tree) - 1))
+        except Exception as ex:
+            bridge.log(f"Group interface: {ex}", "ERROR")
+            return False
+        self._group_changed("Remove Group Socket")
+        return True
+
+    def group_move(self, step, index=None):
+        """Moves the active (or index-th) interface item up (step -1) or down (step 1) within its parent."""
+        iface = self._iface()
+        if iface is None:
+            return False
+        items = list(iface.items_tree)
+        i = iface.active_index if index is None else index
+        if not 0 <= i < len(items):
+            return False
+        item = items[i]
+        try:
+            pos = item.position + step
+            if pos < 0:
+                return False
+            # Blender's move() counts the item itself: moving down needs one more
+            iface.move(item, pos + (1 if step > 0 else 0))
+            iface.active = item
+        except Exception as ex:
+            bridge.log(f"Group interface: {ex}", "ERROR")
+            return False
+        self._group_changed("Move Group Socket")
+        return True
+
+    def group_rename(self, index, name):
+        """Renames an interface item – the name the Group Input / Output nodes and the modifier show."""
+        items = self.group_items()
+        if not 0 <= index < len(items) or not name:
+            return False
+        try:
+            items[index].name = name
+        except Exception as ex:
+            bridge.log(f"Group interface: {ex}", "ERROR")
+            return False
+        self._group_changed("Rename Group Socket")
+        return True
+
+    def _group_sig(self):
+        iface = self._iface()
+        if iface is None:
+            return (self.tree.name if self.tree is not None else None,)
+        try:
+            return (self.tree.name, iface.active_index,
+                    tuple((getattr(i, "identifier", ""), i.name, getattr(i, "socket_type", ""),
+                           getattr(i, "in_out", ""), i.item_type, i.as_pointer()) for i in iface.items_tree))
+        except Exception:
+            return None
+
+    def group_set_type(self, index, type_name):
+        """Changes the type of an interface socket ('Float', 'Integer', … or a NodeSocket idname)."""
+        items = self.group_items()
+        if not 0 <= index < len(items) or items[index].item_type != "SOCKET":
+            return False
+        try:
+            items[index].socket_type = SOCKET_IDNAMES.get(type_name, type_name)
+        except Exception as ex:
+            bridge.log(f"Group interface: {ex}", "ERROR")
+            return False
+        self._group_changed("Group Socket Type")
+        return True
+
+    def _socket_type_combo(self, item, parent):
+        cb = rw.NoWheelCombo(parent)
+        cur = getattr(item, "socket_type", "")
+        names = list(GROUP_SOCKET_TYPES.get(getattr(self.tree, "bl_idname", ""), GROUP_SOCKET_TYPES["ShaderNodeTree"]))
+        known = {v: k for k, v in SOCKET_IDNAMES.items()}
+        if cur and known.get(cur) not in names:
+            names.append(known.get(cur, cur))
+        for n in names:
+            cb.addItem(n, SOCKET_IDNAMES.get(n, n))
+        cb.setCurrentIndex(max(0, cb.findData(cur)))
+        idx = self.group_items().index(item) if item in self.group_items() else -1
+        cb.activated.connect(lambda i, k=idx: self.group_set_type(k, cb.itemData(i)))
+        pytips.tag(cb, NE_PY + f"group_set_type({idx}, 'Float')")
+        return cb
+
+    def _build_group_if_changed(self):
+        """The Group tab is rebuilt only when the interface itself changed (not while a value is dragged)."""
+        sig = self._group_sig()
+        if sig is not None and sig == getattr(self, "_gsig", None):
+            return
+        self._build_group()
+
+    def _build_group(self):
+        self._gsig = self._group_sig()
+        self.group_bindings = []
+        host = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(host)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(4)
+        iface = self._iface()
+        if iface is None:
+            lab = QtWidgets.QLabel("Inputs and outputs belong to node groups (Geometry Nodes, node groups). "
+                                   "A material's or world's own tree has none.")
+            lab.setWordWrap(True)
+            lay.addWidget(lab)
+            lay.addStretch(1)
+            self.group_side.setWidget(host)
+            return
+        tree_name = self.tree.name
+        items = list(iface.items_tree)
+        lay.addWidget(QtWidgets.QLabel(f"<b>{tree_name}</b> – Interface"))
+        lst = QtWidgets.QListWidget(host)
+        lst.setObjectName("group_interface_list")
+        for it in items:
+            depth = 0
+            par = getattr(it, "parent", None)
+            while par is not None and getattr(par, "parent", None) is not None:
+                depth += 1
+                par = par.parent
+            if it.item_type == "PANEL":
+                text = "▾ " + it.name
+                icon = QtGui.QIcon()
+            else:
+                text = it.name
+                icon = _iface_icon(it)
+            row = QtWidgets.QListWidgetItem(icon, "    " * depth + text)
+            row.setFlags(row.flags() | QtCore.Qt.ItemIsEditable)
+            if it.item_type == "SOCKET":
+                row.setToolTip(("Input" if it.in_out == "INPUT" else "Output") + f" · {it.socket_type}"
+                               "\nDouble-click to rename.")
+                row.setData(QtCore.Qt.UserRole + 1, it.in_out)
+            row.setData(QtCore.Qt.UserRole, it.name)
+            lst.addItem(row)
+        if items:
+            lst.setCurrentRow(max(0, min(iface.active_index, len(items) - 1)))
+        lst.setMinimumHeight(theme.px(120))
+        pytips.tag(lst, NE_PY + "group_items()")
+
+        def on_row(r):
+            if 0 <= r < len(self.group_items()) and iface.active_index != r:
+                try:
+                    iface.active_index = r
+                except Exception:
+                    pass
+                QtCore.QTimer.singleShot(0, self._build_group)
+        lst.currentRowChanged.connect(on_row)
+
+        def on_edit(row):
+            r = lst.row(row)
+            new = row.text().strip()
+            if new and new != row.data(QtCore.Qt.UserRole):
+                QtCore.QTimer.singleShot(0, lambda: self.group_rename(r, new))
+        lst.itemChanged.connect(on_edit)
+        lay.addWidget(lst)
+
+        bar = QtWidgets.QHBoxLayout()
+        bar.setSpacing(2)
+        add = QtWidgets.QToolButton(host)          # Blender: one "+" with Input / Output / Panel
+        add.setText("+ Add")
+        add.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        add.setToolTip("Add a group input (shown in the modifier), output or panel")
+        m = QtWidgets.QMenu(add)
+        for label, kind in (("Input", "INPUT"), ("Output", "OUTPUT"), ("Panel", "PANEL")):
+            act_ = m.addAction(label)
+            act_.triggered.connect(lambda _=False, k=kind: self.group_add(k))
+            pytips.tag(act_, NE_PY + (f"group_add('{kind}', 'NodeSocketFloat')" if kind != "PANEL"
+                                      else "group_add('PANEL')"))
+        add.setMenu(m)
+        bar.addWidget(add)
+        for text, tip, fn, py in (
+                ("−", "Remove the selected item", lambda: self.group_remove(), "group_remove()"),
+                ("▲", "Move up", lambda: self.group_move(-1), "group_move(-1)"),
+                ("▼", "Move down", lambda: self.group_move(1), "group_move(1)")):
+            b = QtWidgets.QToolButton(host)
+            b.setText(text)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda _=False, f=fn: f())
+            pytips.tag(b, NE_PY + py)
+            bar.addWidget(b)
+        bar.addStretch(1)
+        lay.addLayout(bar)
+
+        act = items[iface.active_index] if 0 <= iface.active_index < len(items) else None
+        if act is not None:
+            def changed(*_a):
+                # nodes / modifier follow through the normal refresh; the Group tab is rebuilt only when the
+                # interface changed (name, type …) – never under a value being dragged
+                self._sig = None
+                self._timer.start()
+                if not hasattr(self, "_gundo_t"):
+                    self._gundo_t = QtCore.QTimer(self)
+                    self._gundo_t.setSingleShot(True)
+                    self._gundo_t.setInterval(400)
+                    self._gundo_t.timeout.connect(lambda: bridge.undo_push("Group Socket Property"))
+                self._gundo_t.start()
+            # Blender's N panel → Group: the settings of the active item, in its order
+            have = {p.identifier for p in act.bl_rna.properties if not p.is_readonly}
+            props = [p for p in GROUP_ITEM_PROPS if p in have]
+            lab = QtWidgets.QLabel(("Panel" if act.item_type == "PANEL" else
+                                    ("Input" if act.in_out == "INPUT" else "Output")) + " settings")
+            lab.setStyleSheet("font-weight:bold; margin-top:6px;")
+            lay.addWidget(lab)
+            if act.item_type == "SOCKET":
+                lay.addWidget(rw.labeled_row("Type", self._socket_type_combo(act, host)))
+            try:
+                form, binds = rw.rna_form(act, changed, only=props)
+                self.group_bindings.extend(binds)
+                lay.addWidget(form)
+            except Exception:
+                bridge.log(traceback.format_exc(), "ERROR")
+        lay.addStretch(1)
+        self.group_side.setWidget(host)
+
+    def _socket_resolver(self, node_name, ident):
+        """Finds a node input again by node name + identifier (sockets are no IDs – never kept, see socket_ptrs)."""
+        def resolve():
+            tree = self.tree
+            n = tree.nodes.get(node_name) if tree is not None else None
+            return next((x for x in n.inputs if x.identifier == ident), None) if n is not None else None
+        return resolve
+
     def _build_side(self):
         self.side_bindings = []
         host = QtWidgets.QWidget()
@@ -1718,7 +2056,7 @@ class NodeEditor(QtWidgets.QWidget):
                 # rebuild right after this signal (not inside it: the combo that emitted it is deleted)
                 keep = []
                 for b in self.side_bindings:
-                    if isinstance(getattr(b, "data", None), bpy.types.NodeSocket):
+                    if isinstance(getattr(b, "_data", None), bpy.types.NodeSocket):
                         try:
                             if b.widget_ok():
                                 b.widget.setEnabled(False)      # its socket is gone
@@ -1759,6 +2097,7 @@ class NodeEditor(QtWidgets.QWidget):
             for s in ins:
                 b, label = rw.make_binding(s, "default_value", text=tr(s.name), on_change=changed)
                 if b is not None:
+                    b.resolve = self._socket_resolver(node_name, s.identifier)
                     self.side_bindings.append(b)
                     if isinstance(b, rw.BoolBinding):
                         b.widget.setText(label)
