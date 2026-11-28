@@ -432,7 +432,7 @@ class StackPage(QtWidgets.QScrollArea):
             key = f"gnoutputs:{ob.name}:{mod.name}"
             pn = qt_ui.CollapsiblePanel(tr("Output Attributes"), key, self.state, True)
             for it, o in outs:
-                b, _label = rw.make_binding(o, "attribute_name", on_change=self.on_change)
+                b, _label = rw.make_binding(o, "attribute_name", on_change=self._gn_on_change(ob))
                 if b is not None:
                     b.resolve = gn_struct_resolver(ob, mod, "outputs", it.identifier)
                     self.bindings.append(b)
@@ -440,14 +440,30 @@ class StackPage(QtWidgets.QScrollArea):
             lay.addWidget(pn)
         return w
 
+    def _gn_on_change(self, ob):
+        """on_change of a Geometry Nodes modifier field. Blender 5.2's `properties.inputs.*.value` setters don't
+        tag the object for re-evaluation when set from Python (Blender's own UI does) – the geometry kept the old
+        value (owner, 0.130.2) – so the object is tagged here."""
+        ob_name = ob.name
+
+        def changed(data, prop):
+            o = bpy.data.objects.get(ob_name)
+            if o is not None:
+                try:
+                    o.update_tag()
+                except Exception:
+                    pass
+            self.on_change(data, prop)
+        return changed
+
     def _geonodes_input_row(self, ob, mod, it, inp):
         attr = getattr(inp, "type", "VALUE")
         if attr == "ATTRIBUTE":
-            b, _label = rw.make_binding(inp, "attribute_name", on_change=self.on_change)
+            b, _label = rw.make_binding(inp, "attribute_name", on_change=self._gn_on_change(ob))
         elif attr == "LAYER":
-            b, _label = rw.make_binding(inp, "layer_name", on_change=self.on_change)
+            b, _label = rw.make_binding(inp, "layer_name", on_change=self._gn_on_change(ob))
         else:
-            b, _label = rw.make_binding(inp, "value", on_change=self.on_change)
+            b, _label = rw.make_binding(inp, "value", on_change=self._gn_on_change(ob))
         if b is None:
             return None
         b.resolve = gn_struct_resolver(ob, mod, "inputs", it.identifier)
