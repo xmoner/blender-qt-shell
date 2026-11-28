@@ -194,6 +194,7 @@ national keyboard layouts (e.g. Czech) without Shift.
   (Windows: `%TEMP%\qtshell.log`), because Blender's console is hidden.
 - If the Qt window can't be created, the normal Blender window comes back automatically.
 - A hard crash writes the Python stack to `%TEMP%\qtshell_crash.log`.
+- A **freeze** (the window not responding for 30 s) writes the Python stack of every thread to `%TEMP%\qtshell_freeze.log` – please attach it to a bug report. After Windows **sleep** (or any long pause of the main loop) Qt Shell waits a moment before drawing again, makes Blender's GPU context current and hides Blender's window if Windows showed it.
 - **Floating windows** (a dock dragged out of the main window) are docked before the layout is saved – a saved
   layout with a floating dock crashed Blender on the next start – and float again at their place a moment after Qt Shell starts.
 - **Safe start:** if the previous start of Qt Shell crashed Blender, the next start discards the saved

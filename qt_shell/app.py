@@ -1,4 +1,5 @@
 """Runs Qt inside the Blender process and 'pumps' Qt events from a Blender timer."""
+import os
 import sys
 import time
 import traceback
@@ -213,11 +214,101 @@ class ShellApp(QtWidgets.QApplication):
         return _notify_with_context(self, obj, ev)
 
 
+# ---- sleep / freeze handling (since 0.128.2)
+WAKE_GAP = 15.0          # seconds without a pump pass (wall clock) = the PC slept / Blender was blocked
+FREEZE_SECONDS = 30      # main loop stuck this long → Python stacks of all threads to qtshell_freeze.log
+_last_pump_wall = 0.0
+_freeze_file = None
+_resumes = []            # (time.time(), gap) of the detected wake-ups – tests / diagnostics
+_armed_at = 0.0          # re-arming starts a new watchdog thread (CPython) – at most once a second
+
+
+def freeze_log_path():
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "qtshell_freeze.log")
+
+
+def _arm_watchdog():
+    """faulthandler's own C thread dumps every thread's Python stack when the pump has not run for
+    FREEZE_SECONDS – it works while the main thread hangs in C code (no GIL needed). Re-armed every pass."""
+    global _freeze_file
+    try:
+        import faulthandler
+        if _freeze_file is None or _freeze_file.closed:
+            path = freeze_log_path()
+            if os.path.exists(path) and os.path.getsize(path) > 512 * 1024:
+                os.replace(path, path + ".old")
+            _freeze_file = open(path, "a", encoding="utf-8")
+        faulthandler.dump_traceback_later(FREEZE_SECONDS, repeat=False, file=_freeze_file, exit=False)
+    except Exception:
+        pass
+
+
+def _freeze_note(text):
+    """A time stamp line in qtshell_freeze.log (faulthandler's dumps carry none)."""
+    try:
+        _arm_watchdog()
+        _freeze_file.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} {text}\n")
+        _freeze_file.flush()
+    except Exception:
+        pass
+
+
+def _stop_watchdog():
+    try:
+        import faulthandler
+        faulthandler.cancel_dump_traceback_later()
+    except Exception:
+        pass
+
+
+def _on_resume(gap):
+    """The pump did not run for `gap` seconds (wall clock) – usually Windows sleep / hibernation. Right after
+    waking the display driver and the monitors come back; drawing into Blender's GPU context then can hang
+    (the whole UI froze after sleep). So: no viewport drawing and no background work for a moment, then the
+    GPU context is made current again, Blender's windows hidden again if Windows showed them, and the views
+    redrawn."""
+    global _last_input
+    _resumes.append((time.time(), gap))
+    del _resumes[:-20]
+    bridge.log(f"Qt Shell: the main loop was paused for {gap:.0f} s (sleep?) – resuming carefully.", "WARNING")
+    _freeze_note(f"resumed after {gap:.0f} s without a pump pass")
+    bridge.hold_gpu(3.0)                     # viewport / previews / caches don't draw meanwhile
+    _last_input = time.monotonic()           # background caching waits for idleness again
+    bridge.later(_after_resume, 2.5)
+
+
+def _after_resume():
+    if _win is None:
+        return
+    try:
+        bridge.restore_gpu_context()
+        p = prefs()
+        act = getattr(_win, "blender_visible_act", None)
+        if (p is None or getattr(p, "hide_blender", True)) and not (act is not None and act.isChecked()):
+            native.rehide_visible_blender_windows()   # only when the user keeps Blender's window hidden
+        bridge.hold_gpu(0.3)
+        area = getattr(_hub, "viewport_area", None)
+        if area is not None:
+            bridge.later(lambda: area.request_redraw(), 0.4)
+    except Exception:
+        bridge.log("Resume: " + traceback.format_exc(), "WARNING")
+
+
 def _pump():
-    global _pump_on
+    global _pump_on, _last_pump_wall
     if _win is None:
         _pump_on = False
+        _stop_watchdog()
         return None
+    now = time.time()
+    if _last_pump_wall and now - _last_pump_wall > WAKE_GAP:
+        _on_resume(now - _last_pump_wall)
+    _last_pump_wall = now
+    global _armed_at
+    if now - _armed_at > 1.0:
+        _armed_at = now
+        _arm_watchdog()
     playing = False
     try:
         with bridge.blender_context():
@@ -415,7 +506,9 @@ def apply_interface_size():
 
 
 def stop(show_blender=True):
-    global _win, _hub
+    global _win, _hub, _last_pump_wall
+    _stop_watchdog()
+    _last_pump_wall = 0.0
     if show_blender:
         set_blender_visible(True)
     try:

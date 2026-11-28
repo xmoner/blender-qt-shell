@@ -118,6 +118,27 @@ def hide_windows(hwnds):
     _ghost_hwnds = ghost_windows()
 
 
+def rehide_visible_blender_windows():
+    """Hides Blender's top-level windows that became visible again (Windows can show hidden windows when it
+    wakes from sleep / when monitors come back). Only SW_HIDE: a minimized main window stays minimized,
+    a hidden-but-drawn helper window (render / preview) keeps being drawn. Returns how many were hidden."""
+    if sys.platform != "win32":
+        return 0
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    n = 0
+    for h in ghost_windows():
+        try:
+            if user32.IsWindowVisible(h):
+                user32.ShowWindow(h, 0)      # SW_HIDE
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
 def repaint_blender_windows():
     """Posts WM_PAINT to Blender's (hidden) windows (Windows). Blender handles it as a GHOST WindowUpdate
     and makes that window drawable – its GPU context active again after another window was closed."""
