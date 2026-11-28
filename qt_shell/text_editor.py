@@ -1100,6 +1100,9 @@ class TextEditor(QtWidgets.QWidget):
         # the outline's own on/off state – isVisible() is also False while the Text editor tab / dock is hidden
         # (e.g. a .blend opened with another tab in front), which used to leave the outline empty
         self._outline_on = str(settings.value("text_editor/outline", "false")).lower() == "true"
+        # texts of node editor frames (backdrop notes) in the tabs – View → Show Backdrop Notes
+        self._show_notes = str(settings.value("text_editor/show_frame_notes", "true")).lower() == "true"
+        self._note_shown = None    # a note asked for by name (show_text / goto) stays while it is the current one
         self.outline.setVisible(self._outline_on)
         self._outline_timer = QtCore.QTimer(self)
         self._outline_timer.setSingleShot(True)
@@ -1269,6 +1272,10 @@ class TextEditor(QtWidgets.QWidget):
             checked=ed.auto_close)
         act(v, "Check While Typing", lambda: ed.set_option("live_check", not ed.live_check),
             checked=ed.live_check, tip="Syntax errors and undefined names, underlined while you type")
+        a = act(v, "Show Backdrop Notes", lambda: self.set_show_notes(not self._show_notes),
+                checked=self._show_notes,
+                tip="Texts of the Node editor's frames (backdrop notes) as tabs here – off hides them")
+        pytips.tag(a, TE_PY + f"set_show_notes({not self._show_notes})")
         v.addSeparator()
         act(v, "Bigger Font", lambda: ed.zoom_font(1.0), "text.zoom_in")
         act(v, "Smaller Font", lambda: ed.zoom_font(-1.0), "text.zoom_out")
@@ -1362,8 +1369,46 @@ class TextEditor(QtWidgets.QWidget):
     def _text(self):
         return bpy.data.texts.get(self._name) if self._name else None
 
-    def refresh_list(self):
+    @staticmethod
+    def frame_note_names():
+        """Names of the texts that are frame (backdrop) notes: made by the Node editor's note box (ID prop
+        qtshell_frame_note) or shown by a frame of any node tree."""
+        out = {t.name for t in bpy.data.texts if t.get("qtshell_frame_note")}
+        trees = list(bpy.data.node_groups)
+        for coll in (bpy.data.materials, bpy.data.worlds, bpy.data.lights, bpy.data.textures,
+                     bpy.data.linestyles):
+            trees += [x.node_tree for x in coll if getattr(x, "node_tree", None) is not None]
+        for tr in trees:
+            for n in tr.nodes:
+                if n.bl_idname == "NodeFrame" and n.text is not None:
+                    out.add(n.text.name)
+        return out
+
+    def _names(self):
+        """The texts shown as tabs – without the backdrop notes when they are switched off."""
         names = [t.name for t in bpy.data.texts]
+        if not self._show_notes:
+            notes = self.frame_note_names()
+            names = [n for n in names if n not in notes or (n == self._note_shown and n == self._name)]
+        return names
+
+    def set_show_notes(self, on):
+        """Shows / hides the frame (backdrop) notes in the tabs (QSettings text_editor/show_frame_notes)."""
+        self._show_notes = bool(on)
+        QtCore.QSettings("QtShell", "QtShell").setValue("text_editor/show_frame_notes",
+                                                         "true" if on else "false")
+        if not on:
+            self._note_shown = None
+            if self._name in self.frame_note_names():
+                self._write_back()
+                self._name = None      # refresh_list shows another text
+        self.refresh_list()
+
+    def show_notes(self):
+        return self._show_notes
+
+    def refresh_list(self):
+        names = self._names()
         if self._name not in names:
             self._name = None
         if self._name is None:
@@ -1377,6 +1422,8 @@ class TextEditor(QtWidgets.QWidget):
             i = self.tabs.addTab(n)
             self.tabs.setTabData(i, n)
             tip = bpy.path.abspath(t.filepath) if t is not None and t.filepath else "internal (saved in the .blend)"
+            if t is not None and t.get("qtshell_frame_note"):
+                tip = "Backdrop note of a Node editor frame (View → Show Backdrop Notes)"
             self.tabs.setTabToolTip(i, tip)
         if self._name in names:
             self.tabs.setCurrentIndex(names.index(self._name))
@@ -1390,6 +1437,7 @@ class TextEditor(QtWidgets.QWidget):
     def show_text(self, name):
         self._write_back()
         self._name = name
+        self._note_shown = name        # shown even when backdrop notes are hidden
         self._load()
         self.refresh_list()
 
@@ -1468,7 +1516,7 @@ class TextEditor(QtWidgets.QWidget):
             self._update_state()
         if self._push.isActive() or self.editor.hasFocus() or not self.isVisible():
             return
-        names = [t.name for t in bpy.data.texts]
+        names = self._names()
         if names != [self.tabs.tabData(i) for i in range(self.tabs.count())]:
             self.refresh_list()
         t = self._text()
