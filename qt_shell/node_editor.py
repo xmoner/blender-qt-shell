@@ -1130,6 +1130,7 @@ class NodeView(QtWidgets.QGraphicsView):
             self._resize = None
             fr = rs[0]
             self.resize_frame(fr, fr.w, fr.h)
+            self.editor.order_frames()
             bridge.undo_push("Resize Frame")
             self.editor._sig = None
             self.editor._timer.start()
@@ -1166,6 +1167,7 @@ class NodeView(QtWidgets.QGraphicsView):
             moved = sel[0] if len(sel) == 1 else None
             self.editor.commit_positions()
             self.editor.attach_to_frames(sel)
+            self.editor.order_frames()
         self.editor.commit_selection()
         if li is not None and moved is not None:
             self.editor.insert_on_link(moved, li)
@@ -1762,6 +1764,28 @@ class NodeEditor(QtWidgets.QWidget):
                                                 FRAME_MARGIN, FRAME_MARGIN))
         finally:
             self._fitting = False
+        self.order_frames()
+
+    def order_frames(self):
+        """Stacking of the frames (backdrops), always behind the nodes: a frame inside another one (its child,
+        or a smaller frame lying in it) is drawn – and clicked – above it; so a new, bigger backdrop drawn
+        around others goes to the back like Nuke's."""
+        frames = [it for it in self.items.values() if it.kind == "frame"]
+
+        def inside(a, b):              # a lies in b
+            ra = QtCore.QRectF(a.pos(), QtCore.QSizeF(a.w, a.h))
+            rb = QtCore.QRectF(b.pos(), QtCore.QSizeF(b.w, b.h))
+            return rb.contains(ra.adjusted(2, 2, -2, -2)) and ra != rb
+
+        def level(it):
+            n = self._depth(it)
+            n += sum(1 for o in frames if o is not it and inside(it, o))
+            return n
+        ranked = sorted(frames, key=lambda it: (level(it), -(it.w * it.h), it.name))
+        step = 5.0 / max(1, len(ranked))
+        for i, it in enumerate(ranked):
+            it.setZValue(-10.0 + i * step)    # -10 … -5: under the links (-1) and nodes (0)
+        return [it.name for it in ranked]
 
     def _select_in_blender(self):
         tree = self.tree
