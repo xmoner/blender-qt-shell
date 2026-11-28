@@ -338,6 +338,30 @@ def frame_header(node):
     return frame_label_size(node) + 10
 
 
+def frame_text_lines(node):
+    t = getattr(node, "text", None)
+    if t is None:
+        return []
+    try:
+        lines = [ln.body for ln in t.lines]
+    except Exception:
+        return []
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
+
+
+def frame_text_height(node):
+    """Room for the frame's note under its label (a Shrink frame grows upwards so the note isn't hidden by
+    its nodes)."""
+    lines = frame_text_lines(node)
+    if not lines:
+        return 0
+    f = QtGui.QFont()
+    f.setPixelSize(max(8, min(frame_label_size(node), 24)))
+    return int(QtGui.QFontMetricsF(f).lineSpacing() * len(lines)) + 6
+
+
 def paint_frame(p, node, w, h, outline):
     """A frame / backdrop like Blender: colour, label at Label Size (centred at the top), the Text datablock's
     lines in the body."""
@@ -360,12 +384,8 @@ def paint_frame(p, node, w, h, outline):
     p.save()
     p.setClipRect(rect.adjusted(2, 2, -2, -2))
     p.drawText(QtCore.QRectF(6, 2, w - 12, head), QtCore.Qt.AlignHCenter | QtCore.Qt.AlignVCenter, label)
-    text = getattr(node, "text", None)
-    if text is not None:
-        try:
-            lines = [ln.body for ln in text.lines]
-        except Exception:
-            lines = []
+    if True:
+        lines = frame_text_lines(node)
         if lines:
             ft = QtGui.QFont(f)
             ft.setPixelSize(max(8, min(size, 24)))      # Blender caps the body text size
@@ -1737,7 +1757,8 @@ class NodeEditor(QtWidgets.QWidget):
                 for ch in self.frame_children(fr.name):
                     r = QtCore.QRectF(ch.pos(), QtCore.QSizeF(ch.w, ch.h))
                     rect = r if rect.isNull() else rect.united(r)
-                fr.set_frame_rect(rect.adjusted(-FRAME_MARGIN, -FRAME_MARGIN - frame_header(fr.node),
+                fr.set_frame_rect(rect.adjusted(-FRAME_MARGIN, -FRAME_MARGIN - frame_header(fr.node)
+                                                - frame_text_height(fr.node),
                                                 FRAME_MARGIN, FRAME_MARGIN))
         finally:
             self._fitting = False
@@ -2392,6 +2413,61 @@ class NodeEditor(QtWidgets.QWidget):
             return next((x for x in n.inputs if x.identifier == ident), None) if n is not None else None
         return resolve
 
+    def set_frame_text(self, frame_name, content):
+        """Writes the note of a frame (backdrop) – into its Text datablock, made when it has none (Blender
+        shows a frame's text from a Text datablock; Nuke's backdrop takes typed text)."""
+        tree = self.tree
+        fr = tree.nodes.get(frame_name) if tree is not None else None
+        if fr is None or fr.bl_idname != "NodeFrame":
+            return None
+        t = fr.text
+        if t is None:
+            if not content:
+                return None
+            t = bpy.data.texts.new((fr.label or fr.name) + " Note")
+            t["qtshell_frame_note"] = True      # the Text editor skips its Python checks
+            fr.text = t
+        t.clear()
+        t.write(content)
+        self.fit_frames()                      # the note's room changes with its lines
+        it = self.items.get(frame_name)
+        if it is not None:
+            it.update()
+        self.update_links()
+        self._sig = self.signature(tree)       # drawn already – no rebuild under the typing
+        return t
+
+    def _frame_text_box(self, node, parent):
+        """A text box for the frame's note (typed straight into the frame, saved in its Text datablock)."""
+        w = QtWidgets.QWidget(parent)
+        v = QtWidgets.QVBoxLayout(w)
+        v.setContentsMargins(0, 4, 0, 0)
+        v.setSpacing(2)
+        lab = QtWidgets.QLabel("Note (text shown in the frame)", w)
+        v.addWidget(lab)
+        ed = QtWidgets.QPlainTextEdit(w)
+        ed.setObjectName("frame_text_edit")
+        try:
+            ed.setPlainText(node.text.as_string() if node.text is not None else "")
+        except Exception:
+            pass
+        ed.setPlaceholderText("Type the text of this backdrop …")
+        ed.setMinimumHeight(theme.px(90))
+        v.addWidget(ed)
+        name = node.name
+        t = QtCore.QTimer(ed)
+        t.setSingleShot(True)
+        t.setInterval(250)
+        t.timeout.connect(lambda: self.set_frame_text(name, ed.toPlainText()))
+        ed.textChanged.connect(t.start)
+        u = QtCore.QTimer(ed)
+        u.setSingleShot(True)
+        u.setInterval(1200)
+        u.timeout.connect(lambda: bridge.undo_push("Frame Text"))
+        ed.textChanged.connect(u.start)
+        pytips.tag(ed, NE_PY + f"set_frame_text({name!r}, 'My note')")
+        return w
+
     def _build_side(self):
         self.side_bindings = []
         host = QtWidgets.QWidget()
@@ -2468,6 +2544,8 @@ class NodeEditor(QtWidgets.QWidget):
             form, binds = rw.rna_form(node, changed, only=props)
             self.side_bindings.extend(binds)
             lay.addWidget(form)
+        if node.bl_idname == "NodeFrame":
+            lay.addWidget(self._frame_text_box(node, host))
         ins = [s for s in node.inputs if getattr(s, "enabled", True) and not s.hide
                and not s.is_linked and hasattr(s, "default_value") and not getattr(s, "hide_value", False)]
         if ins:

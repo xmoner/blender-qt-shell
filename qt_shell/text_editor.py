@@ -483,7 +483,7 @@ class CodeEditor(QtWidgets.QPlainTextEdit):
 
     # --- live checks
     def run_lint(self):
-        if not self.live_check or self.isReadOnly():
+        if not self.live_check or self.isReadOnly() or getattr(self, "is_note", False):
             probs = []
         else:
             try:
@@ -1427,6 +1427,11 @@ class TextEditor(QtWidgets.QWidget):
 
     def _load(self):
         t = self._text()
+        # a frame's note (Node editor backdrop) is plain text – no Python checks on it
+        try:
+            self.editor.is_note = t is not None and bool(t.get("qtshell_frame_note"))
+        except Exception:
+            self.editor.is_note = False
         self._loading = True
         self.editor.setPlainText(t.as_string() if t is not None else "")
         self.editor.setReadOnly(t is None)
